@@ -53,7 +53,7 @@ export function startWeb(context,callbacks,token){
   robot.ui.miniApps.register({id:'archive-network-settings',title:'接続設定',hidden:true,create(){
     const style=new Style({font:uiFont(),color:'black',horizontal:'left',vertical:'middle'}),summary=new Text(null,{left:12,right:12,top:0,height:26,style,string:''});
     const update=()=>{const status=getSettingsStatus();summary.string=status.connected?'Wi-Fi 接続済み / '+status.ip:'Wi-Fi 未接続';};update();const timer=Timer.repeat(update,2000);
-    const launch=id=>robot.ui.application.behavior.launchMiniApp(id);
+    const launch=id=>{actions.closeOffline?.();return robot.ui.application.behavior.launchMiniApp(id);};
     return {content:new Container(null,{left:0,right:0,top:0,bottom:0,skin:new Skin({fill:'white'}),contents:[summary,
       new ActionButton({label:'同じWi-Fiから操作 / LAN QR',onTap:()=>openControl('lan')},{left:8,right:8,top:28,height:34}),
       new ActionButton({label:'StackChan Wi-Fiへ接続して操作',onTap:()=>openControl('ap')},{left:8,right:8,top:66,height:34}),
@@ -63,7 +63,7 @@ export function startWeb(context,callbacks,token){
       new ActionButton({label:'LAN操作QR',onTap:()=>openControl('lan')},{right:8,top:142,width:148,height:34})
     ]}),dispose(){Timer.clear(timer);}};
   }});
-  const launch=id=>robot.ui.application.behavior.launchMiniApp(id);
+  const launch=id=>{actions.closeOffline?.();return robot.ui.application.behavior.launchMiniApp(id);};
   function page(title,items){
     return {content:new Container(null,{left:0,right:0,top:0,bottom:0,skin:new Skin({fill:'white'}),contents:[
       new Label(null,{left:8,right:8,top:0,height:28,style:new Style({font:uiFont(),color:'black'}),string:title}),

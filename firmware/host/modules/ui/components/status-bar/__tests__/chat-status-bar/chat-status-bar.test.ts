@@ -149,8 +149,8 @@ assert(batteryDrawBounds.width > (battery.width ?? 0) * 0.9, 'battery drawing sh
 assert(batteryDrawBounds.height > (battery.height ?? 0) * 0.8, 'battery drawing should fill the compact surface')
 equal(statusIcon.x, 8, 'persistent microphone status should use the natural top-left position')
 assert(
-  (statusIndicator.x ?? 0) > (battery.x ?? 0) + (battery.width ?? 0),
-  'transient connection status should remain beside the AppBar battery',
+  (statusIndicator.y ?? 0) >= (battery.y ?? 0) + (battery.height ?? 0),
+  'transient connection status should not overlap the persistent battery row',
 )
 equal(formatAppBarTime(new Date(0)), '--:--', 'unset system time should use a placeholder')
 equal(batteryLevelToSegments(0), 0, 'empty battery should draw no cells')
@@ -177,9 +177,9 @@ assert(menuButton.visible === false, 'launcher mode should hide the drawer butto
 assert(title.visible === true, 'launcher mode should show a title')
 equal(title.string, 'ミニアプリ', 'launcher mode should display its title')
 assert(clock.visible === false, 'launcher mode should hide the face clock')
-assert(battery.visible === false, 'launcher mode should hide battery status')
+assert(battery.visible === true, 'launcher mode should retain battery status')
 assert(clock.running === false, 'launcher mode should stop the hidden clock timer')
-assert(battery.running === false, 'launcher mode should stop the hidden battery timer')
+assert(battery.running === true, 'launcher mode should keep the battery timer running')
 
 behavior.onAppBarMode?.(bar, { kind: 'face' })
 assert(bar.visible === true, 'returning to face mode should reveal the AppBar')
@@ -198,16 +198,16 @@ battery.behavior?.onTimeChanged?.(battery)
 assert(battery.visible === true, 'battery status should recover after a later valid reading')
 
 behavior.onFinished?.(bar)
-assert(bar.visible === false, 'the reveal timer should hide the entire AppBar')
+assert(bar.visible === true, 'the reveal timer should retain the persistent battery row')
 assert(bar.skin !== faceChromeSkin, 'hidden face chrome should restore the transparent status layer')
 assert(menuButton.visible === false, 'menu button should hide with the AppBar')
 assert(menuButton.active === false, 'hidden menu button should not intercept touches')
 assert(appsButton.visible === false, 'apps button should hide with the menu button')
 assert(appsButton.active === false, 'hidden apps button should not intercept touches')
 assert(clock.visible === false, 'clock should hide with the AppBar')
-assert(battery.visible === false, 'battery status should hide with the AppBar')
+assert(battery.visible === true, 'battery status should remain after the AppBar timeout')
 assert(clock.running === false, 'hidden AppBar should stop the clock timer')
-assert(battery.running === false, 'hidden AppBar should stop the battery timer')
+assert(battery.running === true, 'persistent battery status should keep its timer running')
 behavior.onMiniAppAvailability?.(bar, false)
 behavior.onMiniAppAvailability?.(bar, true)
 assert(appsButton.visible === false, 'availability changes should not bypass the hidden AppBar state')
@@ -237,11 +237,11 @@ assert(bar.visible === true, 'user input should keep the microphone area visible
 assert(bar.skin !== faceChromeSkin, 'persistent microphone status should not retain the AppBar background')
 assert(menuButton.visible === false, 'persistent microphone status should not keep face actions visible')
 assert(clock.visible === false, 'persistent microphone status should not keep the clock visible')
-assert(battery.visible === false, 'persistent microphone status should not keep battery status visible')
+assert(battery.visible === true, 'microphone activity should not hide battery status')
 assert(levelTrack.visible === true, 'input level should remain visible after the AppBar timeout')
 assert(statusIcon.visible === true, 'microphone icon should remain visible after the AppBar timeout')
 behavior.onChatState?.(bar, ChatStatusBarState.WAITING)
-assert(bar.visible === false, 'leaving user input should hide a previously timed-out AppBar')
+assert(bar.visible === true, 'leaving user input should retain battery status')
 behavior.onAppBarReveal?.(bar)
 behavior.onChatState?.(bar, ChatStatusBarState.SPEAKING)
 

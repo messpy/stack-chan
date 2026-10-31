@@ -24,11 +24,11 @@ const iconSize = 16
 const iconTop = (barHeight - iconSize) / 2
 const defaultIconLeft = 8
 const faceStatusScale = 2
-const batteryIconLeft = 8
-const batteryIconWidth = 32
-const batteryIconHeight = 20
-const batteryIconTop = 18
-const batteryStatusIconLeft = batteryIconLeft + batteryIconWidth + 4
+const batteryIconLeft = UI.screenWidth - 22
+const batteryIconWidth = 20
+const batteryIconHeight = 12
+const batteryIconTop = 0
+const batteryStatusIconLeft = defaultIconLeft
 const clockWidth = 64 * faceStatusScale
 const clockLeft = (UI.screenWidth - clockWidth) / 2
 const minimumValidTimeMs = 1672722071_000
@@ -247,13 +247,13 @@ class BatteryBehavior extends Behavior implements BatteryBehaviorContract {
 
   onDraw(port: PiuPort) {
     const color = UI.colors.text
-    port.fillColor(color, 0, 2, 28, 2)
-    port.fillColor(color, 0, 16, 28, 2)
-    port.fillColor(color, 0, 4, 2, 12)
-    port.fillColor(color, 26, 4, 2, 12)
-    port.fillColor(color, 28, 7, 3, 6)
+    port.fillColor(color, 0, 1, 17, 1)
+    port.fillColor(color, 0, 10, 17, 1)
+    port.fillColor(color, 0, 2, 1, 8)
+    port.fillColor(color, 16, 2, 1, 8)
+    port.fillColor(color, 17, 4, 2, 4)
     for (let index = 0; index < this.#segments; index += 1) {
-      port.fillColor(color, 3 + index * 6, 5, 4, 10)
+      port.fillColor(color, 2 + index * 3, 3, 2, 6)
     }
   }
 }
@@ -377,14 +377,14 @@ class ChatStatusBarBehavior extends Behavior {
     const persistentInputVisible = faceMode && !faceChromeVisible && isUserSpeaking && !isConnecting
     const faceStatusVisible = faceChromeVisible || persistentInputVisible
     const skins = getSkins()
+    const batteryBehavior = this.#battery?.behavior as BatteryBehaviorContract | undefined
+    if (this.#battery) batteryBehavior?.onVisibilityChanged(this.#battery, true)
     if (this.#container) {
-      this.#container.visible = !faceMode || faceStatusVisible || !!this.#container.content('wifiBadge')?.visible
+      this.#container.visible = !faceMode || faceStatusVisible || !!this.#container.content('wifiBadge')?.visible || !!this.#battery?.visible
       this.#container.skin = !faceMode || faceChromeVisible ? skins.chrome : skins.bar
     }
     const clockBehavior = this.#clock?.behavior as ClockBehaviorContract | undefined
     if (this.#clock) clockBehavior?.onVisibilityChanged(this.#clock, faceChromeVisible)
-    const batteryBehavior = this.#battery?.behavior as BatteryBehaviorContract | undefined
-    if (this.#battery) batteryBehavior?.onVisibilityChanged(this.#battery, faceChromeVisible)
     if (!faceStatusVisible) {
       this.#levelTrack.visible = false
       this.#statusIcon.visible = false
@@ -480,22 +480,6 @@ export const ChatStatusBar = Container.template((options: ChatStatusBarOptions =
         string: '',
         style: styles.title,
       }),
-      new Port(
-        {
-          reader: options.readBatteryLevel,
-          visible: true,
-        } satisfies BatteryData,
-        {
-          name: 'battery',
-          left: batteryIconLeft,
-          top: batteryIconTop,
-          width: batteryIconWidth,
-          height: batteryIconHeight,
-          active: false,
-          visible: false,
-          Behavior: BatteryBehavior,
-        },
-      ),
       new Label(
         {
           now: options.now ?? (() => new Date()),
@@ -569,6 +553,23 @@ export const ChatStatusBar = Container.template((options: ChatStatusBarOptions =
           action: 'onDrawerToggle',
         },
         { right: 0, top: 0, width: 44, height: 44 },
+      ),
+      // Draw persistent status above the menu button background; it never intercepts touches.
+      new Port(
+        {
+          reader: options.readBatteryLevel,
+          visible: true,
+        } satisfies BatteryData,
+        {
+          name: 'battery',
+          left: batteryIconLeft,
+          top: batteryIconTop,
+          width: batteryIconWidth,
+          height: batteryIconHeight,
+          active: false,
+          visible: false,
+          Behavior: BatteryBehavior,
+        },
       ),
     ],
     Behavior: ChatStatusBarBehavior,

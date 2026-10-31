@@ -33,6 +33,7 @@ export type DrawerButtonViewSpec = {
 }
 
 const drawerWidth = 160
+const persistentStatusHeight = 14
 const drawerHiddenOffset = -drawerWidth - 1
 const SCROLL_THRESHOLD = 8
 
@@ -301,7 +302,7 @@ export const Drawer: DrawerTemplateCtor = Container.template((d: DrawerDictionar
   const skins = getDrawerSkins()
   return {
     name: 'drawer',
-    top: 0,
+    top: persistentStatusHeight,
     bottom: 0,
     width: drawerWidth,
     clip: true,
@@ -329,7 +330,7 @@ export const Drawer: DrawerTemplateCtor = Container.template((d: DrawerDictionar
       }),
     ],
     Behavior: class extends Behavior {
-      coordinates = { right: drawerHiddenOffset, width: drawerWidth, top: 0, bottom: 0 } as unknown as Coordinates
+      coordinates = { right: drawerHiddenOffset, width: drawerWidth, top: persistentStatusHeight, bottom: 0 } as unknown as Coordinates
       isOpen = false
       buttonList: PiuContainer | null = null
       timeline: Timeline | null = null

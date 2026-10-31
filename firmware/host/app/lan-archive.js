@@ -183,7 +183,7 @@ export function startArchive(robot) {
         view.onTouchBegan(0,x,y,Time.ticks);await new Promise(resolve=>Timer.set(resolve,60));view.onTouchEnded(0,x,y,Time.ticks);
         result={tapped:true};
       }
-      else if(request.op==='/screen/show'){if(busy||directChatStatus().enabled||reminderStatus().ringing)throw new Error('本体の操作が終わってから画面を確認してください');result=showScreen(robot,request.args?.scene);await new Promise(resolve=>Timer.set(resolve,150));}
+      else if(request.op==='/screen/show'){if(busy||directChatStatus().enabled||reminderStatus().ringing)throw new Error('本体の操作が終わってから画面を確認してください');if(request.args?.scene!=='balloon-test')closeOffline();result=showScreen(robot,request.args?.scene);await new Promise(resolve=>Timer.set(resolve,150));}
       else if(request.op==='/debug/status')result=debugLogStatus();
       else if(request.op==='/offline/auto')result=autoOffline(request.args?.enabled);
       else if(request.op==='/offline/status')result=offlineStatus();
@@ -343,6 +343,7 @@ export function startArchive(robot) {
     }
   });
   const offlinePolicy=new OfflinePolicy();
+  let hadOnlineConnection=usbConnected()||getSettingsStatus().connected;
   const autoOffline=value=>{
     if(typeof value==='boolean'){changeSettings(s=>{s.autoOffline=value;});offlinePolicy.reset();}
     return {enabled:getSettings().autoOffline!==false,usb:usbConnected(),wifi:getSettingsStatus().connected,active:offlinePolicy.entered};
@@ -350,12 +351,15 @@ export function startArchive(robot) {
   Timer.repeat(()=>{
     try{
       const connection=autoOffline(),network=getSettingsStatus();
+      const online=connection.usb||connection.wifi;
+      if(online&&!hadOnlineConnection)closeOffline();
+      hadOnlineConnection=online;
       if(!offlinePolicy.observe({...connection,setup:network.setupActive||checkStatus().running,busy:(busy&&!directChatStatus().busy)||offlineStatus().playing}))return;
       openOffline();offlinePolicy.enteredOffline();trace('[offline] automatic mode: USB and Wi-Fi disconnected\n');
     }catch(_){offlinePolicy.absent=0;}
   },1000);
   startWeb(robot,{
-    autoOffline,openOffline,
+    autoOffline,openOffline,closeOffline,
     diagnostics:()=>({wifi:getSettingsStatus(),signal:wifiDisplayStatus(),ai:directChatStatus(),volume:getVolume(),connection:autoOffline(),local:offlineStatus(),clock:localClockStatus()}),
     execute,
     read(name,offset,length,whole=false){
