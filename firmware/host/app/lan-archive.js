@@ -1,3 +1,4 @@
+import {checkOllama} from 'archive-ollama';
 import {startAISettings} from 'archive-ai-settings';
 import Timer from 'timer';
 import {checkGemini} from 'archive-gemini-check';
@@ -169,6 +170,7 @@ export function startArchive(robot) {
       else if(request.op==='/vision/status')result=visionStatus();
       else if(request.op==='/network/status')result=controlStatus();
       else if(request.op==='/wifi/reconnect')result=reconnectSavedWiFi();
+      else if(request.op==='/chat/ollama-test')result=await checkOllama();
       else if(request.op==='/chat/gemini-test')result=await checkGemini();
       else if(request.op==='/speaker/list')result=speakerList();
       else if(request.op==='/speaker/select')result=selectSpeaker(request.args||{});

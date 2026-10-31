@@ -28,6 +28,7 @@
     "archive-web": "./archive-web",
     "archive-web-page": "./archive-web-page",
     "archive-direct-chat": "./archive-direct-chat",
+    "archive-ollama": "./archive-ollama",
     "archive-chat-audioio": "./archive-chat-audioio",
     "archive-memory": [
       "./archive-memory",

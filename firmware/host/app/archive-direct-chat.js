@@ -1,3 +1,4 @@
+import { ollamaChat, ollamaModel, validOllamaModel, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
 import { VoiceRegistration, enrollmentInstructions } from 'archive-speaker-registration'
 import { speakerButtons } from 'archive-button-schema'
 import { startSpeakerChooser, openSpeakerChooser } from 'archive-speaker-ui'
@@ -197,18 +198,25 @@ function cloudConfig() {
   }
 }
 export function chatProvider() {
-  return getSettings().conversationProvider === 'gemini' ? 'gemini' : 'xiaozhi'
+  return ['gemini', 'ollama'].includes(getSettings().conversationProvider)
+    ? getSettings().conversationProvider
+    : 'xiaozhi'
 }
 function signature() {
   const data = getSettings()
   return (
     chatProvider() +
     ':' +
-    (chatProvider() === 'gemini' ? data.api?.gemini + ':' + (data.geminiModel || DEFAULT_GEMINI_MODEL) : 'xiaozhi')
+    (chatProvider() !== 'xiaozhi'
+      ? data.api?.gemini +
+        ':' +
+        (data.geminiModel || DEFAULT_GEMINI_MODEL) +
+        (chatProvider() === 'ollama' ? ':' + data.api?.ollama + ':' + ollamaModel() : '')
+      : 'xiaozhi')
   )
 }
 export function configureChatProvider(value) {
-  if (!['gemini', 'xiaozhi'].includes(value?.provider)) throw new Error('会話サービスを選択してください')
+  if (!['gemini', 'xiaozhi', 'ollama'].includes(value?.provider)) throw new Error('会話サービスを選択してください')
   if (
     value.apiKey !== undefined &&
     (typeof value.apiKey !== 'string' || value.apiKey.length > 4096 || /[\r\n]/.test(value.apiKey))
@@ -216,12 +224,15 @@ export function configureChatProvider(value) {
     throw new Error('APIキーが正しくありません')
   if (
     value.model !== undefined &&
-    (typeof value.model !== 'string' || !/^gemini-[a-zA-Z0-9._-]{1,90}$/.test(value.model))
+    (typeof value.model !== 'string' ||
+      !(value.provider === 'ollama'
+        ? validOllamaModel(value.model)
+        : /^gemini-[a-zA-Z0-9._-]{1,90}$/.test(value.model)))
   )
     throw new Error('Geminiモデル名が正しくありません')
   changeSettings((data) => {
-    if (value.apiKey) data.api.gemini = value.apiKey.trim()
-    if (value.model) data.geminiModel = value.model
+    if (value.apiKey) data.api[value.provider === 'ollama' ? 'ollama' : 'gemini'] = value.apiKey.trim()
+    if (value.model) data[value.provider === 'ollama' ? 'ollamaModel' : 'geminiModel'] = value.model
     data.conversationProvider = value.provider
   })
   if (chat || connecting) {
@@ -229,12 +240,15 @@ export function configureChatProvider(value) {
     state = enabled() ? 'waiting' : 'off'
     retryAt = 0
   }
-  if (providerButton)
-    providerButton.content('label').string = '会話サービス: ' + (chatProvider() === 'gemini' ? 'Gemini' : 'XiaoZhi')
+  if (providerButton) providerButton.content('label').string = '会話サービス: ' + providerLabel()
   if (modeNotice) modeNotice.string = providerNotice()
   return directChatStatus()
 }
+function providerLabel() {
+  return chatProvider() === 'ollama' ? 'Ollama Cloud' : chatProvider() === 'gemini' ? 'Gemini' : 'XiaoZhi'
+}
 function providerNotice() {
+  if (chatProvider() === 'ollama') return 'Ollama Cloudで返答生成。音声はGemini / Googleへ送信します。'
   return (chatProvider() === 'gemini' ? 'Gemini / Google' : 'XiaoZhi') + 'へON中はマイク音声を送信します。OFFで停止。'
 }
 export function directChatStatus() {
@@ -242,17 +256,27 @@ export function directChatStatus() {
   return {
     enabled: enabled(),
     provider,
-    model: provider === 'gemini' ? getSettings().geminiModel || DEFAULT_GEMINI_MODEL : undefined,
+    model:
+      provider === 'ollama'
+        ? ollamaModel()
+        : provider === 'gemini'
+          ? getSettings().geminiModel || DEFAULT_GEMINI_MODEL
+          : undefined,
+    ollamaConfigured: !!getSettings().api?.ollama,
     geminiConfigured: !!getSettings().api?.gemini,
-    configured: provider === 'gemini' ? !!getSettings().api?.gemini : !!cloudConfig()?.deviceId,
-    cloudConsent: provider === 'gemini' ? true : cloudConfig()?.cloudConsent === true,
+    configured:
+      provider === 'ollama'
+        ? !!getSettings().api?.ollama && !!getSettings().api?.gemini
+        : provider === 'gemini'
+          ? !!getSettings().api?.gemini
+          : !!cloudConfig()?.deviceId,
+    cloudConsent: provider !== 'xiaozhi' ? true : cloudConfig()?.cloudConsent === true,
     requiresSpeaker: enabled() && !currentSpeaker(),
     speaker: currentSpeaker()
       ? { id: currentSpeaker().id, name: currentSpeaker().name, guest: currentSpeaker().guest }
       : null,
     state,
-    label:
-      state === 'connecting' ? (provider === 'gemini' ? 'Gemini' : 'XiaoZhi') + 'へ接続中' : labels[state] || state,
+    label: state === 'connecting' ? providerLabel() + 'へ接続中' : labels[state] || state,
     error,
     detail,
     audio: { ...audioStats },
@@ -301,8 +325,10 @@ export function configureDirectChat(value) {
   return { configured: true }
 }
 export function setChatMode(on) {
+  if (on && chatProvider() === 'ollama' && (!getSettings().api?.ollama || !getSettings().api?.gemini))
+    throw new Error('Ollama Cloudと音声用GeminiのAPIキーを保存してください')
   if (typeof on !== 'boolean') throw new Error('Invalid conversation mode')
-  if (on && (chatProvider() === 'gemini' ? !getSettings().api?.gemini : !cloudConfig()?.cloudConsent))
+  if (on && (chatProvider() !== 'xiaozhi' ? !getSettings().api?.gemini : !cloudConfig()?.cloudConsent))
     throw new Error(
       chatProvider() === 'gemini' ? '設定ページでGemini APIキーを保存してください' : '会話の初期登録が必要です',
     )
@@ -362,7 +388,7 @@ function failed(reason) {
       ? String(reason).slice(0, 180)
       : '会話の接続が切れました。自動で再接続します。'
   detail = String(reason || 'connection closed')
-  for (const secret of [getSettings().api?.gemini, cloudConfig()?.accessToken])
+  for (const secret of [getSettings().api?.gemini, getSettings().api?.ollama, cloudConfig()?.accessToken])
     if (secret) detail = detail.split(secret).join('[redacted]')
   detail = detail.slice(0, 160)
   state = 'retrying'
@@ -529,8 +555,9 @@ async function connect() {
       closeChat()
       return
     }
-    if (provider === 'gemini' && !getSettings().api?.gemini)
+    if (provider !== 'xiaozhi' && !getSettings().api?.gemini)
       throw new Error('設定ページでGemini APIキーを保存してください')
+    if (provider === 'ollama' && !getSettings().api?.ollama) throw new Error('Ollama Cloud APIキーを保存してください')
     connectionSignature = signature()
     unlock = robot.audio.acquireExclusive()
     const tools = {}
@@ -538,15 +565,17 @@ async function connect() {
       ? []
       : [...listDeviceTools(), ...memoryTools.filter((t) => t.name !== 'conversation_identify'), ...visionTools])
       tools[tool.name] = tool
+    const sessionTools = provider === 'ollama' && !enrollment.active ? { ollama_reply: ollamaSpeechTool } : tools
     const serviceOptions =
-      provider === 'gemini'
+      provider !== 'xiaozhi'
         ? {
             config: {
               type: 'googleGeminiLive',
               specifier: 'archiveGeminiLive',
               apiKey: getSettings().api.gemini.trim(),
               modelID: getSettings().geminiModel || DEFAULT_GEMINI_MODEL,
-              instructions: conversationInstructions(),
+              instructions:
+                provider === 'ollama' && !enrollment.active ? OLLAMA_SPEECH_INSTRUCTIONS : conversationInstructions(),
             },
           }
         : {
@@ -560,10 +589,28 @@ async function connect() {
               mcp: { serverInfo: { name: 'stackchan-standalone', version: '1.0.0' } },
             }),
           }
+    let ollamaBusy = false
+    async function executeTool(name, args) {
+      if (chat !== instance) throw new Error('会話が切り替わりました')
+      if (name === 'camera_describe') {
+        if (!photoHandler) throw new Error('Camera unavailable')
+        const result = await photoHandler(args)
+        return result.analysis?.status === 'complete'
+          ? { photo: result.image, description: result.analysis.text }
+          : { photo: result.image, error: result.analysis?.error || '画像認識できませんでした' }
+      }
+      if (memoryTools.some((t) => t.name === name)) {
+        if (name === 'conversation_identify') throw new Error('話す人の変更は画面のボタンで選択してください')
+        if (name === 'user_remember' && !args.source_message_ids)
+          args = { ...args, source_message_ids: lastInputId ? [lastInputId] : [] }
+        return callMemory(name, args)
+      }
+      return callDeviceTool(name, args)
+    }
     const instance = new ChatService({
       ...serviceOptions,
       chatAudioIOCtor: ArchiveChatAudioIO,
-      tools,
+      tools: sessionTools,
       callbacks: {
         onStateChanged(value, reason) {
           if (chat !== instance) return
@@ -575,7 +622,7 @@ async function connect() {
             greetingPending = false
             robot.hideBalloon()
             introText =
-              conversationInstructions() +
+              (provider === 'ollama' && !enrollment.active ? OLLAMA_SPEECH_INSTRUCTIONS : conversationInstructions()) +
               (enrollment.active ? '' : '画面で選択した相手へ日本語で短く挨拶して会話を始めてください。')
             Timer.set(() => {
               if (chat === instance)
@@ -641,30 +688,45 @@ async function connect() {
           if (chat !== instance || enrollment.active) return
           Promise.resolve()
             .then(async () => {
-              if (name === 'camera_describe') {
-                if (!photoHandler) throw new Error('Camera unavailable')
-                const result = await photoHandler(args)
-                return result.analysis?.status === 'complete'
-                  ? { photo: result.image, description: result.analysis.text }
-                  : { photo: result.image, error: result.analysis?.error || '画像認識できませんでした' }
+              if (provider === 'ollama' && name === 'ollama_reply') {
+                if (ollamaBusy) throw new Error('Ollama Cloudで回答中です')
+                ollamaBusy = true
+                try {
+                  const text = String(args.text || '').trim()
+                  if (!text || text.length > 4096) throw new Error('発言を確認してください')
+                  const answer = await ollamaChat(
+                    [
+                      { role: 'system', content: conversationInstructions() },
+                      { role: 'user', content: text },
+                    ],
+                    Object.values(tools),
+                    executeTool,
+                    () => chat === instance,
+                  )
+                  error = ''
+                  return { answer }
+                } finally {
+                  ollamaBusy = false
+                }
               }
-              if (memoryTools.some((t) => t.name === name)) {
-                if (name === 'conversation_identify') throw new Error('話す人の変更は画面のボタンで選択してください')
-                if (name === 'user_remember' && !args.source_message_ids)
-                  args = { ...args, source_message_ids: lastInputId ? [lastInputId] : [] }
-                return callMemory(name, args)
-              }
-              return callDeviceTool(name, args)
+              return executeTool(name, args)
             })
             .then((result) => {
               if (name === 'conversation_identify') robot.hideBalloon()
               return chat === instance ? instance.sendFunctionResult(call, name, result) : undefined
             })
-            .catch(() =>
-              chat === instance
-                ? instance.sendFunctionResult(call, name, { error: '道具を実行できませんでした' })
-                : undefined,
-            )
+            .catch((e) => {
+              if (chat !== instance) return
+              let message = '道具を実行できませんでした'
+              if (provider === 'ollama') {
+                message = String(e.message || message)
+                for (const key of [getSettings().api?.ollama, getSettings().api?.gemini])
+                  if (key) message = message.split(key).join('[redacted]')
+                error = message.slice(0, 200)
+                robot.showBalloon(error)
+              }
+              return instance.sendFunctionResult(call, name, { error: message.slice(0, 200) })
+            })
         },
       },
     })
@@ -761,10 +823,14 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
             ),
             (providerButton = new ActionButton(
               {
-                label: '会話サービス: ' + (chatProvider() === 'gemini' ? 'Gemini' : 'XiaoZhi'),
+                label: '会話サービス: ' + providerLabel(),
                 onTap: () => {
                   try {
-                    configureChatProvider({ provider: chatProvider() === 'gemini' ? 'xiaozhi' : 'gemini' })
+                    configureChatProvider({
+                      provider: ['xiaozhi', 'gemini', 'ollama'][
+                        (['xiaozhi', 'gemini', 'ollama'].indexOf(chatProvider()) + 1) % 3
+                      ],
+                    })
                   } catch (_) {
                     robot.showBalloon('設定ページを確認してください')
                   }
