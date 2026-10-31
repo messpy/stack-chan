@@ -49,6 +49,7 @@
     "archive-image-page": "./archive-image-page",
     "archive-gemini-check": "./archive-gemini-check",
     "archive-speaker-ui": "./archive-speaker-ui",
+    "archive-speaker-registration": "./archive-speaker-registration",
     "archive-speaker-page": "./archive-speaker-page",
     "archive-button-schema": "./archive-button-schema",
     "archive-ui-button": "./archive-ui-button",

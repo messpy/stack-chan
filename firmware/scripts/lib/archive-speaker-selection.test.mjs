@@ -5,13 +5,13 @@ const sql=new DatabaseSync(':memory:');let sequence=0;const memContext=vm.create
 const alice=memory.saveUser({name:'Alice',likes:['りんご'],about:'明示されたプロフィール'}).users[0],bob=memory.saveUser({name:'Bob'}).users[0];let now=Date.now();for(const person of [alice,bob]){memory.identifySpeaker({id:person.id,name:person.name});for(let n=0;n<5;n++)memory.recordMemory({id:person.id+'-'+n,role:n%2?'assistant':'user',text:person.name+'専用履歴'+n,created:now++});}assert.equal(memory.history({user_id:alice.id,limit:3}).items.length,3);assert.ok(memory.history({user_id:alice.id,limit:10}).items.every(m=>m.text.startsWith('Alice')));memory.beginConversation();
 let opened=0,connections=[];class Chat{constructor(o){this.options=o;connections.push(o);}setVolume(){}start(){}close(){}sendFunctionResult(){}}
 const c={getSettings:()=>data,changeSettings:fn=>fn(data),...Object.fromEntries(['currentSpeaker','identifySpeaker','users','saveUser','history','beginConversation'].map(k=>[k,memory[k]])),setXiaoZhiVision(){},setVisionProvisioner(){},openSpeakerChooser(){opened++;},startSpeakerChooser(){},getSettingsStatus:()=>({connected:true}),DEFAULT_GEMINI_MODEL:'gemini-test',ChatService:Chat,ChatState:{FAILED:0,DISCONNECTED:1,CONNECTED:4,SPEAKING:5,LISTENING:6,WAITING:7},ArchiveChatAudioIO:class{},createXiaozhiV1Connection:opts=>opts,Timer:{set:()=>1,clear(){},repeat:()=>1},trace(){},listDeviceTools:()=>[],memoryTools:[{name:'conversation_identify'}],visionTools:[],callMemory(){},URL,robotStub:{ui:{showFace(){},application:{behavior:{},distribute(){}}},drawer:{setDrawerButtonState(){}},audio:{volume:.1,acquireExclusive:()=>()=>{}}}};
-const schema=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-button-schema.js')).toString('base64'));c.speakerButtons=schema.speakerButtons;vm.createContext(c);vm.runInContext(fs.readFileSync(root+'archive-direct-chat.js','utf8').replace(/^import .*;\s*$/gm,'').replace(/export /g,''),c);vm.runInContext('robot=robotStub;claim=()=>true;release=()=>{};',c);
+const schema=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-button-schema.js')).toString('base64'));const registration=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-speaker-registration.js')).toString('base64'));c.VoiceRegistration=registration.VoiceRegistration;c.enrollmentInstructions=registration.enrollmentInstructions;c.registrationName=registration.registrationName;c.speakerButtons=schema.speakerButtons;vm.createContext(c);vm.runInContext(fs.readFileSync(root+'archive-direct-chat.js','utf8').replace(/^import [\s\S]*? from '[^']+';?\s*$/gm,'').replace(/export /g,''),c);vm.runInContext('robot=robotStub;claim=()=>true;release=()=>{};',c);
 vm.runInContext('setChatMode(true)',c);assert.equal(vm.runInContext('directChatStatus().requiresSpeaker',c),true);assert.equal(opened,1);await vm.runInContext('connect()',c);assert.equal(connections.length,0);
 const selected=vm.runInContext('selectSpeaker({id:'+JSON.stringify(alice.id)+',name:"Alice"})',c);assert.equal(selected.historyRead,3);await vm.runInContext('connect()',c);assert.equal(connections.length,1);assert.ok(connections[0].config.instructions.includes('Alice'));assert.ok(!connections[0].config.instructions.includes('Bob専用'));assert.ok(!Object.keys(connections[0].tools).includes('conversation_identify'));
 vm.runInContext("configureChatProvider({provider:'xiaozhi'})",c);await vm.runInContext('connect()',c);assert.equal(memory.currentSpeaker().id,alice.id);vm.runInContext('setChatMode(false)',c);assert.equal(memory.currentSpeaker(),null);vm.runInContext('setChatMode(true)',c);assert.equal(vm.runInContext('directChatStatus().requiresSpeaker',c),true);assert.equal(vm.runInContext('selectSpeaker({guest:true}).historyRead',c),0);
 assert.throws(()=>schema.invokeButton({text:'bad',background:'#112233',textColor:'#ffffff',method:'toString'},{}));let pressed;schema.invokeButton({text:'タイマー',background:'#112233',textColor:'#ffffff',method:'timer_create',args:{seconds:30}},{timer_create:args=>pressed=args.seconds});assert.equal(pressed,30);
 class Node{constructor(data,options){Object.assign(this,options);this.skin=options.skin;}}
-const buttonContext={Container:Node,Label:Node,Skin:class{},Style:class{},uiFont:()=>'',Behavior:class{},validateButton:schema.validateButton,invokeButton:schema.invokeButton};vm.createContext(buttonContext);vm.runInContext(fs.readFileSync(root+'archive-ui-button.js','utf8').replace(/^import .*;\s*$/gm,'').replace(/export /g,''),buttonContext);let calls=0;buttonContext.methods={go:()=>calls++};const button=vm.runInContext("createUIButton({text:'登録',background:'#167647',textColor:'#ffffff',method:'go'},methods)",buttonContext);const behavior=new button.Behavior();behavior.onTouchBegan(button,0,0,0);behavior.onTouchMoved(button,0,20,0);behavior.onTouchEnded(button);await new Promise(r=>setTimeout(r,0));assert.equal(calls,0);behavior.onTouchBegan(button,0,0,0);behavior.onTouchEnded(button);behavior.onTouchEnded(button);await new Promise(r=>setTimeout(r,0));assert.equal(calls,1);assert.equal(button.active,true);
+const buttonContext={Container:Node,Label:Node,Skin:class{},Style:class{},uiFont:()=>'',Behavior:class{},validateButton:schema.validateButton,invokeButton:schema.invokeButton};vm.createContext(buttonContext);vm.runInContext(fs.readFileSync(root+'archive-ui-button.js','utf8').replace(/^import [\s\S]*? from '[^']+';?\s*$/gm,'').replace(/export /g,''),buttonContext);let calls=0;buttonContext.methods={go:()=>calls++};const button=vm.runInContext("createUIButton({text:'登録',background:'#167647',textColor:'#ffffff',method:'go'},methods)",buttonContext);const behavior=new button.Behavior();behavior.onTouchBegan(button,0,0,0);behavior.onTouchMoved(button,0,20,0);behavior.onTouchEnded(button);await new Promise(r=>setTimeout(r,0));assert.equal(calls,0);behavior.onTouchBegan(button,0,0,0);behavior.onTouchEnded(button);behavior.onTouchEnded(button);await new Promise(r=>setTimeout(r,0));assert.equal(calls,1);assert.equal(button.active,true);
 console.log('PASS: no microphone session before selection, bounded isolated person history, profile context, provider changes preserve identity, guest isolation, no voice identity override, safe named button methods, drag cancellation/debounce');
 assert.throws(()=>vm.runInContext("selectSpeaker({name:' stackchan '},true)",c));assert.equal(memory.users({id:'stackchan-self'}).users[0].kind,'robot');console.log('Robot profile is protected from duplicate-name person registration: PASS');
 
@@ -36,3 +36,35 @@ assert.equal(vm.runInContext('speakerList().enrollment.name',c),'');assert.throw
 vm.runInContext('cancelVoiceRegistration()',c);assert.equal(data.chatMode,false);assert.equal(memory.currentSpeaker(),null);
 assert.equal(vm.runInContext('registrationName("太郎と呼んでください")',c),'太郎');
 console.log('Voice registration: explicit start, no premature profile save, confirm-only persistence, unrelated speech rejected, cancel stops microphone: PASS');
+
+const isolatedRegistration=new registration.VoiceRegistration();
+assert.equal(isolatedRegistration.active,false);
+assert.equal(isolatedRegistration.receive('Alice'),false);
+assert.throws(()=>isolatedRegistration.confirmedName());
+isolatedRegistration.start();
+const registrationSnapshot=isolatedRegistration.snapshot();registrationSnapshot.phase='confirming';registrationSnapshot.name='wrong';
+assert.equal(isolatedRegistration.phase,'listening');
+assert.equal(isolatedRegistration.receive('Alice'),true);
+assert.equal(isolatedRegistration.receive('Bob'),false);
+assert.equal(isolatedRegistration.confirmedName(),'Alice');
+isolatedRegistration.reset();assert.equal(isolatedRegistration.snapshot(),null);assert.throws(()=>isolatedRegistration.confirmedName());
+console.log('Registration state is isolated from UI snapshots and accepts only one provisional name per attempt: PASS');
+
+class SpeakerViewNode{constructor(_data,options){Object.assign(this,options);this.children=[];}add(child){this.children.push(child);}empty(){this.children=[];}}
+let speakerDefinition,viewState={...schema.speakerButtons([])};
+const viewContext={Container:SpeakerViewNode,Label:SpeakerViewNode,Text:SpeakerViewNode,Skin:class{},Style:class{},uiFont:()=>'',createUIButton:(definition,methods,layout)=>({...definition,...layout,press:()=>schema.invokeButton(definition,methods)})};
+vm.createContext(viewContext);
+vm.runInContext(fs.readFileSync(root+'archive-speaker-ui.js','utf8').replace(/^import [\s\S]*? from '[^']+';?\s*$/gm,'').replace(/export /g,''),viewContext);
+let registrationStarts=0,confirmations=0,cancellations=0;
+viewContext.device={ui:{miniApps:{register:d=>speakerDefinition=d}},showBalloon(){}};
+viewContext.callbacks={list:()=>viewState,registration:()=>registrationStarts++,confirm:()=>confirmations++,cancel:()=>cancellations++};
+vm.runInContext('startSpeakerChooser(device,callbacks)',viewContext);
+viewState={people:[],buttons:schema.speakerButtons([]),enrollment:null};let screen=speakerDefinition.create().content;
+screen.children.find(n=>n.method==='register').press();assert.equal(registrationStarts,1);
+viewState.enrollment={phase:'listening',name:''};screen=speakerDefinition.create().content;
+assert.ok(screen.children.some(n=>n.method==='cancel'));assert.ok(!screen.children.some(n=>n.method==='confirm'));
+viewState.enrollment={phase:'confirming',name:'ユキ'};screen=speakerDefinition.create().content;
+screen.children.find(n=>n.method==='confirm').press();assert.equal(confirmations,1);
+screen.children.find(n=>n.method==='cancel').press();assert.equal(cancellations,1);
+assert.ok(screen.children.filter(n=>n.method).every(n=>n.top+n.height<=196));
+console.log('On-device speaker view: registration dispatch, listening/confirmation controls, cancel and buttons fit viewport: PASS');
