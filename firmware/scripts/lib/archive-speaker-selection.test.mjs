@@ -170,3 +170,24 @@ for(const provider of ['xiaozhi','gemini']){
 }
 vm.runInContext('setChatMode(false)',c);
 console.log('Greeting transport: XiaoZhi uses supported detect notification, Gemini uses text: PASS');
+
+// Real adapter forwards the microphone's channel count, including the default mono build.
+class AdapterBase{constructor(){}ensureInput(){}}
+let forwarded;
+class AdapterWorker{postMessage(message){forwarded=message}terminate(){}}
+const adapterContext=vm.createContext({ChatAudioIOBase:AdapterBase,Worker:AdapterWorker,SharedArrayBuffer,trace(){},writePcmRing(){},globalThis:{}});
+vm.runInContext(fs.readFileSync(root+'archive-chat-audioio.js','utf8').replace(/^import .*$/gm,'').replace('export default class ChatAudioIO','class ChatAudioIO'),adapterContext);
+for(const channels of [1,2]){
+ adapterContext.channelCount=channels;
+ vm.runInContext("var adapter=new ChatAudioIO();adapter.input={channels:channelCount};adapter.createWorker('archiveGeminiLive');adapter.worker.postMessage({id:'sendAudio',offset:0,size:960})",adapterContext);
+ assert.equal(forwarded.channels,channels);
+}
+console.log('Microphone format: actual mono/stereo channel count forwarded to cloud audio conversion: PASS');
+
+let ringChannels;adapterContext.writePcmRing=(...args)=>{ringChannels=args[5]};
+for(const channels of [1,2]){
+ adapterContext.channelCount=channels;
+ vm.runInContext("adapter=new ChatAudioIO();adapter.input={channels:channelCount};adapter.inputBuffer=new SharedArrayBuffer(4096);adapter.createWorker('xiaozhiV1');adapter.worker.postMessage({id:'sendAudio',offset:0,size:960})",adapterContext);
+ assert.equal(ringChannels,channels);
+}
+console.log('XiaoZhi PCM ring: native converter uses actual input channels as well: PASS');

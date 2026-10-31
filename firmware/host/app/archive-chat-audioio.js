@@ -76,14 +76,17 @@ export default class ChatAudioIO extends ChatAudioIOBase {
     this.worker = {
       terminate: () => worker.terminate(),
       postMessage: (message) => {
-        if(message.id==='sendAudio')globalThis.stackchanMicrophoneActivity?.()
+        if(message.id==='sendAudio'){
+          message={...message,channels:this.input?.channels??1}
+          globalThis.stackchanMicrophoneActivity?.()
+        }
         if (message.id !== 'sendAudio' || !usesNativePcmRing) {
           worker.postMessage(message)
           return
         }
         if (!this.inputBuffer || !pcmRing || !pcmRingState) return
         try {
-          writePcmRing(pcmRing, pcmRingState, this.inputBuffer, message.offset, message.size, message.channels ?? 2)
+          writePcmRing(pcmRing, pcmRingState, this.inputBuffer, message.offset, message.size, message.channels ?? 1)
         } catch (error) {
           this.failed({ string: `PCM ring write failed: ${String(error?.message ?? error)}` })
         }
