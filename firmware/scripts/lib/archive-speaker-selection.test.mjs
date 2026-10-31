@@ -222,9 +222,7 @@ console.log('Playback drain: final queued audio is not closed immediately, micro
 
 const tieTime=Date.now()+100000;
 for(let i=0;i<25;i++)memory.recordMemory({id:'cursor-tie-'+String(i).padStart(2,'0'),role:'user',text:'同時刻の発言'+i,created:tieTime,speakerId:i%2?bob.id:alice.id});
-let historyCursor=null,historyIds=[];
-for(let i=0;i<100;i++){const result=memory.deviceHistory({cursor:historyCursor,limit:8});assert.ok(result.items.length<=8);historyIds.push(...result.items.map(m=>m.id));if(!result.hasMore)break;historyCursor=result.cursor;}
-const tied=historyIds.filter(id=>id.startsWith('cursor-tie-'));assert.equal(tied.length,25);assert.equal(new Set(tied).size,25);
-const alicePage=memory.deviceHistory({user_id:alice.id,limit:8});assert.ok(alicePage.items.every(m=>!m.id.startsWith('cursor-tie-')||Number(m.id.slice(-2))%2===0));
-assert.throws(()=>memory.deviceHistory({cursor:{id:'x',created:'invalid'}}));
-console.log('Device history: bounded pages, equal-timestamp cursor completeness, person isolation and invalid cursor handling: PASS');
+const latest=memory.deviceHistory({limit:100}).items;assert.equal(latest.length,10);
+assert.deepEqual(latest.map(m=>m.id),Array.from({length:10},(_,i)=>'cursor-tie-'+String(24-i).padStart(2,'0')));
+const alicePage=memory.deviceHistory({user_id:alice.id}).items;assert.equal(alicePage.length,10);assert.ok(alicePage.every(m=>Number(m.id.slice(-2))%2===0));
+console.log('Device history: newest ten only, stable equal-time ordering and person isolation: PASS');
