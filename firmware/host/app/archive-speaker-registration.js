@@ -46,3 +46,12 @@ export class VoiceRegistration {
     return this.#state.name
   }
 }
+
+// Only a clear self-introduction is handled locally; ambiguous speech stays with AI.
+export function explicitSpeakerName(text){
+  const value=String(text||'').trim();
+  if(!/^(?:私の名前は|僕の名前は|名前は|私は|僕は)|(?:です|といいます|と言います)[。！!]*$/.test(value))return '';
+  const name=registrationName(value);
+  if(/^(?:はい|いいえ|そう|元気|大丈夫|よろしく|聞こえ|テスト)/.test(name))return '';
+  return name;
+}
