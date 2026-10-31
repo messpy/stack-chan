@@ -881,30 +881,33 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
   }, 2000)
 }
 
-export async function testDirectConnection(provider = chatProvider()) {
+export async function testDirectConnection(provider = chatProvider(), options = {}) {
   if (!['gemini', 'xiaozhi', 'ollama'].includes(provider)) throw new Error('会話サービスを選択してください')
   if (enabled() || chat || connecting) throw new Error('会話モードをOFFにしてテストしてください')
   const cfg = cloudConfig()
-  if (provider === 'xiaozhi' && !cfg?.endpoint) throw new Error('Cloud configuration required')
+  if (provider === 'xiaozhi' && (!cfg?.endpoint || !cfg?.cloudConsent)) throw new Error('Cloud configuration and consent required')
   if (provider !== 'xiaozhi' && !getSettings().api?.gemini) throw new Error('Gemini APIキーを設定してください')
   if (!claim()) throw new Error('Device busy')
   let instance, unlockTest
   try {
     unlockTest = robot.audio.acquireExclusive()
     return await new Promise((resolve, reject) => {
-      let finished = false
+      let finished = false, transcript = '', listeningStarted = false
       const done = (error) => {
         if (finished) return
         finished = true
+        if(options.recognition)try{instance?.setMicrophoneEnabled(false);}catch(_){}
         Timer.clear(timeout)
+        Timer.clear(cancelTimer)
         Timer.set(() => {
           try {
             instance?.close()
           } catch (_) {}
-          error ? reject(error) : resolve({ connected: true, provider, microphoneTransmission: false })
+          error ? reject(error) : resolve({ connected: true, provider, microphoneTransmission: !!options.recognition, transcript })
         }, 0)
       }
       const timeout = Timer.set(() => done(new Error('Native connection timed out')), 20000)
+      const cancelTimer = Timer.repeat(() => {if(options.cancelled?.())done(new Error('Stopped'));},100)
       try {
         const transport =
           provider === 'xiaozhi'
@@ -924,21 +927,23 @@ export async function testDirectConnection(provider = chatProvider()) {
                   specifier: 'archiveGeminiLive',
                   apiKey: getSettings().api.gemini.trim(),
                   modelID: getSettings().geminiModel || DEFAULT_GEMINI_MODEL,
-                  instructions: '接続確認です。音声やテキストを生成せず待機してください。',
+                  instructions: options.recognition ? '音声認識の動作確認です。聞こえた言葉を文字起こししてください。応答や道具の実行は不要です。' : '接続確認です。音声やテキストを生成せず待機してください。',
                 },
               }
         instance = new ChatService({
           ...transport,
           chatAudioIOCtor: ArchiveChatAudioIO,
           callbacks: {
+            onInputTranscript(text,more){if(!options.recognition||finished)return;transcript=(transcript+(text||'')).slice(-160);if(!more&&transcript)done(null);},
             onStateChanged(value, reason) {
-              if (value === ChatState.CONNECTED || value === ChatState.SPEAKING) done(null)
-              else if (value === ChatState.FAILED) done(new Error(String(reason || 'Native chat failed')))
+              if(finished)return
+              if (value === ChatState.CONNECTED || value === ChatState.SPEAKING) {if(options.recognition){if(!listeningStarted){listeningStarted=true;instance.setMicrophoneEnabled(true);options.progress?.('いま話してください（約15秒）');Timer.schedule(timeout,15000);}}else done(null);}
+              else if (value === ChatState.FAILED || value === ChatState.DISCONNECTED) done(new Error(String(reason || 'Native chat failed')))
             },
           },
         })
         instance.setMicrophoneEnabled(false)
-        instance.setVolume(robot.audio.volume)
+        instance.setVolume(options.recognition ? 0 : robot.audio.volume)
         instance.start()
       } catch (error) {
         done(error)

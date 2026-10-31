@@ -26,7 +26,7 @@ export function offlineStatus() {
     clock: localClockStatus(),
   }
 }
-export async function offlineAction(action) {
+export async function offlineAction(action, options = {}) {
   if (!['hello', 'time', 'status', 'timer', 'stop'].includes(action)) throw new Error('操作を選んでください')
   if (playing) throw new Error('お話し中です')
   await actions.stopCloud()
@@ -51,7 +51,7 @@ export async function offlineAction(action) {
     } else text = '本体だけで動いています。アラームとタイマー、声のお返事ができます。画面のボタンを押してね。'
     lastText = text
     error = ''
-    robot.showBalloon(text, { bottom: faceButtons ? 50 : 12 })
+    robot.showBalloon(text, { bottom: options.bottom ?? (faceButtons ? 50 : 12) })
     unlock = robot.audio.acquireExclusive()
     if (globalThis.amp) globalThis.amp.sampleRate = 24000
     voice ??= new TTS({

@@ -1,3 +1,5 @@
+import {startChecks,checkStatus} from 'archive-checks';
+import {Emotion} from 'face-state';
 import {OfflinePolicy} from 'archive-offline-policy';
 import {getSettings,changeSettings} from 'archive-vault';
 import {startLocalClock,setLocalTime,localClockStatus} from 'archive-local-clock';
@@ -291,6 +293,39 @@ export function startArchive(robot) {
   },5);
 
   try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},args=>photo(robot,{...args,analyze:true},true),on=>{if(on){if(offlineStatus().playing)throw new Error('読み上げが終わってから会話を開始してください');closeOffline();}});}catch(_){trace('[direct-chat] initialization unavailable\n');}
+  startChecks(robot,{
+    prepare(){if((busy&&!directChatStatus().busy)||offlineStatus().playing||reminderStatus().ringing)throw new Error('busy');if(directChatStatus().enabled)setChatMode(false);closeOffline();},
+    async test(kind,report,stopped){
+      const wait=ms=>new Promise(resolve=>Timer.set(resolve,ms));
+      if(kind==='recognition'){
+        if(!getSettingsStatus().connected||!directChatStatus().configured)throw new Error('network');
+        let result;try{result=await testDirectConnection(directChatStatus().provider,{recognition:true,progress:report,cancelled:stopped});}catch(error){if(String(error?.message).includes('timed out'))throw new Error('speech-timeout');throw error;}
+        return result.transcript?'認識: '+result.transcript:'言葉を認識できませんでした';
+      }
+      if(kind==='audio'){report('本体の音声を再生します');await offlineAction('hello',{bottom:80});return '声が聞こえたか確認してください（現在の音量）';}
+      if(busy)throw new Error('busy');busy=true;
+      const base={...(getM5StackChanDriver()?.lastKnownRotation||robot.pose.body.rotation)},pose=robot.pose.body;
+      try{
+        if(kind==='emotion'){
+          for(const [emotion,name] of [[Emotion.NEUTRAL,'通常'],[Emotion.HAPPY,'うれしい'],[Emotion.ANGRY,'おこる'],[Emotion.SAD,'かなしい'],[Emotion.SLEEPY,'ねむい'],[Emotion.HOT,'あつい']]){if(stopped())break;report('表情: '+name);robot.setEmotion(emotion);await wait(1200);}
+          return '表情が順番に変わったか確認してください';
+        }
+        if(kind==='servo'){
+          robot.lookAway();await robot.setTorque(true);
+          for(const [name,rotation] of [['左',{y:.3,p:0,r:0}],['右',{y:-.3,p:0,r:0}],['上',{y:0,p:-.15,r:0}],['下',{y:0,p:.12,r:0}]]){if(stopped())break;report('サーボ: '+name);await robot.setPose({...pose,rotation},.5);await wait(800);}
+          return '左右・上下へ動いたか確認してください';
+        }
+        if(kind==='led'){
+          const name=Object.keys(robot.led)[0];if(!name)throw new Error('unavailable');
+          for(const [label,r,g,b] of [['赤',96,0,0],['緑',0,96,0],['青',0,0,96]]){if(stopped())break;report('LED: '+label);robot.lightOn(name,r,g,b);await wait(900);}
+          if(!stopped()){report('LED: 虹色');robot.lightRainbow(name);await wait(1800);}
+          return '赤・緑・青・虹色に光ったか確認してください';
+        }
+      }finally{
+        try{if(kind==='emotion')robot.setEmotion(Emotion.NEUTRAL);if(kind==='led')for(const name of Object.keys(robot.led))robot.lightOff(name);if(kind==='servo'){try{await robot.setPose({...pose,rotation:base},.5);await wait(650);}finally{await robot.setTorque(false);}}}finally{busy=false;}
+      }
+    }
+  });
   const offlinePolicy=new OfflinePolicy();
   const autoOffline=value=>{
     if(typeof value==='boolean'){changeSettings(s=>{s.autoOffline=value;});offlinePolicy.reset();}
@@ -299,7 +334,7 @@ export function startArchive(robot) {
   Timer.repeat(()=>{
     try{
       const connection=autoOffline(),network=getSettingsStatus();
-      if(!offlinePolicy.observe({...connection,setup:network.setupActive,busy:(busy&&!directChatStatus().busy)||offlineStatus().playing}))return;
+      if(!offlinePolicy.observe({...connection,setup:network.setupActive||checkStatus().running,busy:(busy&&!directChatStatus().busy)||offlineStatus().playing}))return;
       openOffline();offlinePolicy.enteredOffline();trace('[offline] automatic mode: USB and Wi-Fi disconnected\n');
     }catch(_){offlinePolicy.absent=0;}
   },1000);

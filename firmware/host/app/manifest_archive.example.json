@@ -28,6 +28,7 @@
     "archive-audio-upload": "./archive-audio-upload",
     "archive-volume": "./archive-volume",
     "archive-web": "./archive-web",
+    "archive-checks": "./archive-checks",
     "archive-web-page": "./archive-web-page",
     "archive-direct-chat": "./archive-direct-chat",
     "archive-offline": "./archive-offline",

@@ -74,7 +74,8 @@ export function startWeb(context,callbacks,token){
     const result=page('設定',[]),root=result.content;
     for(const [i,[label,id]] of [['会話・AI','archive-chat-settings'],['音量・アラーム','archive-sound-settings'],['Wi-Fi・接続','archive-network-settings'],['オフライン','archive-offline-settings']].entries())
       root.add(new ActionButton({label,onTap:()=>launch(id)},{left:i%2?164:8,top:34+Math.floor(i/2)*44,width:148,height:38}));
-    root.add(new ActionButton({label:'情報取得 / 本体の状態',onTap:()=>launch('archive-device-info')},{left:8,right:8,top:126,height:38}));
+    root.add(new ActionButton({label:'情報取得',onTap:()=>launch('archive-device-info')},{left:8,top:126,width:148,height:38}));
+    root.add(new ActionButton({label:'動作確認',onTap:()=>launch('archive-checks')},{right:8,top:126,width:148,height:38}));
     return result;
   }});
   robot.ui.miniApps.register({id:'archive-device-info',title:'情報取得',hidden:true,create(){
@@ -111,7 +112,7 @@ export function startWeb(context,callbacks,token){
       ['設定へ戻る',()=>launch('archive-settings')]
     ]);return view;
   }});
-  for(const key of ['archiveVolume','directChatMode','offlineMode','alarmSettings'])robot.drawer.removeDrawerButton(key);
+  for(const key of ['archiveVolume','directChatMode','offlineMode','alarmSettings','toggleFace','cycleEmotion','toggleSpeech','speakStackchan','handAnimation','cameraPreview','toggleLookAround','servoTest','toggleLED','playTone','recordPlayback','toggleColor'])robot.drawer.removeDrawerButton(key);
   robot.drawer.addDrawerButton({key:'networkSettings',label:'設定',callback:()=>{robot.ui.application.behavior.closeDrawer?.();launch('archive-settings');}});
   Timer.repeat(()=>{if(server)return;const s=getSettingsStatus();if(!s.connected&&!s.setupActive)return;try{startServer();lastStartError=false;}catch(error){if(!lastStartError){trace('[control] web start failed: '+String(error?.name||'Error')+'\n');lastStartError=true;}}},1000);
 }
