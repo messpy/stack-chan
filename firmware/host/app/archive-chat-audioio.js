@@ -2,6 +2,7 @@
 import ChatAudioIOBase from 'ChatAudioIO'
 import { writePcmRing } from 'archivePcmRingWriter'
 import Worker from 'worker'
+import AudioIn from 'embedded:io/audio/in'
 
 const CONNECTION_ENVELOPE = '__stackchanConnectionConfiguration'
 
@@ -28,15 +29,25 @@ export default class ChatAudioIO extends ChatAudioIOBase {
   }
 
   ensureInput() {
-    if (!this.immediateInputReady) {
-      super.ensureInput()
-      return
-    }
-    const notify = !this.ready && this.state !== ChatAudioIO.DISCONNECTED
-    super.ensureInput()
-    if (!this.input || this.ready) return
-    this.ready = true
-    if (notify) this.onStateChanged(this.state)
+    if(this.input)return
+    this.output?.close();this.output=null
+    let input
+    input=new AudioIn({sampleRate:this.inputSampleRate,onReadable:()=>{
+      if(this.input!==input||!this.microphone)return
+      // Read currently available bytes, rather than a stale queued notification size.
+      const data=input.read()
+      if(!data?.byteLength)return
+      if(!this.ready){this.ready=true;if(this.state!==ChatAudioIO.DISCONNECTED)this.onStateChanged(this.state)}
+      if(data.byteLength>this.inputBufferSize)return
+      if(this.inputBufferOffset+data.byteLength>this.inputBufferSize)this.inputBufferOffset=0
+      new Uint8Array(this.inputBuffer,this.inputBufferOffset,data.byteLength).set(new Uint8Array(data))
+      let peak=0;const samples=new Int16Array(data)
+      for(let i=0;i<samples.length;i++)peak=Math.max(peak,Math.abs(samples[i]))
+      this.onInputLevelChanged(peak)
+      if(this.state===ChatAudioIO.SPEAKING)this.worker.postMessage({id:'sendAudio',offset:this.inputBufferOffset,size:data.byteLength,channels:input.channels})
+      this.inputBufferOffset+=data.byteLength
+    }})
+    this.input=input;input.start()
   }
 
   createWorker(specifier, instructions, functions, voiceID, providerID, modelID, apiKey) {
@@ -51,7 +62,7 @@ export default class ChatAudioIO extends ChatAudioIOBase {
     if (usesNativePcmRing || specifier === 'archiveGeminiLive') this.inputSampleRate = 16000
 
     const worker = new Worker(specifier, {
-      static: 512 * 1024,
+      static: specifier==='archiveGeminiLive'?1024*1024:512*1024,
       chunk: {
         initial: 64 * 1024,
         incremental: 8 * 1024,
@@ -60,7 +71,7 @@ export default class ChatAudioIO extends ChatAudioIOBase {
         initial: 1024,
         incremental: 256,
       },
-      stack: 1024,
+      stack: specifier==='archiveGeminiLive'?4096:1024,
       nativeStack: 40 * 1024,
       priority: 4,
     })

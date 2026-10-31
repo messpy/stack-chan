@@ -158,7 +158,7 @@ assert.equal(micLights.length,2);assert.deepEqual(micLights[0],['on','head',0,48
 console.log('Microphone indicator: green while recording, repeated PCM does not rewrite LED, stop clears LED: PASS');
 
 let greetingRoute;
-Chat.prototype.sendText=function(){greetingRoute='text'};
+Chat.prototype.sendText=function(text){greetingRoute='text';assert.ok(text.length<100)};
 Chat.prototype.notifyWakeWordDetected=function(){greetingRoute='detect'};
 c.Timer.set=(fn,ms)=>{if(!ms)queueMicrotask(fn);return 1};
 for(const provider of ['xiaozhi','gemini']){
@@ -191,3 +191,12 @@ for(const channels of [1,2]){
  assert.equal(ringChannels,channels);
 }
 console.log('XiaoZhi PCM ring: native converter uses actual input channels as well: PASS');
+
+let audioCallback,actualReads=0,postedFrames=[];
+AdapterBase.SPEAKING=4;AdapterBase.DISCONNECTED=0;
+adapterContext.AudioIn=class{constructor(options){audioCallback=options.onReadable;this.channels=1}start(){}read(){actualReads++;return actualReads===1?new Int16Array([1,2,3,4]).buffer:undefined}};
+adapterContext.frame=m=>postedFrames.push(m);
+vm.runInContext("adapter=new ChatAudioIO();adapter.microphone=true;adapter.inputBuffer=new SharedArrayBuffer(512);adapter.inputBufferSize=512;adapter.inputBufferOffset=0;adapter.state=4;adapter.ready=true;adapter.onInputLevelChanged=()=>{};adapter.worker={postMessage:frame};adapter.ensureInput()",adapterContext);
+audioCallback(99999);audioCallback(99999);
+assert.equal(postedFrames.length,1);assert.equal(postedFrames[0].size,8);assert.equal(postedFrames[0].channels,1);
+console.log('Microphone stale notifications: current available bytes read, empty callbacks ignored: PASS');

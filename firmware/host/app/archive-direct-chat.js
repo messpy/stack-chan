@@ -649,6 +649,7 @@ async function connect() {
             introText =
               (provider === 'ollama' && !enrollment.active ? OLLAMA_SPEECH_INSTRUCTIONS : conversationInstructions()) +
               (enrollment.active ? '' : (currentSpeaker() ? '選択した相手へ日本語で短く挨拶してください。' : '最初に「あなたは誰？お名前を教えて」と日本語で聞いてください。本人の回答後は必ずconversation_identifyで登録または既存人物を選び、その結果を使って挨拶してください。'))
+            if(provider==='gemini')introText=currentSpeaker()?'相手に日本語で短く一言だけ挨拶してください。':'「あなたは誰？お名前を教えて。」とだけ一度言ってください。説明は不要です。'
             Timer.set(() => {
               if (chat === instance)
                 try {

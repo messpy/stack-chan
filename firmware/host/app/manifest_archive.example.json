@@ -172,7 +172,8 @@
     "chunk": {
       "initial": 524288,
       "incremental": 65536
-    }
+    },
+    "stack": 4096
   },
   "resources": {
     "*-mask": [
