@@ -32,3 +32,8 @@ Gemini image recognition defaults to `gemini-3.1-flash-lite` with low thinking a
 ネット・PC・APIキーは不要です。時計が未設定でもタイマーは起動中の経過時間で動き、途中の時刻同期や手動変更には影響されません。時計が未設定のまま再起動したタイマーは解除されます。日時指定アラームには正しい時計が必要です。「時計設定」から日本時間の年月日・時分を手動で設定できます。
 
 メーカー公式と同じPCF8563系RTCを使い、Wi-Fi・USB・手動設定で得た時刻をUTCで保存します。RTCの電源と時刻が有効なら次回起動時に復元できます。保存は読み戻して検証し、失敗や電圧低下は診断に残します。時計を保持できても、本体の電源が切れている間はアラームを鳴らせません。
+
+### 長文の循環表示
+通常の `robot.showBalloon(text)` は、メーカー公式のSpeech Bubbleと同じ1行の循環横スクロールです。短文は静止し、長文は最初に1秒待ってから毎秒30pxで流れ、末尾のあと先頭へ戻ります。`{marquee:false}` で従来の折返し、`{speed:40}` で速度を指定できます。明示的な複数行 `showBalloonLines` は維持します。
+
+AIの返答と画像認識の全文にも適用します。オフラインの下端ボタンがあるときは吹き出しを上へずらします。表示窓を使うため長い文章もPiuの16bit座標範囲に依存せず、画面から外れたらアニメーションを止めます。参照したメーカー実装は `m5stack/StackChan` の `firmware/main/stackchan/avatar/skins/default/speech_bubble.cpp` の `LV_LABEL_LONG_MODE_SCROLL_CIRCULAR` です。

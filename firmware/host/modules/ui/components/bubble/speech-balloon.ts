@@ -1,3 +1,4 @@
+import { CircularTextModel } from 'circular-text'
 import { createFaceState, type FaceState, toPiuColorNumber, toPiuColorString } from 'face-state'
 import {
   type BehaviorConstructor,
@@ -42,6 +43,7 @@ type BalloonOptions = {
   bottom?: number
   width?: number
   height?: number
+  marquee?: boolean
   rows?: number
   minHeight?: number
   padding?: number
@@ -146,13 +148,27 @@ export const SpeechBalloon = Container.template((opts: BalloonOptions = {}) => {
   const minHeight = resolveDimension(opts.minHeight, defaultOptions.minHeight)
   const rowCount = opts.rows === undefined ? 0 : Math.max(1, Math.min(8, Math.floor(opts.rows)))
   const tail = resolveTail(opts)
+  const marquee = opts.marquee === true && !rowCount
 
   const style = getTextStyle(o.font, '#000')
   const lineHeight = Math.max(1, style.measure('Mg').height ?? 0)
-  const fixedHeight = opts.height ?? (rowCount ? Math.max(minHeight, paddingY * 2 + lineHeight * rowCount) : undefined)
+  const fixedHeight =
+    opts.height ??
+    (marquee
+      ? Math.max(minHeight, paddingY * 2 + lineHeight)
+      : rowCount
+        ? Math.max(minHeight, paddingY * 2 + lineHeight * rowCount)
+        : undefined)
   let background: WithSkin | null = null
   let bodyText: PiuText | null = null
   let rowLabels: PiuLabel[] = []
+  let marqueeLabel: PiuLabel | null = null
+  let marqueeView: PiuContainer | null = null
+  let marqueeModel: CircularTextModel | null = null
+  let marqueeX = 0
+  let lastTick = 0
+  const speed = Number.isFinite(opts.speed) && opts.speed! > 0 ? Math.min(200, opts.speed!) : 30
+
   let currentLines: readonly string[] = []
   let currentText = o.text ?? ''
   let currentPrimary: number | null = null
@@ -217,13 +233,16 @@ export const SpeechBalloon = Container.template((opts: BalloonOptions = {}) => {
         // Fixed-height text and background already stretch with their parent.
         // Reading self.width here forces Piu to finish pending layout on every
         // streamed text/mouth update, even though no parts need rebuilding.
-        if (fixedHeight !== undefined && background && (bodyText || rowLabels.length)) return
+        if (fixedHeight !== undefined && background && (bodyText || marqueeLabel || rowLabels.length)) return
         const w = resolveWidth(self)
-        if (background && (bodyText || rowLabels.length) && layoutWidth === w) return
-        if (background || bodyText || rowLabels.length) {
+        if (background && (bodyText || marqueeLabel || rowLabels.length) && layoutWidth === w) return
+        if (background || bodyText || marqueeLabel || rowLabels.length) {
           self.empty()
           background = null
           bodyText = null
+          marqueeLabel = null
+          marqueeView = null
+          marqueeModel = null
           rowLabels = []
         }
         currentPrimary = null
@@ -237,7 +256,38 @@ export const SpeechBalloon = Container.template((opts: BalloonOptions = {}) => {
         }) as WithSkin
         textInitialized = false
         self.add(background)
-        if (rowCount) {
+        if (marquee) {
+          marqueeModel = new CircularTextModel((character) => style.measure(character).width ?? 0)
+          marqueeLabel = new Label(null, { left: 0, top: 0, width: 1, height: lineHeight, string: '', style })
+          marqueeView = new Container(null, {
+            left: paddingX,
+            right: paddingX,
+            top: paddingY,
+            height: lineHeight,
+            clip: true,
+            Behavior: class extends Behavior<PiuContainer> {
+              onTimeChanged(content: PiuContainer) {
+                if (!marqueeModel || !marqueeLabel) return
+                const now = content.time,
+                  elapsed = Math.max(0, now - Math.max(1000, lastTick))
+                lastTick = now
+                if (marqueeModel.advance((elapsed * speed) / 1000)) marqueeLabel.string = marqueeModel.windowText
+                const nextX = -Math.floor(marqueeModel.offset)
+                marqueeLabel.moveBy(nextX - marqueeX, 0)
+                marqueeX = nextX
+              }
+              onDisplaying(content: PiuContainer) {
+                if (marqueeModel?.scrolling) content.start()
+              }
+              onUndisplaying(content: PiuContainer) {
+                content.stop()
+              }
+            },
+          })
+          marqueeView.interval = 40
+          marqueeView.add(marqueeLabel)
+          self.add(marqueeView)
+        } else if (rowCount) {
           rowLabels = Array.from(
             { length: rowCount },
             (_, row) =>
@@ -269,7 +319,7 @@ export const SpeechBalloon = Container.template((opts: BalloonOptions = {}) => {
 
       updatePalette(face: FaceState) {
         currentFace = face
-        if (!background || (!bodyText && !rowLabels.length)) return
+        if (!background || (!bodyText && !marqueeLabel && !rowLabels.length)) return
         const primary = toPiuColorNumber(face.theme.primary)
         const secondary = toPiuColorNumber(face.theme.secondary)
         if (primary === currentPrimary && secondary === currentSecondary) return
@@ -280,10 +330,28 @@ export const SpeechBalloon = Container.template((opts: BalloonOptions = {}) => {
         background.skin = getBubbleSkin(bubbleColor, tail)
         const nextStyle = getTextStyle(o.font, textColor)
         if (bodyText) bodyText.style = nextStyle
+        if (marqueeLabel) marqueeLabel.style = nextStyle
         for (const label of rowLabels) label.style = nextStyle
       }
 
       updateText(self: PiuContainer, text: string) {
+        if (marqueeModel && marqueeLabel && marqueeView) {
+          if (!marqueeModel.setText(text, Math.max(1, resolveWidth(self) - paddingX * 2))) return
+          marqueeView.stop()
+          marqueeView.time = 0
+          lastTick = 0
+          marqueeLabel.string = marqueeModel.windowText
+          marqueeLabel.width = Math.ceil(
+            marqueeModel.scrolling
+              ? marqueeModel.width + 2 * marqueeModel.maxAdvance
+              : Math.max(1, marqueeModel.contentWidth),
+          )
+          const nextX = marqueeModel.scrolling ? 0 : Math.floor((marqueeModel.width - marqueeModel.contentWidth) / 2)
+          marqueeLabel.moveBy(nextX - marqueeX, 0)
+          marqueeX = nextX
+          if (marqueeModel.scrolling) marqueeView.start()
+          return
+        }
         if (!bodyText) return
         const nextText = text ?? ''
         if (textInitialized && bodyText.string === nextText) return

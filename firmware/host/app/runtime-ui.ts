@@ -44,7 +44,18 @@ type RuntimeUIOptions = {
 
 type BalloonLayout = ShowBalloonOptions & { rows?: number }
 
-const BALLOON_OPTION_KEYS = ['left', 'right', 'top', 'bottom', 'width', 'height', 'tail', 'rows'] as const
+const BALLOON_OPTION_KEYS = [
+  'left',
+  'right',
+  'top',
+  'bottom',
+  'width',
+  'height',
+  'tail',
+  'rows',
+  'marquee',
+  'speed',
+] as const
 
 type SpeechBalloonBehavior = {
   setText?: (content: UIEffect, text: string) => void
@@ -101,7 +112,7 @@ export class StackchanRuntimeUI {
   }
 
   showBalloon(text: string, option: ShowBalloonOptions = {}) {
-    this.#showBalloon(text, option)
+    this.#showBalloon(text, { marquee: true, ...option })
   }
 
   #showBalloon(text: string, option: BalloonLayout) {

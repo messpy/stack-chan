@@ -680,7 +680,10 @@ async function connect() {
           if (more && text === '') output = ''
           else output = (output + (text || '')).slice(-4096)
           if (!more && output) {
-            if (!enrollment.active) archive('output', output)
+            if (!enrollment.active) {
+              archive('output', output)
+              robot.showBalloon(output)
+            }
             output = ''
           }
         },

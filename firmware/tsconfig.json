@@ -99,6 +99,7 @@
       "effects/*": [
         "./host/modules/ui/components/effects/*"
       ],
+      "circular-text": ["./host/modules/ui/components/bubble/circular-text"],
       "effects/speech-balloon": [
         "./host/modules/ui/components/bubble/speech-balloon"
       ],
