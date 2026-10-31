@@ -31,6 +31,7 @@
     "archive-web-page": "./archive-web-page",
     "archive-direct-chat": "./archive-direct-chat",
     "archive-offline": "./archive-offline",
+    "archive-offline-speech": "./archive-offline-speech",
     "archive-local-clock": "./archive-local-clock",
     "archive-offline-tts": "../modules/audio/stackchan-voice/tts-stackchan-voice",
     "archive-ollama": "./archive-ollama",

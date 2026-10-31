@@ -1,4 +1,5 @@
-import { CircularTextModel } from 'circular-text'
+import Timer from 'timer'
+import { MarqueeTextModel } from 'marquee-text'
 import { createFaceState, type FaceState, toPiuColorNumber, toPiuColorString } from 'face-state'
 import {
   type BehaviorConstructor,
@@ -43,6 +44,7 @@ type BalloonOptions = {
   bottom?: number
   width?: number
   height?: number
+  onComplete?: () => void
   marquee?: boolean
   rows?: number
   minHeight?: number
@@ -164,9 +166,25 @@ export const SpeechBalloon = Container.template((opts: BalloonOptions = {}) => {
   let rowLabels: PiuLabel[] = []
   let marqueeLabel: PiuLabel | null = null
   let marqueeView: PiuContainer | null = null
-  let marqueeModel: CircularTextModel | null = null
+  let marqueeModel: MarqueeTextModel | null = null
   let marqueeX = 0
   let lastTick = 0
+  let completionTimer: ReturnType<typeof Timer.set> | undefined
+  const cancelCompletion = () => {
+    if (completionTimer !== undefined) {
+      Timer.clear(completionTimer)
+      completionTimer = undefined
+    }
+  }
+  const completeAfter = (milliseconds: number) => {
+    if (!opts.onComplete) return
+    cancelCompletion()
+    completionTimer = Timer.set(() => {
+      completionTimer = undefined
+      opts.onComplete?.()
+    }, milliseconds)
+  }
+
   const speed = Number.isFinite(opts.speed) && opts.speed! > 0 ? Math.min(200, opts.speed!) : 30
 
   let currentLines: readonly string[] = []
@@ -257,7 +275,7 @@ export const SpeechBalloon = Container.template((opts: BalloonOptions = {}) => {
         textInitialized = false
         self.add(background)
         if (marquee) {
-          marqueeModel = new CircularTextModel((character) => style.measure(character).width ?? 0)
+          marqueeModel = new MarqueeTextModel((character) => style.measure(character).width ?? 0)
           marqueeLabel = new Label(null, { left: 0, top: 0, width: 1, height: lineHeight, string: '', style })
           marqueeView = new Container(null, {
             left: paddingX,
@@ -275,12 +293,17 @@ export const SpeechBalloon = Container.template((opts: BalloonOptions = {}) => {
                 const nextX = -Math.floor(marqueeModel.offset)
                 marqueeLabel.moveBy(nextX - marqueeX, 0)
                 marqueeX = nextX
+                if (marqueeModel.finished) {
+                  content.stop()
+                  completeAfter(2500)
+                }
               }
               onDisplaying(content: PiuContainer) {
-                if (marqueeModel?.scrolling) content.start()
+                if (marqueeModel?.scrolling && !marqueeModel.finished) content.start()
               }
               onUndisplaying(content: PiuContainer) {
                 content.stop()
+                cancelCompletion()
               }
             },
           })
@@ -336,7 +359,12 @@ export const SpeechBalloon = Container.template((opts: BalloonOptions = {}) => {
 
       updateText(self: PiuContainer, text: string) {
         if (marqueeModel && marqueeLabel && marqueeView) {
-          if (!marqueeModel.setText(text, Math.max(1, resolveWidth(self) - paddingX * 2))) return
+          if (!marqueeModel.setText(text, Math.max(1, resolveWidth(self) - paddingX * 2))) {
+            if (!marqueeModel.scrolling) completeAfter(6000)
+            else if (marqueeModel.finished) completeAfter(2500)
+            return
+          }
+          cancelCompletion()
           marqueeView.stop()
           marqueeView.time = 0
           lastTick = 0
@@ -350,6 +378,7 @@ export const SpeechBalloon = Container.template((opts: BalloonOptions = {}) => {
           marqueeLabel.moveBy(nextX - marqueeX, 0)
           marqueeX = nextX
           if (marqueeModel.scrolling) marqueeView.start()
+          else completeAfter(6000)
           return
         }
         if (!bodyText) return

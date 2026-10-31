@@ -1,5 +1,5 @@
 import {startLocalClock,setLocalTime,localClockStatus} from 'archive-local-clock';
-import {startOffline,openOffline,offlineAction,offlineStatus} from 'archive-offline';
+import {startOffline,openOffline,closeOffline,offlineAction,offlineStatus} from 'archive-offline';
 import {checkOllama} from 'archive-ollama';
 import {startAISettings} from 'archive-ai-settings';
 import Timer from 'timer';
@@ -144,9 +144,9 @@ async function recordAudio(robot) {
 }
 export function startArchive(robot) {
   startLocalClock();
-  startOffline(robot,{stopCloud:()=>{if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings});
+  startOffline(robot,{stopCloud:()=>{if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings,startCloud:()=>setChatMode(true),openAI:()=>robot.ui.application.behavior.launchMiniApp('archive-ai-settings')});
   startVolume(robot);
-  startAISettings(robot,{status:directChatStatus,select:configureChatProvider});
+  startAISettings(robot,{status:directChatStatus,select:configureChatProvider,mode:setChatMode});
   startWiFiDisplay(robot);
   try{startSettings(robot);}catch(_){trace('[settings] initialization failed; USB remains available\n');}
   try{startDeviceTools(robot,()=>{if(directChatStatus().busy)pauseDirectChat();if(busy)return false;busy=true;return true;},()=>{busy=false;resumeDirectChat();});}catch(_){trace('[tools] initialization failed; USB remains available\n');}
@@ -187,7 +187,7 @@ export function startArchive(robot) {
       else if(request.op==='/chat/status')result=directChatStatus();
       else if(request.op==='/chat/configure')result=configureDirectChat(request.args);
       else if(request.op==='/chat/provision')result=await provisionDirectChat();
-      else if(request.op==='/chat/test')result=await testDirectConnection();
+      else if(request.op==='/chat/test')result=await testDirectConnection(request.args?.provider);
       else if(request.op==='/chat/start')result=setChatMode(true);
       else if(request.op==='/chat/stop')result=setChatMode(false);
       else if(request.op==='/memory/history')result=history(request.args);
@@ -287,7 +287,7 @@ export function startArchive(robot) {
     finally{usbBusy=false;}
   },5);
 
-  try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},args=>photo(robot,{...args,analyze:true},true));}catch(_){trace('[direct-chat] initialization unavailable\n');}
+  try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},args=>photo(robot,{...args,analyze:true},true),on=>{if(on){if(offlineStatus().playing)throw new Error('読み上げが終わってから会話を開始してください');closeOffline();}});}catch(_){trace('[direct-chat] initialization unavailable\n');}
   startWeb(robot,{
     execute,
     read(name,offset,length,whole=false){

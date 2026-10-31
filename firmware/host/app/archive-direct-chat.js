@@ -51,7 +51,7 @@ let robot,
   connectionSignature = '',
   generation = 0,
   owned = false
-let photoHandler
+let photoHandler, modeChanged
 let greetingPending = true,
   conversationProviderSeen,
   introText = ''
@@ -105,6 +105,7 @@ export function speakerList() {
   }
 }
 export function selectSpeaker(args, register = false) {
+  modeChanged?.(true)
   closeChat()
   resetTranscripts()
   if (register) {
@@ -332,6 +333,7 @@ export function setChatMode(on) {
     throw new Error(
       chatProvider() === 'gemini' ? '設定ページでGemini APIキーを保存してください' : '会話の初期登録が必要です',
     )
+  modeChanged?.(on)
   if (on && !enabled()) {
     beginConversation()
     greetingPending = true
@@ -764,7 +766,8 @@ export async function provisionDirectChat() {
   await provision()
   return { configured: true }
 }
-export function startDirectChat(context, saveTranscript, acquire, done, capturePhoto) {
+export function startDirectChat(context, saveTranscript, acquire, done, capturePhoto, onModeChanged) {
+  modeChanged = onModeChanged
   photoHandler = capturePhoto
   setVisionProvisioner(provision)
   robot = context
@@ -878,10 +881,12 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
   }, 2000)
 }
 
-export async function testDirectConnection() {
+export async function testDirectConnection(provider = chatProvider()) {
+  if (!['gemini', 'xiaozhi', 'ollama'].includes(provider)) throw new Error('会話サービスを選択してください')
   if (enabled() || chat || connecting) throw new Error('会話モードをOFFにしてテストしてください')
   const cfg = cloudConfig()
-  if (!cfg?.endpoint) throw new Error('Cloud configuration required')
+  if (provider === 'xiaozhi' && !cfg?.endpoint) throw new Error('Cloud configuration required')
+  if (provider !== 'xiaozhi' && !getSettings().api?.gemini) throw new Error('Gemini APIキーを設定してください')
   if (!claim()) throw new Error('Device busy')
   let instance, unlockTest
   try {
@@ -896,20 +901,34 @@ export async function testDirectConnection() {
           try {
             instance?.close()
           } catch (_) {}
-          error ? reject(error) : resolve({ connected: true, microphoneTransmission: false })
+          error ? reject(error) : resolve({ connected: true, provider, microphoneTransmission: false })
         }, 0)
       }
       const timeout = Timer.set(() => done(new Error('Native connection timed out')), 20000)
       try {
+        const transport =
+          provider === 'xiaozhi'
+            ? {
+                connection: createXiaozhiV1Connection({
+                  endpoint: cfg.endpoint,
+                  accessToken: cfg.accessToken,
+                  deviceId: cfg.deviceId,
+                  clientId: cfg.clientId,
+                  listeningMode: 'auto',
+                  features: { mcp: false, aec: false },
+                }),
+              }
+            : {
+                config: {
+                  type: 'googleGeminiLive',
+                  specifier: 'archiveGeminiLive',
+                  apiKey: getSettings().api.gemini.trim(),
+                  modelID: getSettings().geminiModel || DEFAULT_GEMINI_MODEL,
+                  instructions: '接続確認です。音声やテキストを生成せず待機してください。',
+                },
+              }
         instance = new ChatService({
-          connection: createXiaozhiV1Connection({
-            endpoint: cfg.endpoint,
-            accessToken: cfg.accessToken,
-            deviceId: cfg.deviceId,
-            clientId: cfg.clientId,
-            listeningMode: 'auto',
-            features: { mcp: false, aec: false },
-          }),
+          ...transport,
           chatAudioIOCtor: ArchiveChatAudioIO,
           callbacks: {
             onStateChanged(value, reason) {

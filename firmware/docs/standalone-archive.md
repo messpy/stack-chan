@@ -33,7 +33,9 @@ Gemini image recognition defaults to `gemini-3.1-flash-lite` with low thinking a
 
 メーカー公式と同じPCF8563系RTCを使い、Wi-Fi・USB・手動設定で得た時刻をUTCで保存します。RTCの電源と時刻が有効なら次回起動時に復元できます。保存は読み戻して検証し、失敗や電圧低下は診断に残します。時計を保持できても、本体の電源が切れている間はアラームを鳴らせません。
 
-### 長文の循環表示
-通常の `robot.showBalloon(text)` は、メーカー公式のSpeech Bubbleと同じ1行の循環横スクロールです。短文は静止し、長文は最初に1秒待ってから毎秒30pxで流れ、末尾のあと先頭へ戻ります。`{marquee:false}` で従来の折返し、`{speed:40}` で速度を指定できます。明示的な複数行 `showBalloonLines` は維持します。
+### 長文のスクロール表示
+通常の `robot.showBalloon(text)` は、メーカー公式のSpeech Bubbleを参考にした1行の横スクロールです。短文は静止し、長文は最初に1秒待ってから毎秒30pxで流れ、末尾まで1回だけ流れて停止し、約2.5秒後に吹き出しを閉じます。短文は約6秒後に閉じます。新しい文章や画面離脱時には古い終了タイマーを解除します。`{marquee:false}` で従来の折返し、`{speed:40}` で速度を指定できます。明示的な複数行 `showBalloonLines` は維持します。
 
-AIの返答と画像認識の全文にも適用します。オフラインの下端ボタンがあるときは吹き出しを上へずらします。表示窓を使うため長い文章もPiuの16bit座標範囲に依存せず、画面から外れたらアニメーションを止めます。参照したメーカー実装は `m5stack/StackChan` の `firmware/main/stackchan/avatar/skins/default/speech_bubble.cpp` の `LV_LABEL_LONG_MODE_SCROLL_CIRCULAR` です。
+AIの返答と画像認識の全文にも適用します。オフラインの下端ボタンがあるときは吹き出しを上へずらします。オフライン音声は速度80で文節ごとに間を入れ、時刻は「じゅうよじ」「さんじゅっぷん」のような読みへ変換します。表示窓を使うため長い文章もPiuの16bit座標範囲に依存せず、画面から外れたらアニメーションを止めます。参照したメーカー実装は `m5stack/StackChan` の `firmware/main/stackchan/avatar/skins/default/speech_bubble.cpp` の `LV_LABEL_LONG_MODE_SCROLL_CIRCULAR` です。
+
+AI選択画面は選択中サービスと会話ON/OFFを表示し、「会話を始める」「会話を終了」で切り替えます。オフラインの下部選択肢にも「AIと会話」「AI選択」があります。オンライン開始時にはオフライン操作を閉じ、話者選択を経て接続します。読み上げ中の同時開始は防止します。`/chat/test` は `provider` を指定してマイク送信なしの接続確認ができます。アラーム停止用の24pxフォントには「停止中」の字形も含めます。

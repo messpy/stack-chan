@@ -1,3 +1,4 @@
+import { localSpeech } from 'archive-offline-speech'
 import Timer from 'timer'
 import { Container, Label, Text, Skin, Style } from 'piu/MC'
 import { uiFont } from 'ui-theme'
@@ -34,9 +35,10 @@ export async function offlineAction(action) {
   let unlock
   try {
     let text
+    const clock = localClockStatus()
     if (action === 'hello') text = 'こんにちは。スタックちゃんです。ネットがなくても、ここにいるよ。'
     else if (action === 'time') {
-      const s = localClockStatus()
+      const s = clock
       text = s.ready
         ? '今は、' + s.parts.hour + '時' + s.parts.minute + '分です。'
         : '時計がまだ設定されていません。時計設定で合わせてね。'
@@ -54,10 +56,16 @@ export async function offlineAction(action) {
     if (globalThis.amp) globalThis.amp.sampleRate = 24000
     voice ??= new TTS({
       volume: robot.audio.volume,
+      speed: 80,
       onPlayed: (power) => robot.face?.setMouthOpen(Math.min(1, power / 2000)),
       onDone: () => robot.face?.setMouthOpen(0),
     })
-    await new Promise((resolve, reject) => voice.stream(text, robot.audio.volume, (e) => (e ? reject(e) : resolve())))
+    for (const part of localSpeech(action, clock, minutes)) {
+      await new Promise((resolve, reject) =>
+        voice.stream(part.text, robot.audio.volume, (e) => (e ? reject(e) : resolve())),
+      )
+      if (part.pause) await new Promise((resolve) => Timer.set(resolve, part.pause))
+    }
     return { spoken: true, text }
   } catch (e) {
     error = String(e.message || '音声を再生できませんでした').slice(0, 160)
@@ -67,6 +75,10 @@ export async function offlineAction(action) {
     playing = false
     actions.release()
   }
+}
+export function closeOffline() {
+  closeFaceButtons()
+  robot.hideBalloon?.()
 }
 function closeFaceButtons() {
   if (faceButtons) {
@@ -112,6 +124,8 @@ function showFaceButtons(mode) {
       ['アラーム', 'alarm'],
       ['時計設定', 'clock'],
       ['できること', 'status'],
+      ['AIと会話', 'online'],
+      ['AI選択', 'ai'],
     ]
     const methods = {
       hello: () => offlineAction('hello'),
@@ -120,8 +134,10 @@ function showFaceButtons(mode) {
       timer: () => showFaceButtons('timer'),
       alarm: () => actions.openAlarms(),
       clock: () => robot.ui.application.behavior.launchMiniApp('archive-local-clock'),
+      online: () => actions.startCloud(),
+      ai: () => actions.openAI(),
       next: () => {
-        menuPage = (menuPage + 1) % 3
+        menuPage = (menuPage + 1) % Math.ceil(choices.length / 2)
         showFaceButtons('home')
       },
       close: closeFaceButtons,

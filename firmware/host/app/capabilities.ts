@@ -278,7 +278,7 @@ export type LifecycleCapability = {
 export type BalloonTail = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 
 export type ShowBalloonOptions = {
-  /** Single-line circular scroll for long text. Default true in runtime showBalloon. */
+  /** Single-line one-pass scroll for long text. Default true in runtime showBalloon. */
   marquee?: boolean
   /** Marquee speed in pixels per second. */
   speed?: number

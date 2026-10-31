@@ -1,5 +1,5 @@
 /** Bounded visible text window, so even long messages stay within Piu's 16-bit coordinates. */
-export class CircularTextModel {
+export class MarqueeTextModel {
   text = ''
   width = 1
   contentWidth = 0
@@ -10,7 +10,8 @@ export class CircularTextModel {
   #characters: string[] = []
   #advances: number[] = []
   #index = 0
-  #cycle = 1
+  #travel = 0
+  finished = false
   constructor(private measure: (character: string) => number) {}
   setText(value: string, width: number): boolean {
     const text = String(value || '').replace(/[\r\n]+/g, ' ')
@@ -25,24 +26,22 @@ export class CircularTextModel {
     this.scrolling = this.contentWidth > width
     this.#index = 0
     this.offset = 0
-    if (this.scrolling) {
-      for (let i = 0; i < 3; i++) {
-        this.#characters.push(' ')
-        this.#advances.push(Math.max(1, this.measure(' ')))
-      }
-    }
-    this.maxAdvance = this.#advances.reduce((max, value) => Math.max(max, value), 1)
-    this.#cycle = this.#advances.reduce((a, b) => a + b, 0) || 1
+    this.#travel = 0
+    this.finished = false
     this.#refreshWindow()
     return true
   }
   advance(pixels: number): boolean {
-    if (!this.scrolling || !Number.isFinite(pixels) || pixels <= 0) return false
-    this.offset += pixels % this.#cycle
+    if (!this.scrolling || this.finished || !Number.isFinite(pixels) || pixels <= 0) return false
+    const remaining = Math.max(0, this.contentWidth - this.width - this.#travel)
+    const distance = Math.min(pixels, remaining)
+    this.#travel += distance
+    this.offset += distance
+    if (distance >= remaining) this.finished = true
     const oldIndex = this.#index
     while (this.offset >= this.#advances[this.#index]) {
       this.offset -= this.#advances[this.#index]
-      this.#index = (this.#index + 1) % this.#characters.length
+      this.#index++
     }
     if (this.#index === oldIndex) return false
     this.#refreshWindow()
@@ -56,10 +55,10 @@ export class CircularTextModel {
     let width = 0,
       index = this.#index,
       text = ''
-    while (width < this.width + this.maxAdvance) {
+    while (width < this.width + this.maxAdvance && index < this.#characters.length) {
       text += this.#characters[index]
       width += this.#advances[index]
-      index = (index + 1) % this.#characters.length
+      index++
     }
     this.windowText = text
   }

@@ -124,7 +124,14 @@ export class StackchanRuntimeUI {
       }
     }
     this.hideBalloon()
-    this.#balloon = new SpeechBalloon({ ...option, text })
+    const balloon: UIEffect = new SpeechBalloon({
+      ...option,
+      text,
+      onComplete: () => {
+        if (this.#balloon === balloon) this.hideBalloon()
+      },
+    })
+    this.#balloon = balloon
     this.#balloonOptions = { ...option }
     this.#ui.addEffect(this.#balloon)
   }
