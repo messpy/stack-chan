@@ -6,8 +6,8 @@ const alice=memory.saveUser({name:'Alice',likes:['りんご'],about:'明示さ�
 let opened=0,connections=[];class Chat{constructor(o){this.options=o;connections.push(o);}setVolume(){}start(){}close(){}sendFunctionResult(){}}
 const c={getSettings:()=>data,changeSettings:fn=>fn(data),...Object.fromEntries(['currentSpeaker','identifySpeaker','users','saveUser','history','beginConversation'].map(k=>[k,memory[k]])),setXiaoZhiVision(){},setVisionProvisioner(){},openSpeakerChooser(){opened++;},startSpeakerChooser(){},getSettingsStatus:()=>({connected:true}),DEFAULT_GEMINI_MODEL:'gemini-test',ChatService:Chat,ChatState:{FAILED:0,DISCONNECTED:1,CONNECTED:4,SPEAKING:5,LISTENING:6,WAITING:7},ArchiveChatAudioIO:class{},createXiaozhiV1Connection:opts=>opts,Timer:{set:()=>1,clear(){},repeat:()=>1},trace(){},listDeviceTools:()=>[],memoryTools:[{name:'conversation_identify'}],visionTools:[],callMemory(){},URL,robotStub:{showBalloon(){},ui:{showFace(){},application:{behavior:{},distribute(){}}},drawer:{setDrawerButtonState(){}},audio:{volume:.1,acquireExclusive:()=>()=>{}}}};
 const schema=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-button-schema.js')).toString('base64'));const registration=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-speaker-registration.js')).toString('base64'));c.VoiceRegistration=registration.VoiceRegistration;c.enrollmentInstructions=registration.enrollmentInstructions;c.registrationName=registration.registrationName;c.ollamaChat=async()=> 'Ollama回答';c.ollamaModel=()=>data.ollamaModel||'gemma4:31b';c.validOllamaModel=v=>/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,99}$/.test(v);c.OLLAMA_SPEECH_INSTRUCTIONS='音声だけ。ollama_replyを呼ぶ';c.ollamaSpeechTool={name:'ollama_reply'};c.speakerButtons=schema.speakerButtons;vm.createContext(c);vm.runInContext(fs.readFileSync(root+'archive-direct-chat.js','utf8').replace(/^import [\s\S]*? from '[^']+';?\s*$/gm,'').replace(/export /g,''),c);vm.runInContext('robot=robotStub;claim=()=>true;release=()=>{};',c);
-vm.runInContext('setChatMode(true)',c);assert.equal(vm.runInContext('directChatStatus().requiresSpeaker',c),true);assert.equal(opened,1);await vm.runInContext('connect()',c);assert.equal(connections.length,0);
-const selected=vm.runInContext('selectSpeaker({id:'+JSON.stringify(alice.id)+',name:"Alice"})',c);assert.equal(selected.historyRead,3);await vm.runInContext('connect()',c);assert.equal(connections.length,1);assert.ok(connections[0].config.instructions.includes('Alice'));assert.ok(!connections[0].config.instructions.includes('Bob専用'));assert.ok(!Object.keys(connections[0].tools).includes('conversation_identify'));
+vm.runInContext('setChatMode(true)',c);assert.equal(vm.runInContext('directChatStatus().requiresSpeaker',c),true);assert.equal(opened,0);await vm.runInContext('connect()',c);assert.equal(connections.length,1);assert.ok(connections[0].config.instructions.includes('conversation_identify'));
+const selected=vm.runInContext('selectSpeaker({id:'+JSON.stringify(alice.id)+',name:"Alice"})',c);assert.equal(selected.historyRead,3);await vm.runInContext('connect()',c);assert.equal(connections.length,2);assert.ok(connections[1].config.instructions.includes('Alice'));assert.ok(!connections[1].config.instructions.includes('Bob専用'));assert.ok(Object.keys(connections[1].tools).includes('conversation_identify'));
 vm.runInContext("configureChatProvider({provider:'xiaozhi'})",c);await vm.runInContext('connect()',c);assert.equal(memory.currentSpeaker().id,alice.id);vm.runInContext('setChatMode(false)',c);assert.equal(memory.currentSpeaker(),null);vm.runInContext('setChatMode(true)',c);assert.equal(vm.runInContext('directChatStatus().requiresSpeaker',c),true);assert.equal(vm.runInContext('selectSpeaker({guest:true}).historyRead',c),0);
 assert.throws(()=>schema.invokeButton({text:'bad',background:'#112233',textColor:'#ffffff',method:'toString'},{}));let pressed;schema.invokeButton({text:'タイマー',background:'#112233',textColor:'#ffffff',method:'timer_create',args:{seconds:30}},{timer_create:args=>pressed=args.seconds});assert.equal(pressed,30);
 class Node{constructor(data,options){Object.assign(this,options);this.skin=options.skin;}}
@@ -119,3 +119,40 @@ c.talkActions.toggle=()=>{throw Error('Not configured')};
 talkApps.get('archive-ai-talk').create({close(){closes++}});queuedActions.shift()();
 assert.equal(talkEnabled,false);assert.equal(notices,1);
 console.log('AI talk launcher: one toggle per launch after close, state label refresh, configuration failures stay off: PASS');
+
+const beforeVoiceUsers=memory.users({limit:50}).users.length;
+memory.beginConversation();memory.recordMemory({id:'identity-utterance',role:'user',text:'私はミナです',created:Date.now(),speakerId:null});
+const resolved=memory.identifySpeaker({name:'ミナ',source_message_id:'identity-utterance'});
+assert.equal(resolved.identified,true);assert.equal(memory.users({limit:50}).users.length,beforeVoiceUsers+1);
+assert.ok(memory.history({user_id:resolved.person.id}).items.some(m=>m.id==='identity-utterance'));
+assert.equal(sql.prepare('SELECT user FROM talk_history WHERE id=?').get('identity-utterance').user,resolved.person.id);
+memory.saveUser({id:resolved.person.id,name:'ミナ',family:'姉がいる',hobbies:'読書',location:'東京',stackchan_name:'ちゃん'});
+const savedProfile=memory.users({id:resolved.person.id}).users[0];assert.equal(savedProfile.family,'姉がいる');assert.equal(savedProfile.hobbies,'読書');
+assert.equal(sql.prepare('SELECT location FROM user_profile WHERE id=?').get(resolved.person.id).location,'東京');
+memory.beginConversation();const again=memory.identifySpeaker({name:'ミナ'});assert.equal(again.person.id,resolved.person.id);assert.ok(again.person.lastConversation);assert.ok(again.recent.length);
+console.log('AI identity: new/existing person, first utterance attribution, profile detail preservation, compatibility views and recent context: PASS');
+
+// Exercise the AI callback -> SD memory -> tool response path, not just the database helper.
+Chat.prototype.start=function(){};
+c.Timer.set=()=>1;c.memoryTools=memory.memoryTools;c.callMemory=memory.callMemory;
+c.Container=class{constructor(data,options){Object.assign(this,options);this.children=[]}add(child){this.children.push(child)}};
+c.ActionButton=class{constructor(data,options){Object.assign(this,options);this.data=data}};
+c.robotStub.ui.addEffect=()=>{};c.robotStub.ui.removeEffect=()=>{};c.robotStub.hideBalloon=()=>{};
+let toolReply;Chat.prototype.sendFunctionResult=function(call,name,result){toolReply={call,name,result}};
+c.archiveEvent=(role,text)=>{const e={id:'ai-callback-'+(++sequence),role:role==='input'?'user':'assistant',text,created:Date.now()};memory.recordMemory(e);return e};
+data.conversationProvider='gemini';
+vm.runInContext('setChatMode(false);archive=archiveEvent;setChatMode(true)',c);await vm.runInContext('connect()',c);
+const aiSession=connections.at(-1);aiSession.callbacks.onInputTranscript('私の名前はアオです',false);
+aiSession.callbacks.onFunctionCall('identity-call','conversation_identify',{name:'アオ'});
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(toolReply.result.identified,true);assert.equal(toolReply.result.newUser,true);
+assert.equal(memory.currentSpeaker().name,'アオ');
+assert.ok(memory.history({user_id:memory.currentSpeaker().id}).items.some(m=>m.text==='私の名前はアオです'));
+assert.ok(toolReply.result.now);assert.ok(Array.isArray(toolReply.result.recent));
+vm.runInContext('setChatMode(false)',c);
+console.log('AI session callback: spoken name identifies/saves person, first message linked, bounded context returned: PASS');
+
+const micLights=[];c.robotStub.lightOn=(...args)=>micLights.push(['on',...args]);c.robotStub.lightOff=(...args)=>micLights.push(['off',...args]);
+vm.runInContext('microphoneIndicator(true);microphoneIndicator(true);microphoneIndicator(false)',c);
+assert.equal(micLights.length,2);assert.deepEqual(micLights[0],['on','head',0,48,0]);assert.equal(micLights[1][0],'off');
+console.log('Microphone indicator: green while recording, repeated PCM does not rewrite LED, stop clears LED: PASS');

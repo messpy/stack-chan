@@ -76,6 +76,7 @@ export default class ChatAudioIO extends ChatAudioIOBase {
     this.worker = {
       terminate: () => worker.terminate(),
       postMessage: (message) => {
+        if(message.id==='sendAudio')globalThis.stackchanMicrophoneActivity?.()
         if (message.id !== 'sendAudio' || !usesNativePcmRing) {
           worker.postMessage(message)
           return

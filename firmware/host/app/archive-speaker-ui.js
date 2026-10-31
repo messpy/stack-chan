@@ -81,7 +81,7 @@ export function startSpeakerChooser(context, callbacks) {
               top: 28,
               height: 64,
               style,
-              string: 'まだ登録されていません。\n「新規登録」を押して声で名前を登録できます。',
+              string: 'まだ登録されていません。\n「新規登録」でAIに名前を伝えられます。',
             }),
           )
         root.add(createUIButton(buttons.previous, methods, { left: 8, top: 104, width: 80, height: 30 }, onError))
@@ -91,7 +91,7 @@ export function startSpeakerChooser(context, callbacks) {
         root.add(createUIButton(buttons.next, methods, { right: 8, top: 104, width: 80, height: 30 }, onError))
         root.add(
           createUIButton(
-            { ...buttons.register, text: '新規登録（声）' },
+            { ...buttons.register, text: '新規登録（会話）' },
             methods,
             { left: 8, top: 140, width: 148, height: 40 },
             onError,

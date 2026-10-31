@@ -11,14 +11,19 @@ function initialize(){if(ready)return;mounted(()=>{
   run('CREATE TABLE IF NOT EXISTS message_context(message_id TEXT NOT NULL,user_id TEXT NOT NULL,PRIMARY KEY(message_id,user_id))',[]);
   run('CREATE TABLE IF NOT EXISTS message_media(message_id TEXT PRIMARY KEY,filename TEXT NOT NULL)',[]);
   run('CREATE INDEX IF NOT EXISTS messages_created ON messages(created DESC)',[]);
+  run('CREATE INDEX IF NOT EXISTS messages_speaker_time ON messages(speaker_id,created DESC)',[]);
+  run('CREATE INDEX IF NOT EXISTS message_context_user ON message_context(user_id,message_id)',[]);
   run('CREATE TABLE IF NOT EXISTS user_evidence(user_id TEXT NOT NULL,message_id TEXT NOT NULL,PRIMARY KEY(user_id,message_id))',[]);
+  run('CREATE TABLE IF NOT EXISTS profile_details(user_id TEXT PRIMARY KEY,stackchan_name TEXT NOT NULL DEFAULT \'\',family TEXT NOT NULL DEFAULT \'\',hobbies TEXT NOT NULL DEFAULT \'\',location TEXT NOT NULL DEFAULT \'\')',[]);
+  run('CREATE VIEW IF NOT EXISTS user_profile AS SELECT e.*,d.stackchan_name,d.family,d.hobbies,d.location FROM entities e LEFT JOIN profile_details d ON d.user_id=e.id',[]);
+  run('CREATE VIEW IF NOT EXISTS talk_history AS SELECT m.*,c.user_id AS user FROM messages m LEFT JOIN message_context c ON c.message_id=m.id',[]);
   run('CREATE VIEW IF NOT EXISTS users AS SELECT * FROM entities',[]);
   run('INSERT OR IGNORE INTO entities(id,name,kind,nicknames,likes,about,updated_at) VALUES(?,?,?,?,?,?,?)',['stackchan-self','StackChan','robot',JSON.stringify(['スタックちゃん']),'[]','',Date.now()]);
   run('CREATE TABLE IF NOT EXISTS memory_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)',[]);
 });ready=true;}
 function db(sql,args=[]){initialize();return mounted(()=>run(sql,args));}
 function text(value,max=512){return typeof value==='string'?value.trim().slice(0,max):'';}
-function profile(row){return {...row,nicknames:JSON.parse(row.nicknames),likes:JSON.parse(row.likes)};}
+function profile(row){return {...row,lastConversation:row.lastConversation||null,nicknames:JSON.parse(row.nicknames),likes:JSON.parse(row.likes)};}
 export function beginConversation(){activeSpeaker=null;guestSpeaker=false;}
 export function currentSpeaker(){if(guestSpeaker)return {guest:true};return activeSpeaker?users({id:activeSpeaker}).users[0]||null:null;}
 export function identifySpeaker(args){
@@ -27,10 +32,11 @@ export function identifySpeaker(args){
   let matches=users(args.id?{id:args.id}:{name}).users.filter(p=>p.kind==='person'&&(p.name.toLowerCase()===name.toLowerCase()||p.nicknames.some(n=>n.toLowerCase()===name.toLowerCase())));
   if(matches.length>1)throw new Error('同名の人物が複数います。本人に確認して人物IDを指定してください');
   if(args.id&&!matches.length)throw new Error('人物IDと名前が一致しません');
+  if(!matches.length&&users({name}).users.some(p=>p.kind==='robot'))throw new Error('本体とは別の名前を確認してください');
   const person=matches[0]||saveUser({name,kind:'person',source_message_ids:args.source_message_id?[args.source_message_id]:[]}).users[0];
   activeSpeaker=person.id;guestSpeaker=false;
-  if(args.source_message_id)db('UPDATE messages SET speaker_id=? WHERE id=? AND role=?',[person.id,text(args.source_message_id,100),'user']);
-  return {identified:true,person};
+  if(args.source_message_id){const source=text(args.source_message_id,100);db('UPDATE messages SET speaker_id=? WHERE id=? AND role=?',[person.id,source,'user']);db('INSERT OR IGNORE INTO message_context(message_id,user_id) SELECT id,? FROM messages WHERE id=?',[person.id,source]);}
+  return {identified:true,newUser:!matches.length,person,now:Date.now(),timezone:'Asia/Tokyo',recent:history({user_id:person.id,limit:3}).items};
 }
 export function recordMemory(event){const owner=Object.hasOwn(event,'speakerId')?event.speakerId:activeSpeaker;db('INSERT OR IGNORE INTO messages(id,role,text,created,speaker_id) VALUES(?,?,?,?,?)',[event.id,event.role,event.text,event.created,event.role==='assistant'?'stackchan-self':owner]);if(owner)db('INSERT OR IGNORE INTO message_context(message_id,user_id) VALUES(?,?)',[event.id,owner]);if(typeof event.image==='string'&&/^photo-[a-z0-9-]+\.jpg$/.test(event.image))db('INSERT OR REPLACE INTO message_media(message_id,filename) VALUES(?,?)',[event.id,event.image]);}
 export function history(args={}){
@@ -45,9 +51,10 @@ export function history(args={}){
 }
 export function users(args={}){
   const name=text(args.name,80),id=text(args.id,64);let rows;
-  if(id)rows=db('SELECT * FROM entities WHERE id=? LIMIT 5',[id]);
-  else if(name)rows=db('SELECT * FROM entities WHERE name LIKE ? OR nicknames LIKE ? ORDER BY updated_at DESC LIMIT 5',['%'+name+'%','%'+name+'%']);
-  else rows=db('SELECT * FROM entities ORDER BY updated_at DESC LIMIT ?',[Math.min(50,Math.max(1,Number(args.limit)||5))]);
+  const base='SELECT p.*,(SELECT MAX(created) FROM messages WHERE speaker_id=p.id OR id IN (SELECT message_id FROM message_context WHERE user_id=p.id)) AS lastConversation FROM user_profile p';
+  if(id)rows=db(base+' WHERE p.id=? LIMIT 5',[id]);
+  else if(name)rows=db(base+' WHERE name LIKE ? OR nicknames LIKE ? ORDER BY updated_at DESC LIMIT 5',['%'+name+'%','%'+name+'%']);
+  else rows=db(base+' ORDER BY lastConversation DESC,updated_at DESC LIMIT ?',[Math.min(50,Math.max(1,Number(args.limit)||5))]);
   return {users:rows.map(profile)};
 }
 function strings(value){if(!Array.isArray(value))return [];return [...new Set(value.map(v=>text(v,80)).filter(Boolean))].slice(0,20);}
@@ -62,6 +69,8 @@ export function saveUser(args){
   const about=args.about===undefined?(old?.about||''):text(args.about,1000);
   db('BEGIN IMMEDIATE');try{
     db('INSERT INTO entities(id,name,kind,nicknames,likes,about,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,nicknames=excluded.nicknames,likes=excluded.likes,about=excluded.about,updated_at=excluded.updated_at',[id,name,kind,JSON.stringify(nicknames),JSON.stringify(likes),about,Date.now()]);
+    const fields=['stackchan_name','family','hobbies','location'];
+    if(fields.some(k=>args[k]!==undefined)){const oldDetails=db('SELECT * FROM profile_details WHERE user_id=?',[id])[0]||{};db('INSERT OR REPLACE INTO profile_details(user_id,stackchan_name,family,hobbies,location) VALUES(?,?,?,?,?)',[id,...fields.map(k=>args[k]===undefined?(oldDetails[k]||''):text(args[k],240))]);}
     for(const source of strings(args.source_message_ids).slice(0,8))if(db('SELECT id FROM messages WHERE id=?',[source]).length)db('INSERT OR IGNORE INTO user_evidence(user_id,message_id) VALUES(?,?)',[id,source]);
     db('COMMIT');
   }catch(error){db('ROLLBACK');throw error;}
@@ -82,7 +91,7 @@ export const memoryTools=[
  {name:'conversation_identify',description:'新しい会話はまず「あなたは誰？お名前を教えて」と本人の名前を尋ねる。本人が名乗った後にこの道具で現在の話者を確定し、その後に通常の会話へ進む。第三者の名前や推測で確定しない。同名候補が複数なら本人に確認する。返った本人プロフィールを参照できるが、音声による本人認証ではない。',inputSchema:{type:'object',properties:{name:{type:'string'},id:{type:'string'},guest:{type:'boolean',description:'本人が名前を名乗りたくないと明示した場合のみtrue'}},additionalProperties:false}},
  {name:'conversation_history',description:'必要な会話だけをSDから検索する。queryでキーワード、minutes_ago:60で約1時間前（前後10分）を指定できる。全履歴を一括取得しない。',inputSchema:{type:'object',properties:{query:{type:'string'},minutes_ago:{type:'number'},window_minutes:{type:'number'},after:{type:'string'},before:{type:'string'},user_id:{type:'string'},limit:{type:'integer',minimum:1,maximum:10}},additionalProperties:false}},
  {name:'user_lookup',description:'会話に登場する人物を名前・ニックネーム・人物IDで探し、プロフィールのみ取得する。会話本文は含まない。曖昧な人物は確認する。',inputSchema:{type:'object',properties:{name:{type:'string'},id:{type:'string'}},additionalProperties:false}},
- {name:'user_remember',description:'会話で明示された人物の名前、ニックネーム、好み、人柄などをusersへ保存・訂正する。推測を事実として保存しない。既存人物はuser_lookupで確認してIDを指定し、更新する配列は現在の内容を含めて渡す。source_message_idsに根拠となる会話IDを付ける。',inputSchema:{type:'object',properties:{id:{type:'string'},name:{type:'string'},kind:{type:'string',enum:['person','robot']},nicknames:{type:'array',items:{type:'string'}},likes:{type:'array',items:{type:'string'}},about:{type:'string'},source_message_ids:{type:'array',items:{type:'string'}}},required:['name'],additionalProperties:false}}
+ {name:'user_remember',description:'会話で明示された人物の名前、ニックネーム、好み、人柄などをusersへ保存・訂正する。推測を事実として保存しない。既存人物はuser_lookupで確認してIDを指定し、更新する配列は現在の内容を含めて渡す。source_message_idsに根拠となる会話IDを付ける。',inputSchema:{type:'object',properties:{id:{type:'string'},name:{type:'string'},kind:{type:'string',enum:['person','robot']},nicknames:{type:'array',items:{type:'string'}},likes:{type:'array',items:{type:'string'}},about:{type:'string'},stackchan_name:{type:'string'},family:{type:'string'},hobbies:{type:'string'},location:{type:'string'},source_message_ids:{type:'array',items:{type:'string'}}},required:['name'],additionalProperties:false}}
 ];
 export function callMemory(name,args){if(name==='conversation_identify')return identifySpeaker(args);if(name==='conversation_history')return history(args);if(name==='user_lookup')return users(args);if(name==='user_remember')return saveUser(args);throw new Error('Unknown memory tool');}
 

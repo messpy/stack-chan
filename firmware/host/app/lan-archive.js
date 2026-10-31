@@ -19,7 +19,7 @@ import {analyzeJPEG,visionStatus} from 'archive-vision';
 import {startAlarmSettings,openAlarmSettings,showRingingAlarm,hideRingingAlarm} from 'archive-alarm-ui';
 import {alarmSoundCommand,playAlarmSound} from 'archive-alarm-sound';
 import {startWeb,openControl,controlStatus} from 'archive-web';
-import {startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat} from 'archive-direct-chat';
+import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat} from 'archive-direct-chat';
 import {recordMemory,history,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
 import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
 import {acceptAudioChunk} from 'archive-audio-upload';
@@ -101,7 +101,7 @@ async function record(robot) {
     w=initial.width;h=initial.height;initial.close?.();
     save(temporary,[aviAudioHeader(w,h,fps,0,{sampleRate:16000,channels:1,bitsPerSample:16,bytes:0})]);
     const started=Date.now();
-    audioPromise=robot.audio.record(5000).catch(e=>{audioError=e;return undefined;});
+    microphoneIndicator(true);audioPromise=robot.audio.record(5000).catch(e=>{audioError=e;return undefined;}).finally(()=>microphoneIndicator(false));
     trace('[archive] video and microphone recording begin\n');
     for(let i=0;i<10;i++){
       let frame;
@@ -143,12 +143,13 @@ async function recordAudio(robot) {
   busy=true;
   trace('[archive] audio recording begin (5000 ms)\n');
   try {
+    microphoneIndicator(true);
     const wav=await robot.audio.record(5000);
     const name=`audio-${id()}.wav`;
     save(name,[wav]);
     trace('[archive] audio recording saved\n');
     return {name,duration:5,bytes:wav.byteLength};
-  }finally{busy=false;}
+  }finally{microphoneIndicator(false);busy=false;}
 }
 export function startArchive(robot) {
   startDebugDrain();
