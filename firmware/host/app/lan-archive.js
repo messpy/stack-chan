@@ -1,3 +1,5 @@
+import {startLocalClock,setLocalTime,localClockStatus} from 'archive-local-clock';
+import {startOffline,openOffline,offlineAction,offlineStatus} from 'archive-offline';
 import {checkOllama} from 'archive-ollama';
 import {startAISettings} from 'archive-ai-settings';
 import Timer from 'timer';
@@ -141,6 +143,8 @@ async function recordAudio(robot) {
   }finally{busy=false;}
 }
 export function startArchive(robot) {
+  startLocalClock();
+  startOffline(robot,{stopCloud:()=>{if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings});
   startVolume(robot);
   startAISettings(robot,{status:directChatStatus,select:configureChatProvider});
   startWiFiDisplay(robot);
@@ -162,6 +166,10 @@ export function startArchive(robot) {
         const action=request.op.slice(7),part=imageUploadCommand(action,request.args||{},Base64.decode);
         if(action==='finish'){const name='photo-'+id()+'.jpg';save(name,[part.buffer]);result={name,width:part.width,height:part.height,...await describeImage(robot,name,part.buffer,request.args?.question)};}else result=part;
       }
+      else if(request.op==='/offline/status')result=offlineStatus();
+      else if(request.op==='/offline/open')result=openOffline();
+      else if(request.op==='/offline/action')result=await offlineAction(request.args?.action);
+      else if(request.op==='/clock/status')result=localClockStatus();
       else if(request.op==='/alarms/open')result=openAlarmSettings();
       else if(request.op.startsWith('/alarm-sound/')&&request.op!=='/alarm-sound/preview')result=alarmSoundCommand(request.op.slice('/alarm-sound/'.length),request.args);
       else if(request.op==='/alarm-sound/preview'){busy=true;try{result={played:await playAlarmSound(robot,()=>false,Math.max(1,Math.min(5,Number(request.args?.seconds)||2)))};}finally{busy=false;}}
@@ -190,7 +198,7 @@ export function startArchive(robot) {
       else if(request.op==='/memory/preserve-invalid')result=preserveInvalidMemory();
       else if(request.op==='/memory/import'){importLegacy();result=memoryStatus();}
       else if(request.op==='/volume/open')result=openVolume();
-      else if(request.op==='/time'){const epoch=Number(request.args?.epoch);if(!Number.isSafeInteger(epoch)||epoch<1700000000000)throw new Error('Invalid time');Time.set(Math.floor(epoch/1000));result={now:Date.now()};}
+      else if(request.op==='/time'){const epoch=Number(request.args?.epoch);if(!Number.isSafeInteger(epoch)||epoch<1700000000000)throw new Error('Invalid time');setLocalTime(epoch);result={now:Date.now()};}
       else if(request.op==='/settings/open'){
         robot.ui.application.behavior.closeDrawer?.();
         if(!robot.ui.application.behavior.launchMiniApp('wifi-settings'))throw new Error('Settings screen could not open');

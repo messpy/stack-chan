@@ -1,6 +1,8 @@
 {
   "include": [
     "./manifest_local.json",
+    "../../vendor/stackchan-voice/manifest.json",
+    "$(MODDABLE)/modules/io/audioout/manifest.json",
     "$(MODULES)/io/files/esp32/manifest_sdspi.json",
     "$(MODULES)/data/base64/manifest.json",
     "$(MODDABLE)/modules/drivers/sensors/si12t/manifest.json",
@@ -28,6 +30,9 @@
     "archive-web": "./archive-web",
     "archive-web-page": "./archive-web-page",
     "archive-direct-chat": "./archive-direct-chat",
+    "archive-offline": "./archive-offline",
+    "archive-local-clock": "./archive-local-clock",
+    "archive-offline-tts": "../modules/audio/stackchan-voice/tts-stackchan-voice",
     "archive-ollama": "./archive-ollama",
     "archive-chat-audioio": "./archive-chat-audioio",
     "archive-memory": [

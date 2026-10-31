@@ -1,0 +1,31 @@
+import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
+let wall=0,ticks=0,settings={reminders:[]},saved=0,spoken=[],released=0;const callbacks=[];
+class ClockDate extends Date{constructor(...args){super(...(args.length?args:[wall]));}static now(){return wall;}}
+let registers=Uint8Array.of(0x10,0x20,0x03,0x31,6,0x10,0x26);
+class SMBus{readBuffer(_reg,b){b.set(registers);}readUint8(){return 0;}writeUint8(){}writeBuffer(_reg,b){registers=Uint8Array.from(b);}close(){}}
+class Node{constructor(_,o){Object.assign(this,o);this.children=[];}add(n){this.children.push(n);}}
+const context=vm.createContext({Date:ClockDate,trace(){},device:{io:{SMBus},i2c:{internal:{}}},String:Object.assign(String,{fromArrayBuffer:b=>Buffer.from(b).toString()})});
+const deps={time:{default:{get ticks(){return ticks;},set(seconds){wall=seconds*1000;}}},timer:{default:{repeat(fn,ms){callbacks.push({fn,ms});return 1;},set(){return 1;}}},'archive-vault':{getSettings:()=>settings,changeSettings:fn=>{fn(settings);saved++;},randomHex:()=>String(saved).padStart(8,'0')},Resource:{default:class{constructor(){return Buffer.from(fs.readFileSync(new URL('../../host/app/reminder-tools.json',import.meta.url)));}}},'archive-alarm-sound':{playAlarmSound:async()=>true,stopAlarmSound(){}},'archive-offline-tts':{TTS:class{stream(text,volume,done){spoken.push({text,volume});done();}}},'piu/MC':{Container:Node,Label:Node,Text:Node,Skin:class{},Style:class{}},'ui-theme':{uiFont:()=>''},'archive-ui-button':{createUIButton:()=>({})}};
+const cache=new Map();async function load(name){if(cache.has(name))return cache.get(name);let module;
+if(deps[name]){const values=deps[name];module=new vm.SyntheticModule(Object.keys(values),function(){for(const [k,v]of Object.entries(values))this.setExport(k,v);},{context});}
+else if(['archive-local-clock','archive-tools','archive-reminder-time','archive-offline'].includes(name))module=new vm.SourceTextModule(fs.readFileSync(new URL('../../host/app/'+name+'.js',import.meta.url),'utf8'),{context});
+else throw new Error('Offline module attempted unexpected dependency: '+name);
+cache.set(name,module);await module.link(load);return module;}
+const clockModule=await load('archive-local-clock');await clockModule.evaluate();const clock=clockModule.namespace;
+for(const when of ['2026-01-01T00:00:00Z','2026-12-31T23:59:59Z','2028-02-29T10:25:30Z']){const epoch=Date.parse(when);assert.equal(clock.decodeRTC(clock.encodeRTC(epoch)),epoch);}
+assert.throws(()=>clock.decodeRTC(Uint8Array.of(128,0,0,1,0,1,0x26)));
+assert.throws(()=>clock.japaneseEpoch({year:2026,month:2,day:30,hour:0,minute:0}));
+assert.equal(clock.japaneseEpoch({year:2026,month:10,day:31,hour:20,minute:0}),Date.parse('2026-10-31T11:00:00Z'));
+clock.startLocalClock();assert.equal(clock.localClockStatus().restored,true);assert.equal(wall,Date.parse('2026-10-31T03:20:10Z'));
+const toolsModule=await load('archive-tools');await toolsModule.evaluate();const tools=toolsModule.namespace;tools.startDeviceTools({drawer:{addDrawerButton(){}}},()=>false,()=>{});const poll=callbacks.find(c=>c.ms===1000).fn;
+wall=0;ticks=0;const timer=tools.callDeviceTool('timer_create',{seconds:30});assert.equal(timer.clockPending,true);ticks=10000;poll();assert.equal(settings.reminders[0].status,'scheduled');
+wall=Date.parse('2026-10-31T03:00:00Z');ticks=15000;poll();assert.equal(settings.reminders[0].status,'scheduled');assert.equal(settings.reminders[0].due-wall,15000);
+wall+=3600000;ticks=20000;poll();assert.equal(settings.reminders[0].status,'scheduled');assert.equal(settings.reminders[0].due-wall,10000);
+wall-=7200000;ticks=30000;poll();assert.equal(settings.reminders[0].status,'pending');
+settings.reminders=[];wall=0;ticks=0xffffff00;tools.callDeviceTool('timer_create',{seconds:1});ticks=(ticks+1000)>>>0;poll();assert.equal(settings.reminders[0].status,'pending');
+settings.reminders=[{id:'old-clockless',kind:'timer',clockPending:true,status:'scheduled',due:30000}];poll();assert.equal(settings.reminders[0].status,'cancelled');
+wall=Date.parse('2026-10-31T03:00:00Z');let stoppedCloud=0,claimed=false;
+const offlineModule=await load('archive-offline');await offlineModule.evaluate();const offline=offlineModule.namespace;
+offline.startOffline({showBalloon(){},drawer:{addDrawerButton(){}},ui:{miniApps:{register(){}},application:{behavior:{}}},audio:{volume:.1,acquireExclusive:()=>()=>released++}},{stopCloud:()=>stoppedCloud++,claim:()=>{if(claimed)return false;claimed=true;return true;},release:()=>{claimed=false;},tool:tools.callDeviceTool});
+assert.equal((await offline.offlineAction('hello')).spoken,true);assert.match(spoken.at(-1).text,/こんにちは/);assert.equal(released,1);assert.equal(claimed,false);assert.equal(stoppedCloud,1);await offline.offlineAction('time');assert.match(spoken.at(-1).text,/12時0分/);assert.equal(offline.offlineStatus().recognition,false);
+console.log('PASS: RTC UTC/BCD and cold-boot restore, invalid dates/low voltage rejected, clockless timer, forward/backward wall jumps, tick wrap, restart policy, local Japanese TTS, audio release, no network dependencies');

@@ -1,9 +1,12 @@
+import Time from 'time';
 import {nextDailyDue,japaneseClock,finishReminder} from 'archive-reminder-time';
 import {playAlarmSound,stopAlarmSound} from 'archive-alarm-sound';
 import Timer from 'timer';
 import Resource from 'Resource';
 import {getSettings,changeSettings,randomHex} from 'archive-vault';
 let definitions;
+const liveTimers=new Map();
+const elapsedTimer=t=>Math.min(t.duration,(Time.ticks-t.started)>>>0);
 let alarmDisplay;
 export function setAlarmDisplay(display){alarmDisplay=display;}
 const toolDefinitions=()=>definitions??(definitions=JSON.parse(String.fromArrayBuffer(new Resource('reminder-tools.txt'))));
@@ -13,11 +16,11 @@ const localTime=()=>new Date(Date.now()+9*3600000).toISOString().slice(0,19)+'+0
 const wait=ms=>new Promise(resolve=>Timer.set(resolve,ms));
 const compact=rows=>rows.filter(row=>row.status==='scheduled'||row.status==='pending').concat(rows.filter(row=>row.status!=='scheduled'&&row.status!=='pending').slice(-20));
 export function listDeviceTools(){return toolDefinitions();}
-export function reminderStatus(){return {clockReady:ready(),timezone:'Asia/Tokyo',now:Date.now(),localTime:ready()?localTime():null,ringing,items:getSettings().reminders};}
+export function reminderStatus(){return {clockReady:ready(),timezone:'Asia/Tokyo',now:Date.now(),localTime:ready()?localTime():null,ringing,items:getSettings().reminders.map(row=>liveTimers.has(row.id)?{...row,remainingMs:liveTimers.get(row.id).duration-elapsedTimer(liveTimers.get(row.id))}:row)};}
 export function callDeviceTool(name,args={}){
   if(!toolDefinitions().some(tool=>tool.name===name))throw new Error('Unknown device tool');
   if(name==='clock_now')return {clockReady:ready(),timezone:'Asia/Tokyo',localTime:ready()?localTime():null,utc:ready()?new Date().toISOString():null};
-  if(name==='reminder_list')return {...reminderStatus(),items:getSettings().reminders.filter(row=>args.include_completed||row.status==='scheduled'||row.status==='pending')};
+  if(name==='reminder_list')return {...reminderStatus(),items:reminderStatus().items.filter(row=>args.include_completed||row.status==='scheduled'||row.status==='pending')};
   if(name==='alarm_stop'){stopped=true;stopAlarmSound();return {stopping:ringing};}
   if(name==='reminder_cancel'){
     const id=String(args.id??'');const job=getSettings().reminders.find(row=>row.id===id);
@@ -26,7 +29,7 @@ export function callDeviceTool(name,args={}){
     if(job.status==='pending'){stopped=true;stopAlarmSound();}
     return {cancelled:true,id};
   }
-  if(!ready())throw new Error('本体の時刻が未同期です。Wi-FiかUSBで時刻を同期してください');
+  if(name!=='timer_create'&&!ready())throw new Error('本体の時刻が未同期です。Wi-FiかUSBで時刻を同期してください');
   if(getSettings().reminders.filter(row=>row.status==='scheduled'||row.status==='pending').length>=16)throw new Error('予約は16件までです');
   if(args.repeat!==undefined&&!['once','daily'].includes(args.repeat))throw new Error('繰り返しは1回か毎日を指定してください');
   if(name==='timer_create'&&args.repeat==='daily')throw new Error('毎日繰り返す場合はアラームを使ってください');
@@ -42,7 +45,9 @@ export function callDeviceTool(name,args={}){
   const title=String(args.title??(name==='timer_create'?'タイマー':'アラーム')).slice(0,80);
   const item={id:Date.now()+'-'+randomHex().slice(0,8),kind:name==='timer_create'?'timer':'alarm',title,due,status:'scheduled',created:Date.now()};
   if(name==='alarm_create'){item.repeat=args.repeat||'once';if(item.repeat==='daily')Object.assign(item,japaneseClock(due));}
+  if(name==='timer_create'&&!ready())item.clockPending=true;
   changeSettings(data=>{data.reminders=compact(data.reminders);data.reminders.push(item);});
+  if(name==='timer_create')liveTimers.set(item.id,{started:Time.ticks,duration:args.seconds*1000});
   trace('[tools] reminder scheduled\n');
   return item;
 }
@@ -64,10 +69,21 @@ async function notify(item){
 export function startDeviceTools(context,acquire,unlock){
   robot=context;claim=acquire;release=unlock;
   Timer.repeat(()=>{
-    if(!ready())return;
     try{
-      if(getSettings().reminders.some(row=>row.status==='scheduled'&&row.due<=Date.now())){
-        changeSettings(data=>{data.reminders=data.reminders.map(row=>row.status==='scheduled'&&row.due<=Date.now()?(row.repeat==='daily'&&Date.now()-row.due>300000?{...row,due:nextDailyDue(Date.now(),row.hour,row.minute)}:{...row,status:'pending'}):row);});
+      let changed=false;const now=Date.now();
+      const timers=getSettings().reminders.map(row=>{
+        if(row.kind!=='timer'||row.status!=='scheduled'){liveTimers.delete(row.id);return row;}
+        const live=liveTimers.get(row.id);
+        if(!live)return row.clockPending?(changed=true,{...row,status:'cancelled',reason:'時計未設定のタイマーは再起動で解除されました'}):row;
+        const remaining=live.duration-elapsedTimer(live);
+        if(remaining<=0){changed=true;liveTimers.delete(row.id);return {...row,status:'pending',clockPending:false};}
+        if(ready()&&(row.clockPending||Math.abs(row.due-(now+remaining))>2000)){changed=true;return {...row,due:now+remaining,clockPending:false};}
+        return row;
+      });
+      if(changed)changeSettings(data=>{data.reminders=timers;});
+
+      if(ready()&&getSettings().reminders.some(row=>row.status==='scheduled'&&!liveTimers.has(row.id)&&row.due<=Date.now())){
+        changeSettings(data=>{data.reminders=data.reminders.map(row=>row.status==='scheduled'&&!liveTimers.has(row.id)&&row.due<=Date.now()?(row.repeat==='daily'&&Date.now()-row.due>300000?{...row,due:nextDailyDue(Date.now(),row.hour,row.minute)}:{...row,status:'pending'}):row);});
       }
       const pending=getSettings().reminders.find(row=>row.status==='pending');
       if(pending&&!ringing&&claim())void notify(pending);

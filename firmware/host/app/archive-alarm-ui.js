@@ -26,14 +26,14 @@ export function startAlarmSettings(context,callbacks){
   const status=new Text(null,{left:8,right:8,top:156,height:32,style:body,string:'時刻を選んで「登録」を押してください'});
   const change=(h,m)=>{hour=(hour+h+24)%24;minute=(minute+m+60)%60;value.string=clock();};
   const repeat=button(daily?'繰り返し: 毎日':'繰り返し: 1回',()=>{daily=!daily;repeat.string=daily?'繰り返し: 毎日':'繰り返し: 1回';},{left:10,right:10,top:76,height:34});
-  const save=()=>{try{const due=nextDailyDue(Date.now(),hour,minute);actions.create({when:new Date(due).toISOString(),repeat:daily?'daily':'once',title:daily?'毎日のアラーム':'アラーム'});status.string=clock()+(daily?' 毎日':' 1回')+'で保存しました';}catch(e){status.string=Date.now()<1700000000000?'Wi-Fiで時刻を同期してください':String(e.message||'保存できませんでした');}};
+  const save=()=>{try{const due=nextDailyDue(Date.now(),hour,minute);actions.create({when:new Date(due).toISOString(),repeat:daily?'daily':'once',title:daily?'毎日のアラーム':'アラーム'});status.string=clock()+(daily?' 毎日':' 1回')+'で保存しました';}catch(e){status.string=Date.now()<1700000000000?'オフラインの時計設定で時刻を合わせてください':String(e.message||'保存できませんでした');}};
   return {content:new Container(null,{left:0,right:0,top:0,bottom:0,skin:new Skin({fill:'white'}),contents:[value,
    button('時 −',()=>change(-1,0),{left:10,top:36,width:68,height:34}),button('時 ＋',()=>change(1,0),{left:87,top:36,width:68,height:34}),button('分 −',()=>change(0,-1),{right:87,top:36,width:68,height:34}),button('分 ＋',()=>change(0,1),{right:10,top:36,width:68,height:34}),repeat,
    button('登録',save,{left:10,top:116,width:145,height:34}),button('予約一覧',()=>robot.ui.application.behavior.launchMiniApp('archive-alarm-list'),{right:10,top:116,width:145,height:34}),status]})};
  }});
  robot.ui.miniApps.register({id:'archive-alarm-list',title:'アラーム・タイマー',create(){
   const summary=new Text(null,{left:8,right:8,top:4,height:62,style:body,string:''});let rows=[];
-  const render=()=>{rows=actions.list().items;index=Math.max(0,Math.min(index,rows.length-1));const row=rows[index];if(!row){summary.string='予約はありません';return;}const t=japaneseClock(row.due);summary.string=(index+1)+' / '+rows.length+'  '+pad(t.hour)+':'+pad(t.minute)+(row.repeat==='daily'?' 毎日':' 1回')+'\n'+row.title;};
+  const render=()=>{rows=actions.list().items;index=Math.max(0,Math.min(index,rows.length-1));const row=rows[index];if(!row){summary.string='予約はありません';return;}const t=japaneseClock(row.due);if(row.kind==='timer'&&row.remainingMs!==undefined){summary.string=(index+1)+' / '+rows.length+'  残り '+Math.ceil(row.remainingMs/1000)+'秒\n'+row.title;return;}summary.string=(index+1)+' / '+rows.length+'  '+pad(t.hour)+':'+pad(t.minute)+(row.repeat==='daily'?' 毎日':' 1回')+'\n'+row.title;};
   const cancel=()=>{try{if(rows[index])actions.cancel(rows[index].id);render();}catch(_){summary.string='解除できませんでした';}};render();
   return {content:new Container(null,{left:0,right:0,top:0,bottom:0,skin:new Skin({fill:'white'}),contents:[summary,button('この予約を解除',cancel,{left:10,right:10,top:72,height:38}),button('前へ',()=>{index--;render();},{left:10,top:116,width:92,height:36}),button('次へ',()=>{index++;render();},{left:114,top:116,width:92,height:36}),button('設定',()=>openAlarmSettings(),{right:10,top:116,width:92,height:36})]})};
  }});

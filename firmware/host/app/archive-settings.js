@@ -1,3 +1,4 @@
+import {setLocalTime} from 'archive-local-clock';
 // AP provisioning follows Moddable's webConfigWifi and 78/esp-wifi-connect.
 import WiFi from 'wifi';
 import {Request as HttpRequest} from 'http';
@@ -44,7 +45,7 @@ function ensureMonitor(){
       connected=true;connection='connected';error='';reconnectDelay=3000;if(reconnectTimer){Timer.clear(reconnectTimer);reconnectTimer=undefined;}
       if(connectionTimeout){Timer.clear(connectionTimeout);connectionTimeout=undefined;}
       trace('[settings] Wi-Fi connected\n');
-      try{ntp?.close();ntp=new SNTP({host:'pool.ntp.org'},(message,value)=>{if(message===SNTP.time){Time.set(value);trace('[settings] network clock synchronized\n');}});}catch(_){}
+      try{ntp?.close();ntp=new SNTP({host:'pool.ntp.org'},(message,value)=>{if(message===SNTP.time){setLocalTime(value*1000);trace('[settings] network clock synchronized\n');}});}catch(_){}
     }else if(message===WiFi.disconnected||message===WiFi.lostIP){connected=false;lastDisconnectReason=Number.isInteger(reason)?reason:undefined;if(connection!=='connecting')connection='offline';if(lastDisconnectReason!==undefined)trace('[settings] Wi-Fi disconnected reason='+lastDisconnectReason+'\n');scheduleReconnect();}
   });
 }
