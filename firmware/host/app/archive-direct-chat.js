@@ -652,7 +652,8 @@ async function connect() {
             Timer.set(() => {
               if (chat === instance)
                 try {
-                  instance.sendText(introText)
+                  if(provider==='xiaozhi')instance.notifyWakeWordDetected(introText)
+                  else instance.sendText(introText)
                 } catch (_) {
                   greetingPending = true
                 }

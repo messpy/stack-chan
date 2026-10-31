@@ -156,3 +156,17 @@ const micLights=[];c.robotStub.lightOn=(...args)=>micLights.push(['on',...args])
 vm.runInContext('microphoneIndicator(true);microphoneIndicator(true);microphoneIndicator(false)',c);
 assert.equal(micLights.length,2);assert.deepEqual(micLights[0],['on','head',0,48,0]);assert.equal(micLights[1][0],'off');
 console.log('Microphone indicator: green while recording, repeated PCM does not rewrite LED, stop clears LED: PASS');
+
+let greetingRoute;
+Chat.prototype.sendText=function(){greetingRoute='text'};
+Chat.prototype.notifyWakeWordDetected=function(){greetingRoute='detect'};
+c.Timer.set=(fn,ms)=>{if(!ms)queueMicrotask(fn);return 1};
+for(const provider of ['xiaozhi','gemini']){
+  vm.runInContext('setChatMode(false)',c);data.conversationProvider=provider;
+  vm.runInContext('setChatMode(true)',c);await vm.runInContext('connect()',c);
+  connections.at(-1).callbacks.onStateChanged(c.ChatState.CONNECTED);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(greetingRoute,provider==='xiaozhi'?'detect':'text');
+}
+vm.runInContext('setChatMode(false)',c);
+console.log('Greeting transport: XiaoZhi uses supported detect notification, Gemini uses text: PASS');
