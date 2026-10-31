@@ -67,7 +67,8 @@
     "archive-button-schema": "./archive-button-schema",
     "archive-ui-button": "./archive-ui-button",
     "archive-ai-settings": "./archive-ai-settings",
-    "archive-playback-buffer": "./archive-playback-buffer"
+    "archive-playback-buffer": "./archive-playback-buffer",
+    "archive-history-ui": "./archive-history-ui"
   },
   "defines": {
     "file": {

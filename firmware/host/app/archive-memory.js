@@ -49,6 +49,14 @@ export function history(args={}){
   const rows=db('SELECT id,role,substr(text,1,360) AS text,created,speaker_id,(SELECT filename FROM message_media WHERE message_id=messages.id) AS image FROM messages'+(where.length?' WHERE '+where.join(' AND '):'')+' ORDER BY created DESC LIMIT ?',values.concat(limit));
   return {items:rows.reverse(),timezone:'Asia/Tokyo',now:Date.now()};
 }
+export function deviceHistory(args={}){
+  const limit=Math.max(1,Math.min(8,Math.floor(Number(args.limit)||8))),where=[],values=[];
+  if(args.user_id){where.push('(m.speaker_id=? OR EXISTS(SELECT 1 FROM message_context c WHERE c.message_id=m.id AND c.user_id=?))');values.push(text(args.user_id,64),text(args.user_id,64));}
+  if(args.cursor){const created=Number(args.cursor.created),id=text(args.cursor.id,100);if(!Number.isFinite(created)||!id)throw new Error('Invalid history cursor');where.push('(m.created<? OR (m.created=? AND m.id<?))');values.push(created,created,id);}
+  const rows=db('SELECT m.id,m.role,substr(m.text,1,4096) AS text,m.created,(SELECT name FROM entities WHERE id=m.speaker_id) AS name,(SELECT name FROM entities WHERE id=(SELECT user_id FROM message_context WHERE message_id=m.id LIMIT 1)) AS partner FROM messages m'+(where.length?' WHERE '+where.join(' AND '):'')+' ORDER BY m.created DESC,m.id DESC LIMIT ?',values.concat(limit+1));
+  const items=rows.slice(0,limit),last=items[items.length-1];return {items,hasMore:rows.length>limit,cursor:last?{created:last.created,id:last.id}:null};
+}
+
 export function users(args={}){
   const name=text(args.name,80),id=text(args.id,64);let rows;
   const base='SELECT p.*,(SELECT MAX(created) FROM messages WHERE speaker_id=p.id OR id IN (SELECT message_id FROM message_context WHERE user_id=p.id)) AS lastConversation FROM user_profile p';

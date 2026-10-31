@@ -1,3 +1,4 @@
+import {startHistoryUI} from 'archive-history-ui';
 import {startTimerUI} from 'archive-timer-ui';
 import {createAlarmDance} from 'archive-alarm-motion';
 import {captureFrame,screenCommand,showScreen} from 'archive-screen';
@@ -20,7 +21,7 @@ import {startAlarmSettings,openAlarmSettings,showRingingAlarm,hideRingingAlarm} 
 import {alarmSoundCommand,playAlarmSound} from 'archive-alarm-sound';
 import {startWeb,openControl,controlStatus} from 'archive-web';
 import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat} from 'archive-direct-chat';
-import {recordMemory,history,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
+import {recordMemory,history,deviceHistory,currentSpeaker,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
 import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
 import {acceptAudioChunk} from 'archive-audio-upload';
 import {startSettings,openSettings,closeSettings,getSettingsStatus,vaultSelfTest,settingsHttpSelfTest,scanNearby} from 'archive-settings';
@@ -155,6 +156,7 @@ export function startArchive(robot) {
   startDebugDrain();
   startLocalClock();
   startOffline(robot,{stopCloud:()=>{if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings,startCloud:()=>setChatMode(true),openAI:()=>robot.ui.application.behavior.launchMiniApp('archive-ai-settings')});
+  startHistoryUI(robot,{read:args=>{importLegacy();return deviceHistory(args);},people:()=>users({limit:50}).users.filter(p=>p.kind==='person'),current:currentSpeaker});
   startVolume(robot);
   startAISettings(robot,{status:directChatStatus,select:configureChatProvider,mode:setChatMode});
   startWiFiDisplay(robot);

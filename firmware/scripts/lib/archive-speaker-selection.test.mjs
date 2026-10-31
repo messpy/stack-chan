@@ -219,3 +219,12 @@ vm.runInContext('adapter.state=6',adapterContext);writableCallback(8);
 assert.equal(closedOutput,false);playbackClock=83;writableCallback(8);assert.equal(closedOutput,false);
 playbackClock=85;writableCallback(8);assert.equal(closedOutput,true);
 console.log('Playback drain: final queued audio is not closed immediately, microphone resumes after drain allowance: PASS');
+
+const tieTime=Date.now()+100000;
+for(let i=0;i<25;i++)memory.recordMemory({id:'cursor-tie-'+String(i).padStart(2,'0'),role:'user',text:'同時刻の発言'+i,created:tieTime,speakerId:i%2?bob.id:alice.id});
+let historyCursor=null,historyIds=[];
+for(let i=0;i<100;i++){const result=memory.deviceHistory({cursor:historyCursor,limit:8});assert.ok(result.items.length<=8);historyIds.push(...result.items.map(m=>m.id));if(!result.hasMore)break;historyCursor=result.cursor;}
+const tied=historyIds.filter(id=>id.startsWith('cursor-tie-'));assert.equal(tied.length,25);assert.equal(new Set(tied).size,25);
+const alicePage=memory.deviceHistory({user_id:alice.id,limit:8});assert.ok(alicePage.items.every(m=>!m.id.startsWith('cursor-tie-')||Number(m.id.slice(-2))%2===0));
+assert.throws(()=>memory.deviceHistory({cursor:{id:'x',created:'invalid'}}));
+console.log('Device history: bounded pages, equal-timestamp cursor completeness, person isolation and invalid cursor handling: PASS');
