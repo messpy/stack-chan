@@ -17,7 +17,12 @@ assert.throws(()=>vm.runInContext("selectSpeaker({name:' stackchan '},true)",c))
 
 memory.identifySpeaker({id:alice.id,name:alice.name});const snapshot=memory.currentSpeaker().id;memory.identifySpeaker({id:bob.id,name:bob.name});memory.recordMemory({id:'late-photo-answer',role:'assistant',text:'遅れて届いた画像回答',created:now+100,speakerId:snapshot});assert.ok(memory.history({user_id:alice.id,limit:10}).items.some(m=>m.id==='late-photo-answer'));assert.ok(!memory.history({user_id:bob.id,limit:10}).items.some(m=>m.id==='late-photo-answer'));memory.recordMemory({id:'unattributed-legacy',role:'user',text:'話者不明の旧記録',created:now+101,speakerId:null});assert.ok(!memory.history({user_id:bob.id,limit:10}).items.some(m=>m.id==='unattributed-legacy'));console.log('Late image replies keep original speaker; legacy/guest messages are not attributed to the active person: PASS');
 
+const beforeRegistrationConnections=connections.length;
 vm.runInContext('setChatMode(false);beginVoiceRegistration()',c);
+assert.equal(connections.length,beforeRegistrationConnections+1);
+assert.equal(vm.runInContext('speakerList().enrollment.ready',c),false);
+connections.at(-1).callbacks.onStateChanged(c.ChatState.CONNECTED);
+assert.equal(vm.runInContext('speakerList().enrollment.ready',c),true);
 const beforePeople=memory.users({limit:50}).users.length;
 assert.equal(memory.currentSpeaker(),null);
 await vm.runInContext('connect()',c);
@@ -63,6 +68,10 @@ viewState={people:[],buttons:schema.speakerButtons([]),enrollment:null};let scre
 screen.children.find(n=>n.method==='register').press();assert.equal(registrationStarts,1);
 viewState.enrollment={phase:'listening',name:''};screen=speakerDefinition.create().content;
 assert.ok(screen.children.some(n=>n.method==='cancel'));assert.ok(!screen.children.some(n=>n.method==='confirm'));
+assert.ok(screen.children.some(n=>n.method==='retry'));
+const preparingText=screen.children.find(n=>n.string)?.string;
+viewState.enrollment.ready=true;screen=speakerDefinition.create().content;
+assert.notEqual(screen.children.find(n=>n.string)?.string,preparingText);
 viewState.enrollment={phase:'confirming',name:'ユキ'};screen=speakerDefinition.create().content;
 screen.children.find(n=>n.method==='confirm').press();assert.equal(confirmations,1);
 screen.children.find(n=>n.method==='cancel').press();assert.equal(cancellations,1);

@@ -72,6 +72,8 @@ function beginVoiceRegistration() {
   retryAt = 0
   state = 'waiting'
   openSpeakerChooser()
+  trace('[speaker] registration connecting\n')
+  void connect()
 }
 function cancelVoiceRegistration() {
   enrollment.reset()
@@ -83,6 +85,7 @@ function confirmVoiceRegistration() {
 }
 function receiveRegistrationName(text) {
   if (!enrollment.receive(text)) return
+  trace('[speaker] name received valid=' + !!enrollment.snapshot().name + '\n')
   // Release the microphone outside the transcript callback; no profile is saved before confirmation.
   Timer.set(() => {
     if (enrollment.phase !== 'confirming') return
@@ -99,7 +102,7 @@ export function speakerList() {
   return {
     people,
     buttons: speakerButtons(people),
-    enrollment: enrollment.snapshot(),
+    enrollment: enrollment.active ? { ...enrollment.snapshot(), ready: state === 'listening', error: error ? String(error).slice(0, 180) : '' } : null,
     selected: currentSpeaker(),
     requiresSpeaker: enabled() && !currentSpeaker(),
   }
@@ -397,7 +400,10 @@ function failed(reason) {
   retryAt = Date.now() + retryDelay
   retryDelay = Math.min(60000, retryDelay * 2)
   Timer.set(() => {
-    if (generation === failedGeneration && chat === failedChat) closeChat()
+    if (generation === failedGeneration && chat === failedChat) {
+      closeChat()
+      if (enrollment.phase === 'listening') openSpeakerChooser()
+    }
   }, 0)
   trace('[direct-chat] reconnect scheduled\n')
 }
@@ -620,7 +626,8 @@ async function connect() {
             failed(reason)
             return
           }
-          if (value === ChatState.CONNECTED && greetingPending) {
+          // Registration listens immediately; a generated greeting would talk over the name.
+          if (value === ChatState.CONNECTED && greetingPending && !enrollment.active) {
             greetingPending = false
             robot.hideBalloon()
             introText =
@@ -636,7 +643,12 @@ async function connect() {
             }, 0)
           }
           if (value === ChatState.CONNECTED || value === ChatState.SPEAKING) {
+            const becameReady = state !== 'listening'
             state = 'listening'
+            if (enrollment.phase === 'listening' && becameReady) {
+              trace('[speaker] microphone ready\n')
+              openSpeakerChooser()
+            }
             error = ''
             retryDelay = 3000
             failures = 0

@@ -26,7 +26,9 @@ export function startSpeakerChooser(context, callbacks) {
             style,
             string:
               e.phase === 'listening'
-                ? '新規登録：お名前を声で教えてください。\n接続後にマイクで聞き取ります。'
+                ? e.ready
+                  ? 'いま、お名前を話してください。\n聞き取った名前を次の画面で確認します。'
+                  : e.error || '音声認識に接続中です。\n「いま、お名前を」と出るまで待ってください。'
                 : e.name
                   ? '「' + e.name + '」さんで登録しますか？'
                   : '名前を聞き取れませんでした。聞き直してください。',
@@ -39,6 +41,7 @@ export function startSpeakerChooser(context, callbacks) {
             { left: 12, right: 12, top, height: 32 },
             onError,
           )
+        if (e.phase === 'listening') root.add(button('声で聞き直す', 'retry', 128, '#2563eb'))
         if (e.phase === 'confirming') {
           if (e.name) root.add(button('この名前で登録', 'confirm', 94, '#167647'))
           root.add(button('声で聞き直す', 'retry', 128, '#2563eb'))
