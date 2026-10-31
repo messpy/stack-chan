@@ -299,6 +299,7 @@ export function directChatStatus() {
     error,
     detail,
     audio: { ...audioStats },
+    playback:globalThis.stackchanPlaybackHealth||null,
     busy: !!chat || connecting,
     phase: state,
   }

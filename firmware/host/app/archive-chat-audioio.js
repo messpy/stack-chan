@@ -3,6 +3,8 @@ import ChatAudioIOBase from 'ChatAudioIO'
 import { writePcmRing } from 'archivePcmRingWriter'
 import Worker from 'worker'
 import AudioIn from 'embedded:io/audio/in'
+import AudioOut from 'embedded:io/audio/out'
+import {PlaybackBuffer} from 'archive-playback-buffer'
 
 const CONNECTION_ENVELOPE = '__stackchanConnectionConfiguration'
 
@@ -48,6 +50,41 @@ export default class ChatAudioIO extends ChatAudioIOBase {
       this.inputBufferOffset+=data.byteLength
     }})
     this.input=input;input.start()
+  }
+
+  ensureOutput(){
+    if(this.output)return
+    this.input?.close();this.input=null;this.ready=false
+    const rate=this.outputSampleRate||24000,planner=new PlaybackBuffer(this.outputBufferSize,rate)
+    const health={underruns:0,bufferedMs:0,prebuffering:true}
+    globalThis.stackchanPlaybackHealth=health
+    let drainUntil=0,maxWritable=0,lastLevel=-1,quiet=new Uint8Array(0),output
+    output=new AudioOut({sampleRate:rate,channels:1,onWritable:size=>{
+      if(this.output!==output)return
+      size&=~1;maxWritable=Math.max(maxWritable,size)
+      const finished=this.state===ChatAudioIO.WAITING
+      const plan=planner.plan(this.outputBufferHead,this.outputBufferTail,size,finished)
+      health.bufferedMs=Math.round(plan.available*1000/(rate*2));health.prebuffering=plan.prebuffering
+      if(health.underruns!==planner.underruns){health.underruns=planner.underruns;trace('[playback] rebuffer count='+health.underruns+'\n')}
+      let peak=0
+      for(const part of plan.segments){
+        const samples=new Uint8Array(this.outputBuffer,part.offset,part.size)
+        output.write(samples)
+        const values=new Int16Array(this.outputBuffer,part.offset,part.size/2)
+        for(let i=0;i<values.length;i+=8)peak=Math.max(peak,Math.abs(values[i]))
+      }
+      // Keep DMA supplied during prebuffer/rebuffer; never replay stale samples.
+      const silence=size-plan.count;if(silence){if(quiet.byteLength<silence)quiet=new Uint8Array(silence);output.write(quiet.subarray(0,silence))}
+      this.outputBufferTail=plan.next
+      Atomics.store(this.barrier,0,plan.next);Atomics.notify(this.barrier,0)
+      if(lastLevel!==peak){lastLevel=peak;this.onOutputLevelChanged?.(peak)}
+      if(plan.complete){
+        // Native write queues audio. Closing now would cut off the final syllables.
+        if(!drainUntil)drainUntil=Date.now()+Math.ceil(maxWritable*1000/(rate*2))+80
+        if(Date.now()>=drainUntil){this.worker.postMessage({id:'listened'});this.state=ChatAudioIO.SPEAKING;this.ensureInput();}
+      }else drainUntil=0
+    }})
+    this.output=output;output.volume=this.volume;output.start()
   }
 
   createWorker(specifier, instructions, functions, voiceID, providerID, modelID, apiKey) {

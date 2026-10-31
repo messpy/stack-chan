@@ -206,3 +206,16 @@ assert.equal(registration.explicitSpeakerName('私の名前はハルです。'),
 assert.equal(registration.explicitSpeakerName('ハルです'),'ハル');
 for(const text of ['はい','いいえ','元気です','こんにちは','タイマーをかけて'])assert.equal(registration.explicitSpeakerName(text),'');
 console.log('Explicit self-introduction parser accepts names and leaves confirmations/commands to AI: PASS');
+
+const playbackModule=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-playback-buffer.js')).toString('base64'));
+adapterContext.PlaybackBuffer=playbackModule.PlaybackBuffer;
+let writableCallback,closedOutput=false,playbackClock=0;
+adapterContext.Date={now:()=>playbackClock};
+adapterContext.AudioOut=class{constructor(options){writableCallback=options.onWritable}write(){}start(){}close(){closedOutput=true}};
+AdapterBase.WAITING=6;AdapterBase.LISTENING=5;
+vm.runInContext("adapter=new ChatAudioIO();adapter.outputBufferSize=64;adapter.outputSampleRate=1000;adapter.outputBuffer=new SharedArrayBuffer(64);adapter.outputBufferHead=40;adapter.outputBufferTail=0;adapter.barrier=new Int32Array(new SharedArrayBuffer(4));adapter.state=5;adapter.onOutputLevelChanged=()=>{};adapter.onStateChanged=()=>{};adapter.worker={postMessage:frame};adapter.ensureOutput()",adapterContext);
+for(let i=0;i<5;i++)writableCallback(8);
+vm.runInContext('adapter.state=6',adapterContext);writableCallback(8);
+assert.equal(closedOutput,false);playbackClock=83;writableCallback(8);assert.equal(closedOutput,false);
+playbackClock=85;writableCallback(8);assert.equal(closedOutput,true);
+console.log('Playback drain: final queued audio is not closed immediately, microphone resumes after drain allowance: PASS');
