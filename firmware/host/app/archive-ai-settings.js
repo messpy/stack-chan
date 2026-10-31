@@ -5,7 +5,7 @@ import { createUIButton } from 'archive-ui-button'
 export function startAISettings(robot, actions) {
   robot.ui.miniApps.register({
     id: 'archive-ai-settings',
-    title: 'AI選択',
+    title: 'AIを選ぶ',
     hidden: true,
     create() {
       const root = new Container(null, { left: 0, right: 0, top: 0, bottom: 0, skin: new Skin({ fill: 'white' }) }),
@@ -18,13 +18,12 @@ export function startAISettings(robot, actions) {
           render()
         },
         toggle: () => {
-          actions.mode(!actions.status().enabled)
-          render()
+          robot.ui.application.behavior.onMiniAppBack()
         },
       }
       function render() {
         const s = actions.status(),
-          next = s.provider + ':' + s.geminiConfigured + ':' + s.ollamaConfigured + ':' + s.enabled
+          next = s.provider + ':' + s.geminiConfigured + ':' + s.ollamaConfigured + ':' + s.enabled + ':' + s.configured
         if (next === signature) return
         signature = next
         root.empty()
@@ -40,8 +39,8 @@ export function startAISettings(robot, actions) {
               (s.provider === 'ollama' ? 'Ollama Cloud' : s.provider === 'gemini' ? 'Gemini' : 'XiaoZhi') +
               ' / 会話 ' +
               (s.enabled ? 'ON' : 'OFF') +
-              '\n設定: ' +
-              (s.configured ? '登録済み' : '未設定'),
+              '\n接続設定: ' +
+              (s.configured ? '保存済み' : '未設定'),
           }),
         )
         for (const [index, provider] of ['xiaozhi', 'gemini', 'ollama'].entries())
@@ -64,7 +63,7 @@ export function startAISettings(robot, actions) {
         root.add(
           createUIButton(
             {
-              text: s.enabled ? '会話を終了' : '会話を始める',
+              text: '戻る',
               background: '#2563eb',
               textColor: '#ffffff',
               method: 'toggle',

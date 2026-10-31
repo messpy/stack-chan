@@ -1,3 +1,4 @@
+import {startTimerUI} from 'archive-timer-ui';
 import {createAlarmDance} from 'archive-alarm-motion';
 import {captureFrame,screenCommand,showScreen} from 'archive-screen';
 import {startDebugDrain,armDebugDrain,debugLogStatus} from 'archive-debug';
@@ -158,6 +159,7 @@ export function startArchive(robot) {
   startWiFiDisplay(robot);
   try{startSettings(robot);}catch(_){trace('[settings] initialization failed; USB remains available\n');}
   try{startDeviceTools(robot,()=>{if(directChatStatus().busy)pauseDirectChat();if(busy)return false;busy=true;return true;},()=>{busy=false;resumeDirectChat();});}catch(_){trace('[tools] initialization failed; USB remains available\n');}
+  startTimerUI(robot,{create:args=>callDeviceTool('timer_create',args),status:reminderStatus});
   startAlarmSettings(robot,{create:args=>callDeviceTool('alarm_create',args),list:()=>callDeviceTool('reminder_list'),cancel:id=>callDeviceTool('reminder_cancel',{id}),stop:()=>callDeviceTool('alarm_stop')});
   setAlarmDisplay({show:showRingingAlarm,close:hideRingingAlarm});
   setAlarmMotion(stopped=>createAlarmDance(robot,{rotation:getM5StackChanDriver()?.lastKnownRotation,stopped}));

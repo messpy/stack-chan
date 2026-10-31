@@ -20,16 +20,19 @@ export function startAlarmSettings(context,callbacks){
   stop.skin=new Skin({fill:['#c12d3c','#8e1d29']});stop.style=new Style({font:'k8x12-24',color:'white',horizontal:'center',vertical:'middle'});
   return {content:new Container(null,{left:0,right:0,top:0,bottom:0,skin:new Skin({fill:'#fff4e6'}),contents:[new Text(null,{left:12,right:12,top:8,height:60,style:body,string:((ringItem?.kind==='timer')?'タイマー終了':'アラーム')+'\n'+String(ringItem?.title||'') .slice(0,60)}),stop]}),dispose(){if(ringClose){ringClose=undefined;actions.stop();}}};
  }});
- robot.ui.miniApps.register({id:'archive-alarm',hidden:true,title:'アラーム設定',create(){
+ robot.ui.miniApps.register({id:'archive-alarm',title:'アラーム',create(){
   const last=getSettings().reminders.filter(r=>r.kind==='alarm').slice(-1)[0];if(last){const t=japaneseClock(last.due);hour=t.hour;minute=t.minute;daily=last.repeat==='daily';}
   const value=new Label(null,{left:0,right:0,top:0,height:32,style:new Style({font:'k8x12-24',color:'black',horizontal:'center'}),string:clock()});
   const status=new Text(null,{left:8,right:8,top:156,height:32,style:body,string:'時刻を選んで「登録」を押してください'});
-  const change=(h,m)=>{hour=(hour+h+24)%24;minute=(minute+m+60)%60;value.string=clock();};
-  const repeat=button(daily?'繰り返し: 毎日':'繰り返し: 1回',()=>{daily=!daily;repeat.string=daily?'繰り返し: 毎日':'繰り返し: 1回';},{left:10,right:10,top:76,height:34});
-  const save=()=>{try{const due=nextDailyDue(Date.now(),hour,minute);actions.create({when:new Date(due).toISOString(),repeat:daily?'daily':'once',title:daily?'毎日のアラーム':'アラーム'});status.string=clock()+(daily?' 毎日':' 1回')+'で保存しました';}catch(e){status.string=Date.now()<1700000000000?'オフラインの時計設定で時刻を合わせてください':String(e.message||'保存できませんでした');}};
+  let saved=false;
+  const rearm=()=>{saved=false;saveButton.active=true;saveButton.string='登録';};
+  const change=(h,m)=>{rearm();hour=(hour+h+24)%24;minute=(minute+m+60)%60;value.string=clock();};
+  const repeat=button(daily?'繰り返し: 毎日':'繰り返し: 1回',()=>{rearm();daily=!daily;repeat.string=daily?'繰り返し: 毎日':'繰り返し: 1回';},{left:10,right:10,top:76,height:34});
+  const save=()=>{if(saved)return;try{const due=nextDailyDue(Date.now(),hour,minute);actions.create({when:new Date(due).toISOString(),repeat:daily?'daily':'once',title:daily?'毎日のアラーム':'アラーム'});saved=true;saveButton.active=false;saveButton.string='保存済み';status.string=clock()+(daily?' 毎日':' 1回')+'で保存しました';}catch(e){status.string=Date.now()<1700000000000?'オフラインの時計設定で時刻を合わせてください':String(e.message||'保存できませんでした');}};
+  const saveButton=button('登録',save,{left:10,top:116,width:145,height:34});
   return {content:new Container(null,{left:0,right:0,top:0,bottom:0,skin:new Skin({fill:'white'}),contents:[value,
    button('時 −',()=>change(-1,0),{left:10,top:36,width:68,height:34}),button('時 ＋',()=>change(1,0),{left:87,top:36,width:68,height:34}),button('分 −',()=>change(0,-1),{right:87,top:36,width:68,height:34}),button('分 ＋',()=>change(0,1),{right:10,top:36,width:68,height:34}),repeat,
-   button('登録',save,{left:10,top:116,width:145,height:34}),button('予約一覧',()=>robot.ui.application.behavior.launchMiniApp('archive-alarm-list'),{right:10,top:116,width:145,height:34}),status]})};
+   saveButton,button('予約一覧',()=>robot.ui.application.behavior.launchMiniApp('archive-alarm-list'),{right:10,top:116,width:145,height:34}),status]})};
  }});
  robot.ui.miniApps.register({id:'archive-alarm-list',hidden:true,title:'アラーム・タイマー',create(){
   const summary=new Text(null,{left:8,right:8,top:4,height:62,style:body,string:''});let rows=[];

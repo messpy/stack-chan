@@ -14,7 +14,7 @@ settings.connected=false;settings.ip='';timers.at(-1)();assert.equal(vm.runInCon
 console.log('PASS: LAN never auto-enables AP; DHCP/server readiness updates QR; prior AP choice never leaks into LAN; one settings entry; internal screens hidden');
 
 robot.ui.application.behavior.launchMiniApp('archive-settings');assert.equal(active.content.children.length,7);
-robot.ui.application.behavior.launchMiniApp('archive-offline-settings');assert.equal(active.content.children[1].data.label,'自動切替: ON');active.content.children[1].data.onTap();assert.equal(automatic,false);assert.equal(active.content.children[1].data.label,'自動切替: OFF');
+robot.ui.application.behavior.launchMiniApp('archive-offline-settings');assert.equal(active.content.children[1].data.label,'USB・Wi-Fiなしで自動: ON');active.content.children[1].data.onTap();assert.equal(automatic,false);assert.equal(active.content.children[1].data.label,'USB・Wi-Fiなしで自動: OFF');
 
 robot.ui.application.behavior.launchMiniApp('archive-device-info');assert.ok(active.content.children[0].string.includes('-62 dBm'));active.content.children[2].data.onTap();assert.ok(active.content.children[0].string.includes('gemini'));active.content.children[2].data.onTap();assert.ok(active.content.children[0].string.includes('音量: 10%'));assert.ok(active.content.children[0].string.includes('聞き取り中'));
 console.log('PASS: organized settings navigation, auto toggle refresh, Wi-Fi / AI / audio diagnostics');
@@ -22,3 +22,9 @@ console.log('PASS: organized settings navigation, auto toggle refresh, Wi-Fi / A
 for(const key of ['cycleEmotion','servoTest','toggleLED','recordPlayback','speakStackchan'])assert.ok(removed.includes(key));
 
 drawers[0].callback();assert.ok(closeOfflineCalls>0);assert.ok(active.content.children.some(x=>x.data?.label==='情報取得'));
+
+robot.ui.application.behavior.launchMiniApp('archive-network-settings');assert.equal(active.content.children.length,5);const networkButtons=active.content.children.slice(1);assert.equal(new Set(networkButtons.map(b=>b.data.label)).size,networkButtons.length);const apStarts=opened;networkButtons[1].data.onTap();assert.equal(opened,apStarts);assert.equal(vm.runInContext('controlStatus().screenMode',c),'lan');
+console.log('PASS: simplified connection choices are distinct and the single LAN action never starts setup WiFi');
+
+settings.connected=true;settings.ip='192.168.2.33';vm.runInContext('server={}',c);const beforeAISetup=opened;robot.ui.application.behavior.launchMiniApp('archive-ai-setup');assert.ok(active.content.children.some(n=>n.string?.endsWith('#conversation')));assert.equal(opened,beforeAISetup);vm.runInContext("openControl('lan')",c);assert.ok(active.content.children.some(n=>n.string?.includes('?k=TEST_ACCESS')&&!n.string.includes('#conversation')));
+console.log('PASS: AI setup opens its own LAN section without changing the regular operation QR or starting AP');

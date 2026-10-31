@@ -1,0 +1,13 @@
+import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';import {stripTypeScriptTypes} from 'node:module';
+class Node{constructor(data={},o={}){Object.assign(this,data,o);this.children=[];this.width??=320;this.height??=240;}empty(){this.children=[];}add(n){this.children.push(n);}}
+let mode='face',faceReturns=0;class View{constructor(){this.behavior={setMain(){},showFace(){faceReturns++;},appBar:{behavior:{onAppBarMode(_,m){mode=m.kind==='face'?'face':m.title;},onMiniAppAvailability(){}}}};}}
+const context=vm.createContext({Behavior:class{},trace(){}});
+const registrySource=stripTypeScriptTypes(fs.readFileSync(new URL('../../host/modules/ui/application/mini-app.ts',import.meta.url),'utf8'),{mode:'transform'});const registry=new vm.SourceTextModule(registrySource,{context});await registry.link(()=>{throw Error('unexpected dependency')});await registry.evaluate();
+const deps={'face-view':{FaceMainTemplate:Node,FaceView:View},'mini-app':{MINI_APP_BAR_HEIGHT:44,MiniAppRegistry:registry.namespace.MiniAppRegistry},'mini-app-launcher':{createMiniAppViewport:n=>n,MiniAppLauncher:Node},'piu/MC':{Application:Node,Container:Node}};
+const source=stripTypeScriptTypes(fs.readFileSync(new URL('../../host/modules/ui/application/app-controller.ts',import.meta.url),'utf8'),{mode:'transform'});const mod=new vm.SourceTextModule(source,{context});await mod.link(name=>new vm.SyntheticModule(Object.keys(deps[name]),function(){for(const[k,v]of Object.entries(deps[name]))this.setExport(k,v);},{context}));await mod.evaluate();
+const c=new mod.namespace.AppController();c.onCreate(new Node(),{main:new Node()});let disposed=0,closeLeaf;
+for(const id of ['settings','category','leaf'])c.miniApps.register({id,title:id,create(ctx){if(id==='leaf')closeLeaf=ctx.close;return {content:new Node(),dispose(){disposed++;}};}});
+c.launchMiniApp('settings');c.launchMiniApp('category');c.launchMiniApp('leaf');assert.equal(mode,'leaf');c.onMiniAppBack();assert.equal(mode,'category');c.onMiniAppBack();assert.equal(mode,'settings');c.onMiniAppBack();assert.equal(mode,'face');assert.equal(disposed,5);
+c.launchMiniApp('settings');c.launchMiniApp('category');c.launchMiniApp('category');c.onMiniAppBack();assert.equal(mode,'settings');c.showFace();c.onMiniAppBack();assert.equal(mode,'face');
+c.launchMiniApp('settings');c.launchMiniApp('leaf');closeLeaf();assert.equal(mode,'face');c.onMiniAppBack();assert.equal(mode,'face');assert.ok(faceReturns>0);
+console.log('PASS: nested Back restores the previous page, same-page refresh does not duplicate history, explicit close returns to face and clears history');

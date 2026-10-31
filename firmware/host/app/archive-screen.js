@@ -22,8 +22,9 @@ export function screenCommand(action,args={}){
   throw new Error('Unknown screen command');
 }
 export function showScreen(robot,scene){
-  const pages={settings:'archive-settings',checks:'archive-checks',info:'archive-device-info',volume:'archive-volume',ai:'archive-ai-settings',offline:'archive-offline-settings',network:'archive-network-settings',alarm:'archive-alarm'};
+  const pages={settings:'archive-settings',checks:'archive-checks',info:'archive-device-info',volume:'archive-volume',ai:'archive-ai-settings',offline:'archive-offline-settings',network:'archive-network-settings',alarm:'archive-alarm',timer:'archive-timer',conversation:'conversation-mode'};
   robot.ui.closeDrawer();robot.hideBalloon();
+  robot.ui.showFace();
   if(scene==='face'||scene==='balloon-test'){robot.ui.showFace();if(scene==='balloon-test')robot.showBalloon('画面表示の確認です。長い吹き出しでも、約5秒後に消えてボタンが見えるようになります。',{bottom:50});return {scene};}
   if(scene==='drawer'){robot.ui.showFace();robot.ui.openDrawer();return {scene};}
   if(!pages[scene])throw new Error('Unsupported screen');

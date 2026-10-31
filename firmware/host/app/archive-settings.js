@@ -156,6 +156,6 @@ function createScreen(context){
 export function startSettings(context){
   robot=context;
   try{getSettings();if(getSettings().wifi?.ssid)connectSaved();}catch(_){trace('[settings] SD configuration unavailable\n');}
-  robot.ui.miniApps.register({id:'wifi-settings',hidden:true,title:'Wi-Fi / API設定',create:createScreen});
+  robot.ui.miniApps.register({id:'wifi-settings',hidden:true,title:'Wi-Fiを設定',create:createScreen});
 }
 export {vaultSelfTest};

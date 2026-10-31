@@ -36,31 +36,30 @@ function startServer(){
 }
 export function startWeb(context,callbacks,token){
   robot=context;actions=callbacks;access=token;
-  function createControlScreen(mode){
+  function createControlScreen(mode,anchor=''){
     screenMode=mode;screenQR='waiting';const session=mode==='ap'?openSettings(true):undefined;
     const root=new Container(null,{left:0,right:0,top:0,bottom:0,skin:new Skin({fill:'white'})});
     const style=new Style({font:uiFont(),color:'black',horizontal:'left',vertical:'middle'});let previous='';
     function render(){const status=controlStatus(),host=mode==='ap'?status.apIP:status.lanIP,signature=host+':'+status.ready;if(signature===previous)return;previous=signature;root.empty();
       if(!host||!status.ready){screenQR='waiting';root.add(new Text(null,{left:16,right:16,top:12,bottom:12,style,string:mode==='lan'?'LAN接続を待っています。\n普段のWi-Fiに接続すると操作QRを表示します。\n\n設定用Wi-Fiへは自動で切り替えません。':'設定用Wi-Fiの起動を待っています。'}));return;}
-      const url='http://'+host+':8082/?k='+access;screenQR=mode;
-      if(session){root.add(new Label(null,{left:12,top:0,width:144,height:22,style,string:'1. Wi-Fi接続'}));root.add(new Label(null,{right:12,top:0,width:144,height:22,style,string:'2. 操作画面'}));root.add(new QRCode(null,{left:12,top:25,width:128,height:128,skin:{fill:'white',stroke:'black'},string:session.wifiQR,maxVersion:10}));root.add(new QRCode(null,{right:12,top:25,width:128,height:128,skin:{fill:'white',stroke:'black'},string:url,maxVersion:10}));root.add(new Label(null,{left:4,right:4,top:160,height:28,style,string:'インターネットなしでも接続を維持'}));}
-      else{root.add(new QRCode(null,{left:12,top:20,width:144,height:144,skin:{fill:'white',stroke:'black'},string:url,maxVersion:10}));root.add(new Text(null,{left:168,right:8,top:24,bottom:8,style,string:'LAN操作\n同じWi-FiのスマホでQRを開いてください。\n\nhttp://'+host+':8082/'}));}
+      const url='http://'+host+':8082/?k='+access+anchor;screenQR=mode;
+      if(session){root.add(new Label(null,{left:12,top:0,width:144,height:22,style,string:'1. 本体へ接続'}));root.add(new Label(null,{right:12,top:0,width:144,height:22,style,string:'2. 操作画面'}));root.add(new QRCode(null,{left:12,top:25,width:128,height:128,skin:{fill:'white',stroke:'black'},string:session.wifiQR,maxVersion:10}));root.add(new QRCode(null,{right:12,top:25,width:128,height:128,skin:{fill:'white',stroke:'black'},string:url,maxVersion:10}));root.add(new Label(null,{left:4,right:4,top:160,height:28,style,string:'インターネットなしでも接続を維持'}));}
+      else{root.add(new QRCode(null,{left:12,top:20,width:144,height:144,skin:{fill:'white',stroke:'black'},string:url,maxVersion:10}));root.add(new Text(null,{left:168,right:8,top:24,bottom:8,style,string:(anchor?'AIの設定':'スマホで操作')+'\n同じWi-FiのスマホでQRを開いてください。\n\nhttp://'+host+':8082/'}));}
     }
     render();const timer=Timer.repeat(render,1000);return {content:root,dispose(){Timer.clear(timer);}};
   }
-  robot.ui.miniApps.register({id:'archive-control',title:'LAN操作QR',hidden:true,create:()=>createControlScreen('lan')});
-  robot.ui.miniApps.register({id:'archive-control-ap',title:'StackChan Wi-Fi操作',hidden:true,create:()=>createControlScreen('ap')});
+  robot.ui.miniApps.register({id:'archive-control',title:'スマホで操作',hidden:true,create:()=>createControlScreen('lan')});
+  robot.ui.miniApps.register({id:'archive-ai-setup',title:'スマホでAIを設定',hidden:true,create:()=>createControlScreen('lan','#conversation')});
+  robot.ui.miniApps.register({id:'archive-control-ap',title:'本体へ直接接続',hidden:true,create:()=>createControlScreen('ap')});
   robot.ui.miniApps.register({id:'archive-network-settings',title:'接続設定',hidden:true,create(){
     const style=new Style({font:uiFont(),color:'black',horizontal:'left',vertical:'middle'}),summary=new Text(null,{left:12,right:12,top:0,height:26,style,string:''});
-    const update=()=>{const status=getSettingsStatus();summary.string=status.connected?'Wi-Fi 接続済み / '+status.ip:'Wi-Fi 未接続';};update();const timer=Timer.repeat(update,2000);
+    const update=()=>{const status=getSettingsStatus();summary.string=status.connected?'接続済み / '+status.ip:status.setupActive?'本体のWi-Fiを公開中':'Wi-Fi 未接続';};update();const timer=Timer.repeat(update,2000);
     const launch=id=>{actions.closeOffline?.();return robot.ui.application.behavior.launchMiniApp(id);};
     return {content:new Container(null,{left:0,right:0,top:0,bottom:0,skin:new Skin({fill:'white'}),contents:[summary,
-      new ActionButton({label:'同じWi-Fiから操作 / LAN QR',onTap:()=>openControl('lan')},{left:8,right:8,top:28,height:34}),
-      new ActionButton({label:'StackChan Wi-Fiへ接続して操作',onTap:()=>openControl('ap')},{left:8,right:8,top:66,height:34}),
-      new ActionButton({label:'Wi-Fi / API設定',onTap:()=>launch('wifi-settings')},{left:8,top:104,width:148,height:34}),
-      new ActionButton({label:'接続状態・強度',onTap:()=>launch('archive-wifi-status')},{right:8,top:104,width:148,height:34}),
-      new ActionButton({label:'設定へ戻る',onTap:()=>launch('archive-settings')},{left:8,top:142,width:148,height:34}),
-      new ActionButton({label:'LAN操作QR',onTap:()=>openControl('lan')},{right:8,top:142,width:148,height:34})
+      new ActionButton({label:'Wi-Fiを設定',onTap:()=>launch('wifi-settings')},{left:8,right:8,top:28,height:34}),
+      new ActionButton({label:'スマホで操作（同じWi-Fi）',onTap:()=>openControl('lan')},{left:8,right:8,top:66,height:34}),
+      new ActionButton({label:'本体に直接つないで操作',onTap:()=>openControl('ap')},{left:8,right:8,top:104,height:34}),
+      new ActionButton({label:'接続状態',onTap:()=>launch('archive-wifi-status')},{left:8,right:8,top:142,height:34})
     ]}),dispose(){Timer.clear(timer);}};
   }});
   const launch=id=>{actions.closeOffline?.();return robot.ui.application.behavior.launchMiniApp(id);};
@@ -94,22 +93,21 @@ export function startWeb(context,callbacks,token){
     const root=new Container(null,{left:0,right:0,top:0,bottom:0,skin:new Skin({fill:'white'}),contents:[text,
       new ActionButton({label:'再取得',onTap:refresh},{left:8,top:138,width:96,height:36}),
       new ActionButton({label:'次へ',onTap:()=>{tab=(tab+1)%3;refresh();}},{left:112,top:138,width:96,height:36}),
-      new ActionButton({label:'設定へ',onTap:()=>launch('archive-settings')},{right:8,top:138,width:96,height:36})
+      new ActionButton({label:'戻る',onTap:()=>robot.ui.application.behavior.onMiniAppBack()},{right:8,top:138,width:96,height:36})
     ]});refresh();const timer=Timer.repeat(refresh,2000);return {content:root,dispose(){Timer.clear(timer);}};
   }});
   robot.ui.miniApps.register({id:'archive-chat-settings',title:'会話・AI',hidden:true,create:()=>page('会話・AI',[
-    ['会話モード ON / OFF',()=>launch('conversation-mode')],['AIモデルを選ぶ',()=>launch('archive-ai-settings')],
-    ['話す人を選ぶ・登録',()=>launch('archive-speaker')],['設定へ戻る',()=>launch('archive-settings')]
+    ['会話を開始・停止',()=>launch('conversation-mode')],['AIを選ぶ',()=>launch('archive-ai-settings')],
+    ['話す人を選ぶ・登録',()=>launch('archive-speaker')],['スマホでAIを設定',()=>launch('archive-ai-setup')]
   ])});
   robot.ui.miniApps.register({id:'archive-sound-settings',title:'音量・アラーム',hidden:true,create:()=>page('音量・アラーム',[
-    ['音量',()=>launch('archive-volume')],['アラームを設定',()=>launch('archive-alarm')],
-    ['アラーム・タイマー一覧',()=>launch('archive-alarm-list')],['設定へ戻る',()=>launch('archive-settings')]
+    ['音量',()=>launch('archive-volume')],['タイマー',()=>launch('archive-timer')],
+    ['アラーム',()=>launch('archive-alarm')],['予約一覧・解除',()=>launch('archive-alarm-list')]
   ])});
   robot.ui.miniApps.register({id:'archive-offline-settings',title:'オフライン',hidden:true,create(){
     const view=page('オフライン',[
-      ['自動切替: '+(actions.autoOffline().enabled?'ON':'OFF'),()=>{actions.autoOffline(!actions.autoOffline().enabled);launch('archive-offline-settings');}],
-      ['本体だけで使う',()=>actions.openOffline()],['本体の日時を設定',()=>launch('archive-local-clock')],
-      ['設定へ戻る',()=>launch('archive-settings')]
+      ['USB・Wi-Fiなしで自動: '+(actions.autoOffline().enabled?'ON':'OFF'),()=>{actions.autoOffline(!actions.autoOffline().enabled);launch('archive-offline-settings');}],
+      ['本体のボタンで操作',()=>actions.openOffline()],['日時を合わせる',()=>launch('archive-local-clock')]
     ]);return view;
   }});
   for(const key of ['archiveVolume','directChatMode','offlineMode','alarmSettings','toggleFace','cycleEmotion','toggleSpeech','speakStackchan','handAnimation','cameraPreview','toggleLookAround','servoTest','toggleLED','playTone','recordPlayback','toggleColor'])robot.drawer.removeDrawerButton(key);

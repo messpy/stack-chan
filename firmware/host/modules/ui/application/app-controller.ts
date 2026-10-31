@@ -62,6 +62,8 @@ export class AppController extends Behavior {
   #drawerActionKeys = new Set<string>()
   #miniAppRegistry = new MiniAppRegistry()
   #miniAppScreen: MiniAppScreen = 'face'
+  #miniAppHistory: string[] = []
+  #navigatingBack = false
   #view: PiuContainer | null = null
   #viewBehavior: FaceViewBehavior | null = null
 
@@ -127,6 +129,7 @@ export class AppController extends Behavior {
   }
 
   showFace(): void {
+    this.#miniAppHistory = []
     if (this.#activeMiniApp) {
       this.exitMiniApp()
       return
@@ -137,6 +140,7 @@ export class AppController extends Behavior {
   }
 
   showMiniAppLauncher(): void {
+    this.#miniAppHistory = []
     if (this.#miniAppRegistry.list().length === 0) return
     if (this.#activeMiniApp) this.exitMiniApp()
     this.closeDrawer()
@@ -149,7 +153,14 @@ export class AppController extends Behavior {
     const app = this.#application
     if (!definition || !app || !this.#viewBehavior) return false
 
-    if (this.#activeMiniApp) this.exitMiniApp()
+    if (this.#activeMiniApp) {
+      const previous = this.#activeMiniApp.definition.id
+      if (!this.#navigatingBack && previous !== id) {
+        this.#miniAppHistory.push(previous)
+        this.#miniAppHistory = this.#miniAppHistory.slice(-16)
+      }
+      this.exitMiniApp(false)
+    }
     const token = {}
     let closeRequested = false
     const context: MiniAppContext = Object.freeze({
@@ -192,7 +203,8 @@ export class AppController extends Behavior {
     }
   }
 
-  exitMiniApp(): void {
+  exitMiniApp(clearHistory = true): void {
+    if (clearHistory) this.#miniAppHistory = []
     if (!this.#activeMiniApp) return
     const active = this.#activeMiniApp
     this.#activeMiniApp = null
@@ -274,7 +286,14 @@ export class AppController extends Behavior {
   }
 
   onMiniAppBack(): void {
-    if (this.#miniAppScreen === 'app') this.exitMiniApp()
+    if (this.#miniAppScreen === 'app') {
+      let previous = this.#miniAppHistory.pop()
+      while (previous && !this.#miniAppRegistry.get(previous)) previous = this.#miniAppHistory.pop()
+      if (previous) {
+        this.#navigatingBack = true
+        try { this.launchMiniApp(previous) } finally { this.#navigatingBack = false }
+      } else this.exitMiniApp()
+    }
     else if (this.#miniAppScreen === 'launcher') this.showFace()
   }
 

@@ -27,6 +27,7 @@
     "archive-vault": "./archive-vault",
     "archive-tools": "./archive-tools",
     "archive-alarm-motion": "./archive-alarm-motion",
+    "archive-timer-ui": "./archive-timer-ui",
     "archive-http-server": "./archive-http-server",
     "archive-audio-upload": "./archive-audio-upload",
     "archive-volume": "./archive-volume",

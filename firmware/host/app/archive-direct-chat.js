@@ -241,7 +241,7 @@ export function configureChatProvider(value) {
     state = enabled() ? 'waiting' : 'off'
     retryAt = 0
   }
-  if (providerButton) providerButton.content('label').string = '会話サービス: ' + providerLabel()
+  if (providerButton) providerButton.content('label').string = 'AIを選ぶ: ' + providerLabel()
   if (modeNotice) modeNotice.string = providerNotice()
   return directChatStatus()
 }
@@ -829,18 +829,8 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
             ),
             (providerButton = new ActionButton(
               {
-                label: '会話サービス: ' + providerLabel(),
-                onTap: () => {
-                  try {
-                    configureChatProvider({
-                      provider: ['xiaozhi', 'gemini', 'ollama'][
-                        (['xiaozhi', 'gemini', 'ollama'].indexOf(chatProvider()) + 1) % 3
-                      ],
-                    })
-                  } catch (_) {
-                    robot.showBalloon('設定ページを確認してください')
-                  }
-                },
+                label: 'AIを選ぶ: ' + providerLabel(),
+                onTap: () => robot.ui.application.behavior.launchMiniApp('archive-ai-settings'),
               },
               { left: 12, right: 12, top: 136, height: 40 },
             )),
