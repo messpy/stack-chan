@@ -11,3 +11,42 @@ node_modules/
 
 # Local device credentials
 /host/app/manifest_archive_private.json
+
+# Private variants, local credentials and device runtime data
+.env*
+.ENV*
+*.private.json
+*_private.json
+*_private.json.*
+/host/app/*_private*
+/host/app/*.local.json
+/config.local.*
+/credentials*.json
+/secrets*.json
+/private/
+/secrets/
+/credentials/
+/backups/
+/sdcard/
+/captures/
+/recordings/
+/logs/
+/media/
+*.sqlite*
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.log
+/flash-backup*.bin
+/flash-dump*.bin
+/nvs*.bin
+
+# SD exports and encrypted settings copies
+/stackchan/
+/exports/
+/settings*.bin
+/vault*.bin
+/secrets.*
+/credentials.*
+/CoreS3-backup*/
