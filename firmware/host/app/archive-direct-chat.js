@@ -51,6 +51,7 @@ let robot,
   connectionSignature = '',
   generation = 0,
   owned = false
+let refreshAITalk
 let photoHandler, modeChanged
 let greetingPending = true,
   conversationProviderSeen,
@@ -144,6 +145,7 @@ export function selectSpeaker(args, register = false) {
   modeLabel && (modeLabel.string = 'ON')
   robot.drawer.setDrawerButtonState('directChatMode', true)
   robot.ui.showFace()
+  refreshAITalk?.()
   const person = currentSpeaker(),
     context = person?.id ? history({ user_id: person.id, limit: 3 }).items : []
   return { selected: person, historyRead: context.length, enabled: true }
@@ -361,6 +363,7 @@ export function setChatMode(on) {
   } else state = 'waiting'
   modeLabel && (modeLabel.string = on ? 'ON' : 'OFF')
   robot.drawer.setDrawerButtonState('directChatMode', on)
+  refreshAITalk?.()
   trace('[direct-chat] mode ' + (on ? 'on' : 'off') + '\n')
   return directChatStatus()
 }
@@ -778,6 +781,27 @@ export async function provisionDirectChat() {
   await provision()
   return { configured: true }
 }
+export function registerAITalk(robot, actions) {
+  let unregister
+  const refresh = () => {
+    unregister?.()
+    unregister = robot.ui.miniApps.register({
+      id: 'archive-ai-talk', title: 'AIトーク: ' + (actions.enabled() ? 'ON' : 'OFF'),
+      create(context) {
+        const content = new Container(null, {left:0,right:0,top:0,bottom:0})
+        context.close()
+        // Run after the launcher finishes closing, so speaker selection stays visible.
+        Timer.set(() => {
+          try { actions.toggle(); refresh() }
+          catch (error) { robot.showBalloon(String(error.message || '会話設定を確認してください')) }
+        }, 0)
+        return {content}
+      },
+    })
+  }
+  refresh()
+  return refresh
+}
 export function startDirectChat(context, saveTranscript, acquire, done, capturePhoto, onModeChanged) {
   modeChanged = onModeChanged
   photoHandler = capturePhoto
@@ -786,6 +810,7 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
   archive = saveTranscript
   claim = acquire
   release = done
+  refreshAITalk = registerAITalk(robot, {enabled, toggle: () => setChatMode(!enabled())})
   startSpeakerChooser(robot, {
     list: speakerList,
     select: (args) => selectSpeaker(args),

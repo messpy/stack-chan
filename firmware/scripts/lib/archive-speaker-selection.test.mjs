@@ -100,3 +100,22 @@ let recognitionProgress='';c.progress=value=>recognitionProgress=value;c.Timer.s
 Chat.prototype.start=function(){queueMicrotask(()=>{this.options.callbacks.onStateChanged(c.ChatState.CONNECTED);this.options.callbacks.onInputTranscript?.('こんにちは',false);});};
 const priorArchiveCount=c.archiveRecords.length;const recognition=await vm.runInContext("testDirectConnection('gemini',{recognition:true,progress})",c);assert.equal(recognition.transcript,'こんにちは');assert.equal(recognition.microphoneTransmission,true);assert.equal(microphoneEnabled,false);connections.at(-1).callbacks.onStateChanged(c.ChatState.CONNECTED);assert.equal(microphoneEnabled,false);assert.ok(recognitionProgress.includes('話してください'));assert.equal(c.archiveRecords.length,priorArchiveCount);assert.equal(data.conversationProvider,selectedService);
 console.log('PASS: bounded recognition test enables microphone only for explicit test, returns text without conversation history or provider changes');
+
+// Launcher actions close before changing mode, keeping the speaker chooser visible.
+const queuedActions=[], talkApps=new Map();let talkEnabled=false, toggles=0, closes=0, notices=0;
+c.Container=class{};c.Timer.set=fn=>{queuedActions.push(fn);return 1};
+c.talkRobot={showBalloon(){notices++},ui:{miniApps:{register(definition){assert.ok(!talkApps.has(definition.id));talkApps.set(definition.id,definition);return()=>talkApps.delete(definition.id)}}}};
+c.talkActions={enabled:()=>talkEnabled,toggle:()=>{talkEnabled=!talkEnabled;toggles++}};
+vm.runInContext('registerAITalk(talkRobot,talkActions)',c);
+assert.equal(talkApps.get('archive-ai-talk').hidden,undefined);
+assert.ok(talkApps.get('archive-ai-talk').title.endsWith('OFF'));
+for(const expected of [true,false]){
+  talkApps.get('archive-ai-talk').create({close(){closes++}});
+  assert.equal(toggles,closes-1);
+  queuedActions.shift()();assert.equal(talkEnabled,expected);
+  assert.ok(talkApps.get('archive-ai-talk').title.endsWith(expected?'ON':'OFF'));
+}
+c.talkActions.toggle=()=>{throw Error('Not configured')};
+talkApps.get('archive-ai-talk').create({close(){closes++}});queuedActions.shift()();
+assert.equal(talkEnabled,false);assert.equal(notices,1);
+console.log('AI talk launcher: one toggle per launch after close, state label refresh, configuration failures stay off: PASS');
