@@ -44,10 +44,11 @@ function save(name,parts) {
   });
 }
 const id=()=>`${Date.now()}-${sequence++}`;
-export function archiveTranscript(role,text,eventId,image) {
+export function archiveTranscript(role,text,eventId,image,speakerId) {
   if(!text)return;
   try {
     const event={id:typeof eventId==='string'&&/^[a-z0-9-]{1,100}$/.test(eventId)?eventId:id(),role:role==='input'?'user':'assistant',text:String(text).slice(-4096),created:Date.now()};
+    event.speakerId=speakerId===undefined?(directChatStatus().speaker?.id??null):speakerId;
     if(typeof image==='string'&&safe(image)&&image.endsWith('.jpg'))event.image=image;
     save(`chat-${event.id}.json`,[ArrayBuffer.fromString(JSON.stringify(event))]);
     try{recordMemory(event);}catch(_){trace('[memory] transcript database write failed\n');}
@@ -69,9 +70,10 @@ async function photo(robot,args={},fromConversation=false) {
 
 async function describeImage(robot,name,jpeg,question){
  const prompt=String(question||'この画像には何が写っていますか？').slice(0,1000);
- const input=archiveTranscript('input',prompt,undefined,name);
+ const speakerId=directChatStatus().speaker?.id??null;
+ const input=archiveTranscript('input',prompt,undefined,name,speakerId);
  const analysis=await analyzeJPEG(jpeg,prompt);
- const answer=archiveTranscript('output',analysis.status==='complete'?analysis.text:'画像認識エラー: '+(analysis.error||'回答を取得できませんでした'),undefined,name);
+ const answer=archiveTranscript('output',analysis.status==='complete'?analysis.text:'画像認識エラー: '+(analysis.error||'回答を取得できませんでした'),undefined,name,speakerId);
  if(analysis.status==='complete')robot.showBalloon(analysis.text.slice(0,120));
  return {analysis,historySaved:!!input&&!!answer,messageIds:[input?.id,answer?.id]};
 }

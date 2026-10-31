@@ -32,7 +32,7 @@ export function identifySpeaker(args){
   if(args.source_message_id)db('UPDATE messages SET speaker_id=? WHERE id=? AND role=?',[person.id,text(args.source_message_id,100),'user']);
   return {identified:true,person};
 }
-export function recordMemory(event){db('INSERT OR IGNORE INTO messages(id,role,text,created,speaker_id) VALUES(?,?,?,?,?)',[event.id,event.role,event.text,event.created,event.role==='assistant'?'stackchan-self':activeSpeaker]);if(activeSpeaker)db('INSERT OR IGNORE INTO message_context(message_id,user_id) VALUES(?,?)',[event.id,activeSpeaker]);if(typeof event.image==='string'&&/^photo-[a-z0-9-]+\.jpg$/.test(event.image))db('INSERT OR REPLACE INTO message_media(message_id,filename) VALUES(?,?)',[event.id,event.image]);}
+export function recordMemory(event){const owner=Object.hasOwn(event,'speakerId')?event.speakerId:activeSpeaker;db('INSERT OR IGNORE INTO messages(id,role,text,created,speaker_id) VALUES(?,?,?,?,?)',[event.id,event.role,event.text,event.created,event.role==='assistant'?'stackchan-self':owner]);if(owner)db('INSERT OR IGNORE INTO message_context(message_id,user_id) VALUES(?,?)',[event.id,owner]);if(typeof event.image==='string'&&/^photo-[a-z0-9-]+\.jpg$/.test(event.image))db('INSERT OR REPLACE INTO message_media(message_id,filename) VALUES(?,?)',[event.id,event.image]);}
 export function history(args={}){
   const limit=Math.max(1,Math.min(10,Math.floor(Number(args.limit)||5))),where=[],values=[];
   if(args.query){where.push('text LIKE ?');values.push('%'+text(args.query,120)+'%');}
@@ -74,7 +74,7 @@ export function importLegacy(){
   for(const name of names){
     let event;
     withSDCard(root=>{const file=root.openFile({path:'stackchan/'+name,mode:'r'});try{if(file.status().size<=20000)event=JSON.parse(String.fromArrayBuffer(file.read(file.status().size,0)));}catch(_){}finally{file.close();}});
-    if(event?.id&&event?.text)recordMemory(event);
+    if(event?.id&&event?.text)recordMemory({...event,speakerId:Object.hasOwn(event,'speakerId')?event.speakerId:null});
   }
   db('INSERT OR REPLACE INTO memory_meta(key,value) VALUES(?,?)',['legacy-imported','1']);
 }

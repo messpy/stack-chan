@@ -13,3 +13,5 @@ Button definitions use `text`, `background`, `textColor`, `method`, and `args`. 
 The device settings menu contains Wi-Fi/API setup, LAN QR, explicit AP operation, signal strength, and AI selection. LAN operation waits for a LAN address and never auto-enters setup AP mode. Lost Wi-Fi retries with bounded backoff. Browser-uploaded JPEG/PNG/WebP images are converted to JPEG at up to 800 pixels, stored on SD, and linked to the question and result in history.
 
 Checks: `npm run test:archive-ui`, `npm run test:archive-http`. Node 22.13+ is required for the SQLite/TypeScript test helpers. Hardware testing additionally covers SD readback, provider authentication, camera, servo movement, and Wi-Fi display. Never include SD media, conversation databases, credentials, or diagnostic logs in Git.
+
+Gemini image recognition defaults to `gemini-3.1-flash-lite` with low thinking and a bounded response timeout. This remains separate from the Gemini Live audio model; choosing Gemini/XiaoZhi selects the provider for both capabilities. No cross-provider fallback occurs.
