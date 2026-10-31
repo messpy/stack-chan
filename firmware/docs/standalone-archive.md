@@ -15,3 +15,6 @@ The device settings menu contains Wi-Fi/API setup, LAN QR, explicit AP operation
 Checks: `npm run test:archive-ui`, `npm run test:archive-http`. Node 22.13+ is required for the SQLite/TypeScript test helpers. Hardware testing additionally covers SD readback, provider authentication, camera, servo movement, and Wi-Fi display. Never include SD media, conversation databases, credentials, or diagnostic logs in Git.
 
 Gemini image recognition defaults to `gemini-3.1-flash-lite` with low thinking and a bounded response timeout. This remains separate from the Gemini Live audio model; choosing Gemini/XiaoZhi selects the provider for both capabilities. No cross-provider fallback occurs.
+
+### 本体で声によるユーザー登録
+「あなたは誰？」で登録済みの人、または「新規登録（声）」を選択します。新規登録では選択中のAIに接続して名前を聞き取り、本体の「この名前で登録」で確認してからプロフィールを保存します。「声で聞き直す」「キャンセル」も本体で操作できます。登録中の音声文字起こしは会話履歴に保存しません。登録済みの人を選ぶと、その人のプロフィールと直近3件の関連履歴を読み、会話を始めます。

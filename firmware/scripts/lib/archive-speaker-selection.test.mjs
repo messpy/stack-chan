@@ -16,3 +16,23 @@ console.log('PASS: no microphone session before selection, bounded isolated pers
 assert.throws(()=>vm.runInContext("selectSpeaker({name:' stackchan '},true)",c));assert.equal(memory.users({id:'stackchan-self'}).users[0].kind,'robot');console.log('Robot profile is protected from duplicate-name person registration: PASS');
 
 memory.identifySpeaker({id:alice.id,name:alice.name});const snapshot=memory.currentSpeaker().id;memory.identifySpeaker({id:bob.id,name:bob.name});memory.recordMemory({id:'late-photo-answer',role:'assistant',text:'遅れて届いた画像回答',created:now+100,speakerId:snapshot});assert.ok(memory.history({user_id:alice.id,limit:10}).items.some(m=>m.id==='late-photo-answer'));assert.ok(!memory.history({user_id:bob.id,limit:10}).items.some(m=>m.id==='late-photo-answer'));memory.recordMemory({id:'unattributed-legacy',role:'user',text:'話者不明の旧記録',created:now+101,speakerId:null});assert.ok(!memory.history({user_id:bob.id,limit:10}).items.some(m=>m.id==='unattributed-legacy'));console.log('Late image replies keep original speaker; legacy/guest messages are not attributed to the active person: PASS');
+
+vm.runInContext('setChatMode(false);beginVoiceRegistration()',c);
+const beforePeople=memory.users({limit:50}).users.length;
+assert.equal(memory.currentSpeaker(),null);
+await vm.runInContext('connect()',c);
+const enrollmentConnection=connections.at(-1);
+assert.equal(Object.keys(enrollmentConnection.tools).length,0);
+enrollmentConnection.callbacks.onInputTranscript('私の名前はユキです。',false);
+assert.equal(vm.runInContext('speakerList().enrollment.name',c),'ユキ');
+assert.equal(memory.users({limit:50}).users.length,beforePeople);
+vm.runInContext('closeChat()',c);const connectionCount=connections.length;
+await vm.runInContext('connect()',c);assert.equal(connections.length,connectionCount);
+vm.runInContext('confirmVoiceRegistration()',c);
+assert.equal(memory.currentSpeaker().name,'ユキ');assert.equal(vm.runInContext('speakerList().enrollment',c),null);
+assert.equal(memory.users({limit:50}).users.length,beforePeople+1);
+vm.runInContext('beginVoiceRegistration();receiveRegistrationName("タイマーをかけて");',c);
+assert.equal(vm.runInContext('speakerList().enrollment.name',c),'');assert.throws(()=>vm.runInContext('confirmVoiceRegistration()',c));
+vm.runInContext('cancelVoiceRegistration()',c);assert.equal(data.chatMode,false);assert.equal(memory.currentSpeaker(),null);
+assert.equal(vm.runInContext('registrationName("太郎と呼んでください")',c),'太郎');
+console.log('Voice registration: explicit start, no premature profile save, confirm-only persistence, unrelated speech rejected, cancel stops microphone: PASS');

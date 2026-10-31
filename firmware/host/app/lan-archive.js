@@ -277,7 +277,7 @@ export function startArchive(robot) {
     finally{usbBusy=false;}
   },5);
 
-  try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},args=>photo(robot,{...args,analyze:true},true),()=>openControl('lan'));}catch(_){trace('[direct-chat] initialization unavailable\n');}
+  try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},args=>photo(robot,{...args,analyze:true},true));}catch(_){trace('[direct-chat] initialization unavailable\n');}
   startWeb(robot,{
     execute,
     read(name,offset,length,whole=false){
