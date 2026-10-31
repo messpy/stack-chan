@@ -1,3 +1,4 @@
+import {startDebugDrain,armDebugDrain,debugLogStatus} from 'archive-debug';
 import {startChecks,checkStatus} from 'archive-checks';
 import {Emotion} from 'face-state';
 import {OfflinePolicy} from 'archive-offline-policy';
@@ -147,6 +148,7 @@ async function recordAudio(robot) {
   }finally{busy=false;}
 }
 export function startArchive(robot) {
+  startDebugDrain();
   startLocalClock();
   startOffline(robot,{stopCloud:()=>{if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings,startCloud:()=>setChatMode(true),openAI:()=>robot.ui.application.behavior.launchMiniApp('archive-ai-settings')});
   startVolume(robot);
@@ -170,6 +172,7 @@ export function startArchive(robot) {
         const action=request.op.slice(7),part=imageUploadCommand(action,request.args||{},Base64.decode);
         if(action==='finish'){const name='photo-'+id()+'.jpg';save(name,[part.buffer]);result={name,width:part.width,height:part.height,...await describeImage(robot,name,part.buffer,request.args?.question)};}else result=part;
       }
+      else if(request.op==='/debug/status')result=debugLogStatus();
       else if(request.op==='/offline/auto')result=autoOffline(request.args?.enabled);
       else if(request.op==='/offline/status')result=offlineStatus();
       else if(request.op==='/offline/open')result=openOffline();
@@ -284,6 +287,7 @@ export function startArchive(robot) {
     let request;
     try{request=JSON.parse(raw);}catch(_){return;}
     if(!Number.isInteger(request.id)||request.token!==token)return;
+    armDebugDrain();
     usbBusy=true;
     try {
       const result=await execute(request);

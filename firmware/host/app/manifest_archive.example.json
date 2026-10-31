@@ -16,6 +16,7 @@
     "stackchan-sdcard": "../platforms/m5stackchan_cores3/sd-card",
     "stackchan-sdroot": "../platforms/m5stackchan_cores3/sd-root",
     "mod-files": "./mod-files",
+    "archive-debug": "./archive-debug",
     "archive-usb": [
       "./archive-usb",
       "./archive-usb.c"

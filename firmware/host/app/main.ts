@@ -101,6 +101,9 @@ function waitForBootWiFiRecoveryChoice(status: BootWiFiStatus & { reason: string
 }
 
 async function main() {
+  try {
+    if (Modules.has('archive-debug')) (Modules.importNow('archive-debug') as { installDebugLog: () => void }).installDebugLog()
+  } catch { trace('[debug] log initialization unavailable\n') }
   trace('[main] start\n')
   let dockRuntime: StackchanDockRuntime | undefined
   let context: StackchanContext | undefined

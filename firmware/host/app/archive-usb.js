@@ -12,3 +12,9 @@ export const openVault = native('xs_archive_open');
 export const encodeJPEG = native('xs_archive_jpeg');
 
 export const usbConnected = native('xs_archive_usb_connected');
+
+export const initDebugLog = native('xs_archive_log_init');
+export const pushDebugLog = native('xs_archive_log_push');
+export const popDebugLog = native('xs_archive_log_pop');
+export const debugLogStatus = native('xs_archive_log_status');
+export const writeDebugUSB = native('xs_archive_debug_write');

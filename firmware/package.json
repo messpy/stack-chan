@@ -103,7 +103,7 @@
     "prebuild:archive": "node scripts/prepare-archive-resources.mjs",
     "test:archive-http": "node --experimental-vm-modules scripts/lib/archive-http-server.test.mjs",
     "init:archive": "node scripts/init-archive-config.mjs",
-    "test:archive-ui": "node --experimental-vm-modules --test scripts/lib/archive-speaker-selection.test.mjs scripts/lib/archive-network-screen.test.mjs scripts/lib/archive-wifi-display.test.mjs scripts/lib/archive-ollama.test.mjs scripts/lib/archive-offline.test.mjs scripts/lib/archive-marquee.test.mjs scripts/lib/archive-offline-policy.test.mjs scripts/lib/archive-checks.test.mjs"
+    "test:archive-ui": "node --experimental-vm-modules --test scripts/lib/archive-speaker-selection.test.mjs scripts/lib/archive-network-screen.test.mjs scripts/lib/archive-wifi-display.test.mjs scripts/lib/archive-ollama.test.mjs scripts/lib/archive-offline.test.mjs scripts/lib/archive-marquee.test.mjs scripts/lib/archive-offline-policy.test.mjs scripts/lib/archive-checks.test.mjs scripts/lib/archive-debug.test.mjs"
   },
   "type": "module",
   "repository": {

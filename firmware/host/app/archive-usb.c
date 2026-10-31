@@ -153,3 +153,64 @@ void xs_archive_jpeg(xsMachine *the) {
 void xs_archive_usb_connected(xsMachine *the) {
     xsmcSetBoolean(xsResult, usb_serial_jtag_is_connected());
 }
+
+#include "esp_heap_caps.h"
+#include "esp_log.h"
+#include <stdarg.h>
+#include <stdio.h>
+#define SC_LOG_SLOTS 128
+#define SC_LOG_SIZE 2048
+static char (*sc_logs)[SC_LOG_SIZE];
+static unsigned sc_log_head,sc_log_count,sc_log_dropped,sc_log_truncated,sc_log_usb_dropped;
+static portMUX_TYPE sc_log_mux=portMUX_INITIALIZER_UNLOCKED;
+static void sc_log_push(const char *text) {
+    if(!sc_logs)return;
+    size_t n=strlen(text);
+    portENTER_CRITICAL(&sc_log_mux);
+    if(sc_log_count==SC_LOG_SLOTS){sc_log_head=(sc_log_head+1)%SC_LOG_SLOTS;sc_log_count--;sc_log_dropped++;}
+    unsigned slot=(sc_log_head+sc_log_count)%SC_LOG_SLOTS;
+    if(n>=SC_LOG_SIZE){n=SC_LOG_SIZE-1;while(n>0&&(((unsigned char)text[n]&0xc0)==0x80))n--;sc_log_truncated++;}
+    memcpy(sc_logs[slot],text,n);sc_logs[slot][n]=0;sc_log_count++;
+    portEXIT_CRITICAL(&sc_log_mux);
+}
+static int sc_log_printf(const char *format,va_list args) {
+    char text[SC_LOG_SIZE];int n=vsnprintf(text,sizeof(text),format,args);
+    if(n>=SC_LOG_SIZE){portENTER_CRITICAL(&sc_log_mux);sc_log_truncated++;portEXIT_CRITICAL(&sc_log_mux);}
+    sc_log_push(text);return n;
+}
+void xs_archive_log_init(xsMachine *the) {
+    if(!sc_logs){
+        sc_logs=heap_caps_calloc(SC_LOG_SLOTS,SC_LOG_SIZE,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+        if(!sc_logs)xsUnknownError("Debug log memory unavailable");
+        esp_log_set_vprintf(sc_log_printf);
+        char text[80];snprintf(text,sizeof(text),"[boot] reset_reason=%d log_buffer=128\n",(int)esp_reset_reason());sc_log_push(text);
+    }
+}
+void xs_archive_log_push(xsMachine *the) {sc_log_push(xsmcToString(xsArg(0)));}
+void xs_archive_log_pop(xsMachine *the) {
+    char text[SC_LOG_SIZE];int found=0;
+    portENTER_CRITICAL(&sc_log_mux);
+    if(sc_logs&&sc_log_count){memcpy(text,sc_logs[sc_log_head],sizeof(text));sc_log_head=(sc_log_head+1)%SC_LOG_SLOTS;sc_log_count--;found=1;}
+    portEXIT_CRITICAL(&sc_log_mux);
+    if(found)xsmcSetString(xsResult,text);
+}
+void xs_archive_log_status(xsMachine *the) {
+    xsmcVars(1);
+    unsigned queued,dropped,truncated,usbDropped;
+    portENTER_CRITICAL(&sc_log_mux);queued=sc_log_count;dropped=sc_log_dropped;truncated=sc_log_truncated;usbDropped=sc_log_usb_dropped;portEXIT_CRITICAL(&sc_log_mux);
+    xsmcSetNewObject(xsResult);
+    xsmcSetInteger(xsVar(0),queued);xsmcSet(xsResult,xsID("queued"),xsVar(0));
+    xsmcSetInteger(xsVar(0),dropped);xsmcSet(xsResult,xsID("dropped"),xsVar(0));
+    xsmcSetInteger(xsVar(0),truncated);xsmcSet(xsResult,xsID("truncated"),xsVar(0));
+    xsmcSetInteger(xsVar(0),usbDropped);xsmcSet(xsResult,xsID("usbRetries"),xsVar(0));
+}
+
+void xs_archive_debug_write(xsMachine *the) {
+    const char *text=xsmcToString(xsArg(0));size_t length=strlen(text);
+    if(length>3500){sc_log_usb_dropped++;xsmcSetBoolean(xsResult,0);return;}
+    ensureUSB(the);
+    char packet[3510];memcpy(packet,"\n@SC ",5);memcpy(packet+5,text,length);packet[length+5]='\n';
+    int sent=usb_serial_jtag_write_bytes(packet,length+6,0);
+    if(sent!=(int)length+6)sc_log_usb_dropped++;
+    xsmcSetBoolean(xsResult,sent==(int)length+6);
+}
