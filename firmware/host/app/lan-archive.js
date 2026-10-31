@@ -1,3 +1,4 @@
+import {createAlarmDance} from 'archive-alarm-motion';
 import {captureFrame,screenCommand,showScreen} from 'archive-screen';
 import {startDebugDrain,armDebugDrain,debugLogStatus} from 'archive-debug';
 import {startChecks,checkStatus} from 'archive-checks';
@@ -22,7 +23,7 @@ import {recordMemory,history,users,saveUser,memoryStatus,importLegacy,memoryFile
 import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
 import {acceptAudioChunk} from 'archive-audio-upload';
 import {startSettings,openSettings,closeSettings,getSettingsStatus,vaultSelfTest,settingsHttpSelfTest,scanNearby} from 'archive-settings';
-import {startDeviceTools,setAlarmDisplay,callDeviceTool,listDeviceTools,reminderStatus} from 'archive-tools';
+import {startDeviceTools,setAlarmDisplay,setAlarmMotion,callDeviceTool,listDeviceTools,reminderStatus} from 'archive-tools';
 import Time from 'time';
 import {getM5StackChanDriver} from 'm5stackchan-servo-driver';
 import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG} from 'archive-usb';
@@ -159,6 +160,7 @@ export function startArchive(robot) {
   try{startDeviceTools(robot,()=>{if(directChatStatus().busy)pauseDirectChat();if(busy)return false;busy=true;return true;},()=>{busy=false;resumeDirectChat();});}catch(_){trace('[tools] initialization failed; USB remains available\n');}
   startAlarmSettings(robot,{create:args=>callDeviceTool('alarm_create',args),list:()=>callDeviceTool('reminder_list'),cancel:id=>callDeviceTool('reminder_cancel',{id}),stop:()=>callDeviceTool('alarm_stop')});
   setAlarmDisplay({show:showRingingAlarm,close:hideRingingAlarm});
+  setAlarmMotion(stopped=>createAlarmDance(robot,{rotation:getM5StackChanDriver()?.lastKnownRotation,stopped}));
   const token=config.archiveToken;
   if(!token)return;
   globalThis.stackchanArchiveTranscript=archiveTranscript;

@@ -24,7 +24,7 @@ const iconSize = 16
 const iconTop = (barHeight - iconSize) / 2
 const defaultIconLeft = 8
 const faceStatusScale = 2
-const batteryIconLeft = UI.screenWidth - 22
+const batteryIconLeft = 2
 const batteryIconWidth = 20
 const batteryIconHeight = 12
 const batteryIconTop = 0
@@ -459,7 +459,7 @@ export const ChatStatusBar = Container.template((options: ChatStatusBarOptions =
     height: barHeight,
     skin: skins.bar,
     contents: [
-      new Label(null, {name:'wifiBadge',left:2,top:0,width:60,height:13,active:false,visible:false,string:'',style:new Style({font:'k8x12-12',color:'#167647',horizontal:'left',vertical:'middle'})}),
+      new Label(null, {name:'wifiBadge',left:28,top:0,width:60,height:13,active:false,visible:false,string:'',style:new Style({font:'k8x12-12',color:'#167647',horizontal:'left',vertical:'middle'})}),
       new ActionButton(
         {
           name: 'backButton',

@@ -1,0 +1,10 @@
+import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
+const timers=[];const c=vm.createContext({Timer:{set:fn=>timers.push(fn)}});vm.runInContext(fs.readFileSync(new URL('../../host/app/archive-alarm-motion.js',import.meta.url),'utf8').replace(/^import .*;$/gm,'').replace(/export /g,''),c);
+const base={y:.1,p:0,r:0},poses=[],torque=[];let stopped=false;
+c.robot={pose:{body:{rotation:base,position:{x:0,y:0,z:0}}},async setTorque(on){torque.push(on);},async setPose(p){poses.push(p.rotation);}};c.options={stopped:()=>stopped};
+const dance=vm.runInContext('createAlarmDance(robot,options)',c);const tick=async()=>{await new Promise(resolve=>setImmediate(resolve));timers.shift()?.();await new Promise(resolve=>setImmediate(resolve));};
+for(let i=0;i<5;i++)await tick();assert.ok(poses.length>=4);assert.deepEqual(torque,[true]);assert.ok(poses.every(p=>Math.abs(p.y-base.y)<=.17&&Math.abs(p.p-base.p)<=.07));
+stopped=true;for(let i=0;i<4;i++)await tick();await dance.finished;assert.deepEqual(torque,[true,false]);assert.equal(poses.at(-1).y,base.y);assert.equal(poses.at(-1).p,base.p);
+poses.length=0;torque.length=0;stopped=false;const cancelled=vm.runInContext('createAlarmDance(robot,options)',c);await tick();cancelled.stop();for(let i=0;i<4;i++)await tick();await cancelled.finished;assert.deepEqual(torque,[true,false]);
+torque.length=0;c.robot.setPose=async()=>{throw Error('motor unavailable');};const failed=vm.runInContext('createAlarmDance(robot,options)',c);await assert.rejects(failed.finished);assert.deepEqual(torque,[true,false]);
+console.log('PASS: small repeating motion, cancellation and stop input, restore original pose and release torque even after motor failure');

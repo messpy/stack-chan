@@ -7,7 +7,8 @@ import {getSettings,changeSettings,randomHex} from 'archive-vault';
 let definitions;
 const liveTimers=new Map();
 const elapsedTimer=t=>Math.min(t.duration,(Time.ticks-t.started)>>>0);
-let alarmDisplay;
+let alarmDisplay,alarmMotion;
+export function setAlarmMotion(factory){alarmMotion=factory;}
 export function setAlarmDisplay(display){alarmDisplay=display;}
 const toolDefinitions=()=>definitions??(definitions=JSON.parse(String.fromArrayBuffer(new Resource('reminder-tools.txt'))));
 let robot,claim,release,ringing=false,stopped=false;
@@ -52,10 +53,12 @@ export function callDeviceTool(name,args={}){
   return item;
 }
 async function notify(item){
+  let dance,motionDone;
   ringing=true;stopped=false;trace('[tools] '+item.kind+' notification begin id='+item.id+'\n');
   try{
     try{robot.lightRainbow?.('head');}catch(_){trace('[tools] rainbow LED unavailable\n');}
     let visible=false;try{visible=alarmDisplay?.show(item)===true;}catch(_){trace('[tools] alarm screen unavailable\n');}if(!visible)robot.showBalloon(item.title);
+    try{dance=alarmMotion?.(()=>stopped);motionDone=dance?.finished.catch(()=>trace('[tools] alarm motion failed\n'));}catch(_){trace('[tools] alarm motion unavailable\n');}
     let custom=false;try{custom=await playAlarmSound(robot,()=>stopped);}catch(_){trace('[tools] custom sound unavailable; tone fallback\n');}
     if(!custom)for(let i=0;i<12&&!stopped;i++){
       await robot.audio.tone(i%2?660:880,180,Math.min(robot.audio.volume,0.45));
@@ -64,7 +67,7 @@ async function notify(item){
     changeSettings(data=>{data.reminders=data.reminders.map(row=>row.id===item.id&&row.status==='pending'?finishReminder(row,Date.now()):row);});
     trace('[tools] '+item.kind+' notification completed id='+item.id+'\n');
   }catch(_){trace('[tools] reminder notification failed; kept pending\n');}
-  finally{try{robot.lightOff?.('head');}catch(_){}try{alarmDisplay?.close();}catch(_){}robot.hideBalloon();ringing=false;release();}
+  finally{dance?.stop();try{await motionDone;}catch(_){}try{robot.lightOff?.('head');}catch(_){}try{alarmDisplay?.close();}catch(_){}robot.hideBalloon();ringing=false;release();}
 }
 export function startDeviceTools(context,acquire,unlock){
   robot=context;claim=acquire;release=unlock;

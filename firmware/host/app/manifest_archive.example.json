@@ -26,6 +26,7 @@
     "archive-settings": "./archive-settings",
     "archive-vault": "./archive-vault",
     "archive-tools": "./archive-tools",
+    "archive-alarm-motion": "./archive-alarm-motion",
     "archive-http-server": "./archive-http-server",
     "archive-audio-upload": "./archive-audio-upload",
     "archive-volume": "./archive-volume",
