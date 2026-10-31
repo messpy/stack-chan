@@ -54,3 +54,9 @@ console.log('PASS: one offline timer per start panel; queued/repeated releases a
 
 for(let i=0;i<5&&!overlays[0].children.some(b=>b.method==='timer');i++)overlays[0].children.find(b=>b.method==='next').press();overlays[0].children.find(b=>b.method==='timer').press();const failedStart=overlays[0].children.find(b=>b.method==='start'),countBeforeFailure=settings.reminders.filter(r=>r.kind==='timer').length;failSpeech=true;await assert.rejects(()=>failedStart.press(),/設定済み/);await failedStart.press();assert.equal(settings.reminders.filter(r=>r.kind==='timer').length,countBeforeFailure+1);assert.ok(!overlays[0].children.some(b=>b.method==='start'));failSpeech=false;
 console.log('PASS: a successfully saved timer remains one-shot even if acknowledgement speech fails');
+
+const bootResult=await offline.offlineAction('boot');
+assert.equal(bootResult.text,'スタックチャン');
+assert.equal(spoken.at(-1).text,'すたっくちゃん。');
+assert.equal(offline.offlineStatus().playing,false);
+console.log('PASS: boot announcement says only the device name and releases audio after playback');

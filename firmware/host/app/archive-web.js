@@ -75,8 +75,12 @@ export function startWeb(context,callbacks,token){
       root.add(new ActionButton({label,onTap:()=>launch(id)},{left:i%2?164:8,top:34+Math.floor(i/2)*44,width:148,height:38}));
     root.add(new ActionButton({label:'情報取得',onTap:()=>launch('archive-device-info')},{left:8,top:126,width:148,height:38}));
     root.add(new ActionButton({label:'動作確認',onTap:()=>launch('archive-checks')},{right:8,top:126,width:148,height:38}));
+    root.add(new ActionButton({label:'起動設定',onTap:()=>launch('archive-boot-settings')},{left:8,right:8,top:168,height:26}));
     return result;
   }});
+  robot.ui.miniApps.register({id:'archive-boot-settings',title:'起動設定',hidden:true,create:()=>page('起動時に「スタックチャン」と読み上げる',[
+    ['読み上げ: '+(actions.bootSpeech?.()?'ON':'OFF'),()=>{actions.bootSpeech?.(!actions.bootSpeech?.());launch('archive-boot-settings');}]
+  ])});
   robot.ui.miniApps.register({id:'archive-device-info',title:'情報取得',hidden:true,create(){
     let tab=0;
     const style=new Style({font:uiFont(),color:'black',horizontal:'left',vertical:'top'});

@@ -27,7 +27,7 @@ export function offlineStatus() {
   }
 }
 export async function offlineAction(action, options = {}) {
-  if (!['hello', 'time', 'status', 'timer', 'stop'].includes(action)) throw new Error('操作を選んでください')
+  if (!['boot', 'hello', 'time', 'status', 'timer', 'stop'].includes(action)) throw new Error('操作を選んでください')
   if (playing) throw new Error('お話し中です')
   await actions.stopCloud()
   if (!actions.claim()) throw new Error('本体で別の処理をしています')
@@ -36,7 +36,8 @@ export async function offlineAction(action, options = {}) {
   try {
     let text
     const clock = localClockStatus()
-    if (action === 'hello') text = 'こんにちは。スタックちゃんです。ネットがなくても、ここにいるよ。'
+    if (action === 'boot') text = 'スタックチャン'
+    else if (action === 'hello') text = 'こんにちは。スタックちゃんです。ネットがなくても、ここにいるよ。'
     else if (action === 'time') {
       const s = clock
       text = s.ready

@@ -13,7 +13,7 @@ vm.runInContext("openControl('ap')",c);assert.equal(opened,1);assert.equal(vm.ru
 settings.connected=false;settings.ip='';timers.at(-1)();assert.equal(vm.runInContext('controlStatus().screenQR',c),'waiting');assert.equal(opened,1);
 console.log('PASS: LAN never auto-enables AP; DHCP/server readiness updates QR; prior AP choice never leaks into LAN; one settings entry; internal screens hidden');
 
-robot.ui.application.behavior.launchMiniApp('archive-settings');assert.equal(active.content.children.length,7);
+robot.ui.application.behavior.launchMiniApp('archive-settings');assert.ok(active.content.children.some(n=>n.data?.label==='起動設定'));
 robot.ui.application.behavior.launchMiniApp('archive-offline-settings');assert.equal(active.content.children[1].data.label,'USB・Wi-Fiなしで自動: ON');active.content.children[1].data.onTap();assert.equal(automatic,false);assert.equal(active.content.children[1].data.label,'USB・Wi-Fiなしで自動: OFF');
 
 robot.ui.application.behavior.launchMiniApp('archive-device-info');assert.ok(active.content.children[0].string.includes('-62 dBm'));active.content.children[2].data.onTap();assert.ok(active.content.children[0].string.includes('gemini'));active.content.children[2].data.onTap();assert.ok(active.content.children[0].string.includes('音量: 10%'));assert.ok(active.content.children[0].string.includes('聞き取り中'));
@@ -28,3 +28,11 @@ console.log('PASS: simplified connection choices are distinct and the single LAN
 
 settings.connected=true;settings.ip='192.168.2.33';vm.runInContext('server={}',c);const beforeAISetup=opened;robot.ui.application.behavior.launchMiniApp('archive-ai-setup');assert.ok(active.content.children.some(n=>n.string?.endsWith('#conversation')));assert.equal(opened,beforeAISetup);vm.runInContext("openControl('lan')",c);assert.ok(active.content.children.some(n=>n.string?.includes('?k=TEST_ACCESS')&&!n.string.includes('#conversation')));
 console.log('PASS: AI setup opens its own LAN section without changing the regular operation QR or starting AP');
+
+let bootEnabled=false;callbacksBoot();
+function callbacksBoot(){c.callbacks.bootSpeech=value=>{if(typeof value==='boolean')bootEnabled=value;return bootEnabled};}
+robot.ui.application.behavior.launchMiniApp('archive-boot-settings');
+assert.ok(active.content.children[1].data.label.endsWith('OFF'));
+active.content.children[1].data.onTap();assert.equal(bootEnabled,true);assert.ok(active.content.children[1].data.label.endsWith('ON'));
+active.content.children[1].data.onTap();assert.equal(bootEnabled,false);
+console.log('PASS: boot speech setting reads, persists through callback, and refreshes ON/OFF');

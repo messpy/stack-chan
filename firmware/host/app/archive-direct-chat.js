@@ -830,7 +830,7 @@ export function registerAITalk(robot, actions) {
   refresh()
   return refresh
 }
-export function startDirectChat(context, saveTranscript, acquire, done, capturePhoto, onModeChanged) {
+export function startDirectChat(context, saveTranscript, acquire, done, capturePhoto, onModeChanged, onBoot) {
   modeChanged = onModeChanged
   photoHandler = capturePhoto
   setVisionProvisioner(provision)
@@ -918,7 +918,7 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
   })
   robot.drawer.setDrawerButtonState('directChatMode', enabled())
   // Start on boot when the selected service has saved credentials.
-  Timer.set(()=>{try{if(chatProvider()==='xiaozhi'?cloudConfig()?.cloudConsent:!!getSettings().api?.gemini)setChatMode(true)}catch(_){trace('[speaker] boot conversation unavailable\n')}},1000)
+  Timer.set(async()=>{try{await onBoot?.()}catch(_){trace('[boot] speech failed\n')}try{if(chatProvider()==='xiaozhi'?cloudConfig()?.cloudConsent:!!getSettings().api?.gemini)setChatMode(true)}catch(_){trace('[speaker] boot conversation unavailable\n')}},1000)
   Timer.repeat(() => {
     if (!enabled()) return
     if (chat) {

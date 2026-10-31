@@ -57,6 +57,7 @@ export function timeSpeech(hour, minute) {
   ]
 }
 export function localSpeech(action, clock, minutes) {
+  if(action==='boot')return [{text:'すたっくちゃん。',pause:0}]
   if (action === 'time' && clock.ready) return timeSpeech(clock.parts.hour, clock.parts.minute)
   if (action === 'time')
     return [
