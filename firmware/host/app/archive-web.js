@@ -59,10 +59,59 @@ export function startWeb(context,callbacks,token){
       new ActionButton({label:'StackChan Wi-Fiへ接続して操作',onTap:()=>openControl('ap')},{left:8,right:8,top:66,height:34}),
       new ActionButton({label:'Wi-Fi / API設定',onTap:()=>launch('wifi-settings')},{left:8,top:104,width:148,height:34}),
       new ActionButton({label:'接続状態・強度',onTap:()=>launch('archive-wifi-status')},{right:8,top:104,width:148,height:34}),
-      new ActionButton({label:'AI選択',onTap:()=>launch('archive-ai-settings')},{left:8,top:142,width:148,height:34}),
-      new ActionButton({label:'話す人を選択',onTap:()=>launch('archive-speaker')},{right:8,top:142,width:148,height:34})
+      new ActionButton({label:'設定へ戻る',onTap:()=>launch('archive-settings')},{left:8,top:142,width:148,height:34}),
+      new ActionButton({label:'LAN操作QR',onTap:()=>openControl('lan')},{right:8,top:142,width:148,height:34})
     ]}),dispose(){Timer.clear(timer);}};
   }});
-  robot.drawer.addDrawerButton({key:'networkSettings',label:'設定 / 接続・AI',callback:()=>{robot.ui.application.behavior.closeDrawer?.();robot.ui.application.behavior.launchMiniApp('archive-network-settings');}});
+  const launch=id=>robot.ui.application.behavior.launchMiniApp(id);
+  function page(title,items){
+    return {content:new Container(null,{left:0,right:0,top:0,bottom:0,skin:new Skin({fill:'white'}),contents:[
+      new Label(null,{left:8,right:8,top:0,height:28,style:new Style({font:uiFont(),color:'black'}),string:title}),
+      ...items.map(([label,onTap],i)=>new ActionButton({label,onTap},{left:8,right:8,top:30+i*36,height:32}))
+    ]})};
+  }
+  robot.ui.miniApps.register({id:'archive-settings',title:'設定',create(){
+    const result=page('設定',[]),root=result.content;
+    for(const [i,[label,id]] of [['会話・AI','archive-chat-settings'],['音量・アラーム','archive-sound-settings'],['Wi-Fi・接続','archive-network-settings'],['オフライン','archive-offline-settings']].entries())
+      root.add(new ActionButton({label,onTap:()=>launch(id)},{left:i%2?164:8,top:34+Math.floor(i/2)*44,width:148,height:38}));
+    root.add(new ActionButton({label:'情報取得 / 本体の状態',onTap:()=>launch('archive-device-info')},{left:8,right:8,top:126,height:38}));
+    return result;
+  }});
+  robot.ui.miniApps.register({id:'archive-device-info',title:'情報取得',hidden:true,create(){
+    let tab=0;
+    const style=new Style({font:uiFont(),color:'black',horizontal:'left',vertical:'top'});
+    const text=new Text(null,{left:10,right:10,top:4,height:130,style,string:''});
+    const refresh=()=>{
+      try{
+        const d=actions.diagnostics(),w=d.wifi,a=d.ai;
+        const states={off:'停止',identity:'話す人を選択待ち',waiting:'待機',connecting:'接続中',listening:'聞き取り中',speaking:'返答中',retrying:'再接続待ち',unconfigured:'未設定'};
+        text.string=tab===0?'Wi-Fi・USB\nWi-Fi: '+(w.connected?'接続済み':'未接続')+'\nIP: '+(w.ip||'なし')+'\n強度: '+(d.signal.rssi===null?'取得不可':d.signal.rssi+' dBm / '+d.signal.bars+'/4')+'\nUSB: '+(d.connection.usb?'PC接続':'PC未接続')+' / 自動OFFLINE '+(d.connection.enabled?'ON':'OFF'):
+          tab===1?'AI: '+a.provider+'\n設定: '+(a.configured?'登録済み':'未設定')+' / 会話 '+(a.enabled?'ON':'OFF')+'\n接続: '+(states[a.state]||'状態不明')+'\nエラー: '+(a.error?'あり（ログを確認）':'なし')+'\n'+(a.model||'XiaoZhiの設定モデル'):
+          '音声・本体\n音量: '+d.volume.percent+'%\nマイク: '+(a.state==='listening'?'聞き取り中':'待機・停止')+' / 再生: '+(d.local.playing||a.state==='speaking'?'再生中':'停止')+'\n入力 '+a.audio.inputEvents+'回 / 出力 '+a.audio.outputEvents+'回\n時計: '+(d.clock.ready?'設定済み':'未設定');
+      }catch(_){text.string='情報を取得できませんでした。\nもう一度「再取得」を押してください。';}
+    };
+    const root=new Container(null,{left:0,right:0,top:0,bottom:0,skin:new Skin({fill:'white'}),contents:[text,
+      new ActionButton({label:'再取得',onTap:refresh},{left:8,top:138,width:96,height:36}),
+      new ActionButton({label:'次へ',onTap:()=>{tab=(tab+1)%3;refresh();}},{left:112,top:138,width:96,height:36}),
+      new ActionButton({label:'設定へ',onTap:()=>launch('archive-settings')},{right:8,top:138,width:96,height:36})
+    ]});refresh();const timer=Timer.repeat(refresh,2000);return {content:root,dispose(){Timer.clear(timer);}};
+  }});
+  robot.ui.miniApps.register({id:'archive-chat-settings',title:'会話・AI',hidden:true,create:()=>page('会話・AI',[
+    ['会話モード ON / OFF',()=>launch('conversation-mode')],['AIモデルを選ぶ',()=>launch('archive-ai-settings')],
+    ['話す人を選ぶ・登録',()=>launch('archive-speaker')],['設定へ戻る',()=>launch('archive-settings')]
+  ])});
+  robot.ui.miniApps.register({id:'archive-sound-settings',title:'音量・アラーム',hidden:true,create:()=>page('音量・アラーム',[
+    ['音量',()=>launch('archive-volume')],['アラームを設定',()=>launch('archive-alarm')],
+    ['アラーム・タイマー一覧',()=>launch('archive-alarm-list')],['設定へ戻る',()=>launch('archive-settings')]
+  ])});
+  robot.ui.miniApps.register({id:'archive-offline-settings',title:'オフライン',hidden:true,create(){
+    const view=page('オフライン',[
+      ['自動切替: '+(actions.autoOffline().enabled?'ON':'OFF'),()=>{actions.autoOffline(!actions.autoOffline().enabled);launch('archive-offline-settings');}],
+      ['本体だけで使う',()=>actions.openOffline()],['本体の日時を設定',()=>launch('archive-local-clock')],
+      ['設定へ戻る',()=>launch('archive-settings')]
+    ]);return view;
+  }});
+  for(const key of ['archiveVolume','directChatMode','offlineMode','alarmSettings'])robot.drawer.removeDrawerButton(key);
+  robot.drawer.addDrawerButton({key:'networkSettings',label:'設定',callback:()=>{robot.ui.application.behavior.closeDrawer?.();launch('archive-settings');}});
   Timer.repeat(()=>{if(server)return;const s=getSettingsStatus();if(!s.connected&&!s.setupActive)return;try{startServer();lastStartError=false;}catch(error){if(!lastStartError){trace('[control] web start failed: '+String(error?.name||'Error')+'\n');lastStartError=true;}}},1000);
 }

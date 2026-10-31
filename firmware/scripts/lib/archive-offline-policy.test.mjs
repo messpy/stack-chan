@@ -1,0 +1,11 @@
+import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
+const c=vm.createContext({});vm.runInContext(fs.readFileSync(new URL('../../host/app/archive-offline-policy.js',import.meta.url),'utf8').replace('export class','class')+';globalThis.Policy=OfflinePolicy;',c);
+const p=new c.Policy(),input={enabled:true,usb:false,wifi:false,setup:false,busy:false};
+for(let i=0;i<38;i++)assert.equal(p.observe(input),false);
+assert.equal(p.observe(input),true);p.enteredOffline();for(let i=0;i<20;i++)assert.equal(p.observe(input),false);
+assert.equal(p.observe({...input,usb:true}),false);assert.equal(p.entered,false);
+for(let i=0;i<9;i++)assert.equal(p.observe(input),false);assert.equal(p.observe({...input,wifi:true}),false);
+for(let i=0;i<20;i++)assert.equal(p.observe({...input,setup:true}),false);
+for(let i=0;i<20;i++)assert.equal(p.observe({...input,busy:true}),false);
+assert.equal(p.observe(input),true);p.enteredOffline();assert.equal(p.observe({...input,enabled:false}),false);assert.equal(p.entered,false);
+console.log('PASS: boot grace, sustained disconnect, USB/Wi-Fi reconnect, provisioning and busy deferral, one entry per disconnect, disabled policy');

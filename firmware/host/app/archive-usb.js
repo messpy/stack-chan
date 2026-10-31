@@ -10,3 +10,5 @@ export const sealVault = native('xs_archive_seal');
 export const openVault = native('xs_archive_open');
 
 export const encodeJPEG = native('xs_archive_jpeg');
+
+export const usbConnected = native('xs_archive_usb_connected');

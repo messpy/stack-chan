@@ -23,7 +23,7 @@ export function openVolume(){
 }
 export function startVolume(context){
   robot=context;
-  robot.ui.miniApps.register({id:'archive-volume',title:'音量',create(){
+  robot.ui.miniApps.register({id:'archive-volume',hidden:true,title:'音量',create(){
     const styles=uiStyles();
     const value=new Label(null,{left:0,right:0,top:10,height:38,style:new Style({font:'k8x12-24',color:'black',horizontal:'center'}),string:getVolume().percent+'%'});
     const change=percent=>{setVolume(Math.max(0,Math.min(100,percent)));value.string=getVolume().percent+'%';previewVolume();};

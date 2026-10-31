@@ -14,13 +14,13 @@ export function hideRingingAlarm(){const close=ringClose;ringClose=undefined;clo
 export function openAlarmSettings(){robot.ui.application.behavior.closeDrawer?.();robot.ui.application.behavior.launchMiniApp('archive-alarm');return {opened:true};}
 export function startAlarmSettings(context,callbacks){
  robot=context;actions=callbacks;
- robot.ui.miniApps.register({id:'archive-alarm-ringing',title:'アラーム',create(context){
+ robot.ui.miniApps.register({id:'archive-alarm-ringing',hidden:true,title:'アラーム',create(context){
   ringClose=context.close;
   const stop=button('停止',()=>{stop.string='停止中';actions.stop();},{left:12,right:12,top:78,bottom:14});
   stop.skin=new Skin({fill:['#c12d3c','#8e1d29']});stop.style=new Style({font:'k8x12-24',color:'white',horizontal:'center',vertical:'middle'});
   return {content:new Container(null,{left:0,right:0,top:0,bottom:0,skin:new Skin({fill:'#fff4e6'}),contents:[new Text(null,{left:12,right:12,top:8,height:60,style:body,string:((ringItem?.kind==='timer')?'タイマー終了':'アラーム')+'\n'+String(ringItem?.title||'') .slice(0,60)}),stop]}),dispose(){if(ringClose){ringClose=undefined;actions.stop();}}};
  }});
- robot.ui.miniApps.register({id:'archive-alarm',title:'アラーム設定',create(){
+ robot.ui.miniApps.register({id:'archive-alarm',hidden:true,title:'アラーム設定',create(){
   const last=getSettings().reminders.filter(r=>r.kind==='alarm').slice(-1)[0];if(last){const t=japaneseClock(last.due);hour=t.hour;minute=t.minute;daily=last.repeat==='daily';}
   const value=new Label(null,{left:0,right:0,top:0,height:32,style:new Style({font:'k8x12-24',color:'black',horizontal:'center'}),string:clock()});
   const status=new Text(null,{left:8,right:8,top:156,height:32,style:body,string:'時刻を選んで「登録」を押してください'});
@@ -31,7 +31,7 @@ export function startAlarmSettings(context,callbacks){
    button('時 −',()=>change(-1,0),{left:10,top:36,width:68,height:34}),button('時 ＋',()=>change(1,0),{left:87,top:36,width:68,height:34}),button('分 −',()=>change(0,-1),{right:87,top:36,width:68,height:34}),button('分 ＋',()=>change(0,1),{right:10,top:36,width:68,height:34}),repeat,
    button('登録',save,{left:10,top:116,width:145,height:34}),button('予約一覧',()=>robot.ui.application.behavior.launchMiniApp('archive-alarm-list'),{right:10,top:116,width:145,height:34}),status]})};
  }});
- robot.ui.miniApps.register({id:'archive-alarm-list',title:'アラーム・タイマー',create(){
+ robot.ui.miniApps.register({id:'archive-alarm-list',hidden:true,title:'アラーム・タイマー',create(){
   const summary=new Text(null,{left:8,right:8,top:4,height:62,style:body,string:''});let rows=[];
   const render=()=>{rows=actions.list().items;index=Math.max(0,Math.min(index,rows.length-1));const row=rows[index];if(!row){summary.string='予約はありません';return;}const t=japaneseClock(row.due);if(row.kind==='timer'&&row.remainingMs!==undefined){summary.string=(index+1)+' / '+rows.length+'  残り '+Math.ceil(row.remainingMs/1000)+'秒\n'+row.title;return;}summary.string=(index+1)+' / '+rows.length+'  '+pad(t.hour)+':'+pad(t.minute)+(row.repeat==='daily'?' 毎日':' 1回')+'\n'+row.title;};
   const cancel=()=>{try{if(rows[index])actions.cancel(rows[index].id);render();}catch(_){summary.string='解除できませんでした';}};render();

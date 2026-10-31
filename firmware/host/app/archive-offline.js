@@ -167,7 +167,7 @@ export function startOffline(context, callbacks) {
   const button = (text, method, methods, layout) =>
     createUIButton({ text, method, background: '#236a5a', textColor: '#ffffff' }, methods, layout, fail)
   robot.ui.miniApps.register({
-    id: 'archive-offline',
+    id: 'archive-offline',hidden:true,
     title: 'オフライン',
     create(context) {
       context.close()

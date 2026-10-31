@@ -784,7 +784,7 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
   })
   if (enabled() && !currentSpeaker()) Timer.set(openSpeakerChooser, 1000)
   robot.ui.miniApps.register({
-    id: 'conversation-mode',
+    id: 'conversation-mode',hidden:true,
     title: '会話モード',
     create() {
       const styles = { compact: new Style({ font: uiFont(), color: 'black', horizontal: 'left', vertical: 'middle' }) }

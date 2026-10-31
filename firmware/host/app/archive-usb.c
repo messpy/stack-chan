@@ -149,3 +149,7 @@ void xs_archive_jpeg(xsMachine *the) {
  xsTry {xsmcSetArrayBuffer(xsResult,jpeg,length);} xsCatch {free(jpeg);xsThrow(xsException);}
  free(jpeg);
 }
+
+void xs_archive_usb_connected(xsMachine *the) {
+    xsmcSetBoolean(xsResult, usb_serial_jtag_is_connected());
+}

@@ -1,3 +1,5 @@
+import {OfflinePolicy} from 'archive-offline-policy';
+import {getSettings,changeSettings} from 'archive-vault';
 import {startLocalClock,setLocalTime,localClockStatus} from 'archive-local-clock';
 import {startOffline,openOffline,closeOffline,offlineAction,offlineStatus} from 'archive-offline';
 import {checkOllama} from 'archive-ollama';
@@ -19,7 +21,7 @@ import {startSettings,openSettings,closeSettings,getSettingsStatus,vaultSelfTest
 import {startDeviceTools,setAlarmDisplay,callDeviceTool,listDeviceTools,reminderStatus} from 'archive-tools';
 import Time from 'time';
 import {getM5StackChanDriver} from 'm5stackchan-servo-driver';
-import {readUSB,writeUSB,rebootUSB,convertRGB24,encodeJPEG} from 'archive-usb';
+import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG} from 'archive-usb';
 import Base64 from 'base64';
 import config from 'mc/config';
 import {HttpServerService, Response} from 'http-server-service';
@@ -166,6 +168,7 @@ export function startArchive(robot) {
         const action=request.op.slice(7),part=imageUploadCommand(action,request.args||{},Base64.decode);
         if(action==='finish'){const name='photo-'+id()+'.jpg';save(name,[part.buffer]);result={name,width:part.width,height:part.height,...await describeImage(robot,name,part.buffer,request.args?.question)};}else result=part;
       }
+      else if(request.op==='/offline/auto')result=autoOffline(request.args?.enabled);
       else if(request.op==='/offline/status')result=offlineStatus();
       else if(request.op==='/offline/open')result=openOffline();
       else if(request.op==='/offline/action')result=await offlineAction(request.args?.action);
@@ -288,7 +291,21 @@ export function startArchive(robot) {
   },5);
 
   try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},args=>photo(robot,{...args,analyze:true},true),on=>{if(on){if(offlineStatus().playing)throw new Error('読み上げが終わってから会話を開始してください');closeOffline();}});}catch(_){trace('[direct-chat] initialization unavailable\n');}
+  const offlinePolicy=new OfflinePolicy();
+  const autoOffline=value=>{
+    if(typeof value==='boolean'){changeSettings(s=>{s.autoOffline=value;});offlinePolicy.reset();}
+    return {enabled:getSettings().autoOffline!==false,usb:usbConnected(),wifi:getSettingsStatus().connected,active:offlinePolicy.entered};
+  };
+  Timer.repeat(()=>{
+    try{
+      const connection=autoOffline(),network=getSettingsStatus();
+      if(!offlinePolicy.observe({...connection,setup:network.setupActive,busy:(busy&&!directChatStatus().busy)||offlineStatus().playing}))return;
+      openOffline();offlinePolicy.enteredOffline();trace('[offline] automatic mode: USB and Wi-Fi disconnected\n');
+    }catch(_){offlinePolicy.absent=0;}
+  },1000);
   startWeb(robot,{
+    autoOffline,openOffline,
+    diagnostics:()=>({wifi:getSettingsStatus(),signal:wifiDisplayStatus(),ai:directChatStatus(),volume:getVolume(),connection:autoOffline(),local:offlineStatus(),clock:localClockStatus()}),
     execute,
     read(name,offset,length,whole=false){
       if(!safe(name)||busy&&!directChatStatus().busy)throw new Error('Media unavailable');

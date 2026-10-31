@@ -10,7 +10,7 @@ export function startSpeakerChooser(context, callbacks) {
   robot = context
   actions = callbacks
   robot.ui.miniApps.register({
-    id: 'archive-speaker',
+    id: 'archive-speaker',hidden:true,
     title: '話す人を選択',
     create() {
       const style = new Style({ font: uiFont(), color: 'black', horizontal: 'left', vertical: 'middle' }),
