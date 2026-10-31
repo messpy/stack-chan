@@ -3,7 +3,7 @@ let definition,reads=[],failed=false;
 class Node{constructor(data,options={}){Object.assign(this,options);this.data=data;this.children=options.contents||[];this.label={string:data?.label||''};}content(){return this.label;}}
 const rows=Array.from({length:12},(_,i)=>({id:String(i),role:i%2?'assistant':'user',name:'アオ',partner:'アオ',created:1700000000000,text:i===0?Array.from({length:100},(_,n)=>'文章'+n+'です。').join(''):'発言'+i}));
 const context=vm.createContext({Container:Node,Label:Node,Text:Node,Skin:class{},Style:class{},ActionButton:Node,uiFont:()=>''});
-vm.runInContext(fs.readFileSync(new URL('../../host/app/archive-history-ui.js',import.meta.url),'utf8').replace(/^import .*;$/gm,'').replace(/export /g,''),context);
+vm.runInContext(fs.readFileSync(new URL('../../host/app/archive-history-ui.js',import.meta.url),'utf8').replace(/^import .*$/gm,'').replace(/export /g,''),context);
 context.robot={ui:{miniApps:{register:d=>definition=d}}};context.actions={people:()=>[{id:'alice',name:'アオ'}],current:()=>({id:'alice'}),read:args=>{reads.push(args);if(failed)throw Error('SD');return {items:rows.slice(0,args.limit),hasMore:true}}};
 vm.runInContext('startHistoryUI(robot,actions)',context);assert.equal(definition.hidden,undefined);
 const screen=definition.create().content,controls=screen.children;
@@ -16,3 +16,11 @@ failed=true;controls[1].data.onTap();assert.ok(controls[3].string.includes('読�
 const pages=vm.runInContext("historyPages('あいうえお'.repeat(500))",context);assert.equal(pages.join('').replace(/\n/g,''),'あいうえお'.repeat(500));assert.ok(pages.every(p=>p.split('\n').length<=7));
 assert.ok(controls.filter(c=>c.data?.onTap).every(c=>c.top+c.height<=196));
 console.log('PASS: history mini app, current/all filter, bounded message/text paging, error display, text preserved and buttons fit');
+
+context.readState=()=>({items:rows});
+vm.runInContext('globalThis.navigation=new HistoryState(readState);navigation.load(null)',context);
+const navigation=context.navigation;assert.equal(navigation.items.length,10);
+const cachedPages=navigation.pages;navigation.moveText(1);assert.equal(navigation.pages,cachedPages);
+navigation.moveMessage(100);assert.equal(navigation.row,0);navigation.moveMessage(1);assert.equal(navigation.row,1);assert.equal(navigation.part,0);
+navigation.moveText(-1);assert.equal(navigation.part,0);
+console.log('PASS: independent history state keeps cached wrapping and bounds navigation without rereading SD');
