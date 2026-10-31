@@ -91,6 +91,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
       this.listeningMode = normalizeListeningMode(configuration.listeningMode)
       this.functions = Array.isArray(message.functions) ? message.functions : []
       this.functionByName = Object.create(null)
+      trace('[chat-tools] configured count='+this.functions.length+'\n')
       for (const tool of this.functions) {
         if (tool && typeof tool.name === 'string' && tool.name) this.functionByName[tool.name] = tool
       }
@@ -468,6 +469,8 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
 
     switch (payload.method) {
       case 'initialize':
+        trace('[chat-tools] initialize requested\n')
+        this.postPresentation({id:'receiveMcpNotification',payload:{method:'stackchan/vision',params:payload.params?.capabilities?.vision??null}})
         this.sendMcpResult(payload.id, {
           protocolVersion: MCP_PROTOCOL_VERSION,
           capabilities: { tools: {} },
@@ -475,13 +478,13 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
         })
         break
       case 'tools/list':
+        trace('[chat-tools] list requested count='+this.functions.length+'\n')
         this.sendMcpResult(payload.id, {
           tools: this.functions.map((tool) => ({
             name: tool.name,
             ...(tool.description ? { description: tool.description } : {}),
             inputSchema: tool.parameters ?? { type: 'object', properties: {} },
           })),
-          nextCursor: '',
         })
         break
       case 'tools/call':
@@ -504,6 +507,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
       this.sendMcpError(payload.id, -32601, `Unknown tool: ${params.name}`)
       return
     }
+    trace('[chat-tools] call='+tool.name+'\n')
     const args = params.arguments ?? {}
     if (!isRecord(args)) {
       this.sendMcpError(payload.id, -32602, 'tools/call params.arguments must be an object')

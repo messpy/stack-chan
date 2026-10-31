@@ -1,0 +1,101 @@
+[
+  {
+    "name": "clock_now",
+    "description": "スタックちゃんの現在時刻と日本時間を取得する。相対日付のアラームを作る前に呼ぶ。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "timer_create",
+    "description": "スタックちゃん本体で秒数を数えるタイマーを作成し、終了時に本体を鳴らす。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 604800
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "seconds"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "alarm_create",
+    "description": "指定日時に本体を鳴らすアラーム。毎日ならrepeatをdailyにする。clock_nowで現在の日本時間を確認し、whenには最初に鳴らす未来の日時を+09:00付きISO8601で渡す。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "when": {
+          "type": "string",
+          "description": "例: 2026-11-01T07:00:00+09:00"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "repeat": {
+          "type": "string",
+          "enum": [
+            "once",
+            "daily"
+          ],
+          "description": "onceは1回限り、dailyは同じ日本時間で毎日繰り返す。省略時はonce。"
+        }
+      },
+      "required": [
+        "when"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "reminder_list",
+    "description": "本体に保存したタイマーとアラームの一覧を取得する。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "include_completed": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "reminder_cancel",
+    "description": "指定IDのタイマーまたはアラームを解除する。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "alarm_stop",
+    "description": "現在鳴っているアラーム音を止める。未到来の予約は解除しない。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  }
+]

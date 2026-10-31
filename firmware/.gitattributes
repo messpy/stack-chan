@@ -1,0 +1,3 @@
+
+# Preserve the upstream SQLite amalgamation byte-for-byte.
+vendor/sqlite/* -whitespace

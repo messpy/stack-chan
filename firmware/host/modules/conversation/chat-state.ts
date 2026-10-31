@@ -102,6 +102,10 @@ export class ChatSessionState {
     }
     const previous = role === 'input' ? this.#inputTranscript : this.#outputTranscript
     this.#setTranscript(role, previous + chunk)
+    if (!more) {
+      const archive = (globalThis as typeof globalThis & { stackchanArchiveTranscript?: (role: string, text: string) => void }).stackchanArchiveTranscript
+      archive?.(role, role === 'input' ? this.#inputTranscript : this.#outputTranscript)
+    }
   }
 
   clearTranscript(role?: ChatTranscriptRole): void {

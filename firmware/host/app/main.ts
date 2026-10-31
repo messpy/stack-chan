@@ -153,6 +153,7 @@ async function main() {
       device: getHostDeviceEnvironment(),
       config: preferences,
     })
+    if (Modules.has('lan-archive')) (Modules.importNow('lan-archive') as { startArchive: (context: StackchanContext) => void }).startArchive(context)
     trace('[main] app behaviors ready\n')
     installModManagerShortcut()
   } catch (error) {
@@ -168,6 +169,7 @@ async function main() {
       trace(`[main] cleanup error ${startupErrorClass(closeError)}\n`)
     }
     trace(`[main] startup failed phase=${phase} error=${startupErrorClass(error)}\n`)
+    trace(`[main] startup detail: ${error instanceof Error ? error.message : 'unknown'}\n`)
     if (
       globalEnv.application === failedApplication &&
       (!failedApplication ||

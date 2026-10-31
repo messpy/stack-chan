@@ -1,0 +1,288 @@
+import {startAISettings} from 'archive-ai-settings';
+import Timer from 'timer';
+import {checkGemini} from 'archive-gemini-check';
+import {reconnectSavedWiFi} from 'archive-settings';
+import {imageUploadCommand} from 'archive-image-upload';
+import {startWiFiDisplay,wifiDisplayStatus} from 'archive-wifi-display';
+import {analyzeJPEG,visionStatus} from 'archive-vision';
+import {startAlarmSettings,openAlarmSettings,showRingingAlarm,hideRingingAlarm} from 'archive-alarm-ui';
+import {alarmSoundCommand,playAlarmSound} from 'archive-alarm-sound';
+import {startWeb,openControl,controlStatus} from 'archive-web';
+import {startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat} from 'archive-direct-chat';
+import {recordMemory,history,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
+import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
+import {acceptAudioChunk} from 'archive-audio-upload';
+import {startSettings,openSettings,closeSettings,getSettingsStatus,vaultSelfTest,settingsHttpSelfTest,scanNearby} from 'archive-settings';
+import {startDeviceTools,setAlarmDisplay,callDeviceTool,listDeviceTools,reminderStatus} from 'archive-tools';
+import Time from 'time';
+import {getM5StackChanDriver} from 'm5stackchan-servo-driver';
+import {readUSB,writeUSB,rebootUSB,convertRGB24,encodeJPEG} from 'archive-usb';
+import Base64 from 'base64';
+import config from 'mc/config';
+import {HttpServerService, Response} from 'http-server-service';
+import {withSDCard} from 'stackchan-sdcard';
+import {bgr24,bitmapHeader,aviHeader,frameHeader,aviAudioHeader,audioFrameHeader} from 'archive-codec';
+
+let sequence=0;
+let busy=false;
+let lastError='';
+let audioUpload;
+let server;
+const folder='stackchan';
+const safe=name=>typeof name==='string' && /^[a-z0-9-]+\.(bmp|avi|wav|jpg|json|mp3)$/.test(name);
+function files(operation) {
+  return withSDCard(root=>{
+    try {root.createDirectory(folder);} catch (_) { if (!root.status(folder).isDirectory()) throw new Error('SD directory unavailable'); }
+    return operation(root);
+  });
+}
+function save(name,parts) {
+  files(root=>{
+    const file=root.openFile({path:`${folder}/${name}`,mode:'w'});
+    try {let offset=0;for(const part of parts){file.write(part,offset);offset+=part.byteLength;}file.flush();}
+    finally {file.close();}
+  });
+}
+const id=()=>`${Date.now()}-${sequence++}`;
+export function archiveTranscript(role,text,eventId,image) {
+  if(!text)return;
+  try {
+    const event={id:typeof eventId==='string'&&/^[a-z0-9-]{1,100}$/.test(eventId)?eventId:id(),role:role==='input'?'user':'assistant',text:String(text).slice(-4096),created:Date.now()};
+    if(typeof image==='string'&&safe(image)&&image.endsWith('.jpg'))event.image=image;
+    save(`chat-${event.id}.json`,[ArrayBuffer.fromString(JSON.stringify(event))]);
+    try{recordMemory(event);}catch(_){trace('[memory] transcript database write failed\n');}
+    return event;
+  } catch(e) {lastError=String(e);trace('[archive] transcript could not be saved\n');}
+}
+async function photo(robot,args={},fromConversation=false) {
+ const wasBusy=busy;if(busy&&!fromConversation)throw new Error('Camera busy');busy=true;
+ let frame,jpeg,result;
+ try{
+  frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});if(!frame)throw new Error('No camera frame');
+  const tag=id(),name='photo-'+tag+'.jpg',image=name;
+  jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');save(image,[jpeg]);
+  result={name,image,width:frame.width,height:frame.height};
+ }finally{frame?.close?.();robot.camera.stop();busy=wasBusy;}
+ if(args.analyze!==false)Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
+ return result;
+}
+
+async function describeImage(robot,name,jpeg,question){
+ const prompt=String(question||'この画像には何が写っていますか？').slice(0,1000);
+ const input=archiveTranscript('input',prompt,undefined,name);
+ const analysis=await analyzeJPEG(jpeg,prompt);
+ const answer=archiveTranscript('output',analysis.status==='complete'?analysis.text:'画像認識エラー: '+(analysis.error||'回答を取得できませんでした'),undefined,name);
+ if(analysis.status==='complete')robot.showBalloon(analysis.text.slice(0,120));
+ return {analysis,historySaved:!!input&&!!answer,messageIds:[input?.id,answer?.id]};
+}
+
+async function record(robot) {
+  if(busy)throw new Error('Another capture is in progress');
+  busy=true;
+  const name=`video-${id()}.avi`,temporary=name.replace('.avi','.tmp'),fps=2;
+  let count=0,offset=324,w=0,h=0,audioPromise,audioError;
+  try {
+    await robot.camera.start({width:176,height:144,imageType:'rgb565le'});
+    const initial=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});
+    if(!initial)throw new Error('No camera frame');
+    w=initial.width;h=initial.height;initial.close?.();
+    save(temporary,[aviAudioHeader(w,h,fps,0,{sampleRate:16000,channels:1,bitsPerSample:16,bytes:0})]);
+    const started=Date.now();
+    audioPromise=robot.audio.record(5000).catch(e=>{audioError=e;return undefined;});
+    trace('[archive] video and microphone recording begin\n');
+    for(let i=0;i<10;i++){
+      let frame;
+      try {
+        frame=await robot.camera.capture({width:w,height:h,imageType:'rgb565le'});
+        if(!frame)throw new Error('No camera frame');
+        const pixels=convertRGB24(frame.buffer,w,h,frame.imageType==='rgb565le');
+        files(root=>{
+          const file=root.openFile({path:`${folder}/${temporary}`,mode:'r+'});
+          try {file.write(frameHeader(pixels.byteLength),offset);file.write(pixels,offset+8);file.flush();}
+          finally {file.close();}
+        });
+        offset+=8+pixels.byteLength;count++;
+      }finally {frame?.close?.();}
+      const delay=started+(i+1)*500-Date.now();
+      if(delay>0)await new Promise(resolve=>Timer.set(resolve,delay));
+    }
+    const wav=await audioPromise;
+    if(!wav)throw audioError||new Error('Microphone recording failed');
+    const view=new DataView(wav);
+    if(wav.byteLength<44||view.getUint16(20,true)!==1)throw new Error('Unsupported microphone audio format');
+    const pcm=new Uint8Array(wav,44);
+    const audio={sampleRate:view.getUint32(24,true),channels:view.getUint16(22,true),bitsPerSample:view.getUint16(34,true),bytes:pcm.byteLength};
+    files(root=>{
+      const file=root.openFile({path:`${folder}/${temporary}`,mode:'r+'});
+      try {file.write(audioFrameHeader(pcm.byteLength),offset);file.write(pcm,offset+8);file.write(aviAudioHeader(w,h,fps,count,audio),0);file.flush();}
+      finally {file.close();}
+      root.move(`${folder}/${temporary}`,`${folder}/${name}`);
+    });
+    trace('[archive] video with audio saved\n');
+    return {name,frames:count,fps,audio:true,duration:5};
+  }finally {
+    if(audioPromise)await audioPromise;
+    try {robot.camera.stop();}finally{busy=false;}
+  }
+}
+async function recordAudio(robot) {
+  if(busy)throw new Error('Another capture is in progress');
+  busy=true;
+  trace('[archive] audio recording begin (5000 ms)\n');
+  try {
+    const wav=await robot.audio.record(5000);
+    const name=`audio-${id()}.wav`;
+    save(name,[wav]);
+    trace('[archive] audio recording saved\n');
+    return {name,duration:5,bytes:wav.byteLength};
+  }finally{busy=false;}
+}
+export function startArchive(robot) {
+  startVolume(robot);
+  startAISettings(robot,{status:directChatStatus,select:configureChatProvider});
+  startWiFiDisplay(robot);
+  try{startSettings(robot);}catch(_){trace('[settings] initialization failed; USB remains available\n');}
+  try{startDeviceTools(robot,()=>{if(directChatStatus().busy)pauseDirectChat();if(busy)return false;busy=true;return true;},()=>{busy=false;resumeDirectChat();});}catch(_){trace('[tools] initialization failed; USB remains available\n');}
+  startAlarmSettings(robot,{create:args=>callDeviceTool('alarm_create',args),list:()=>callDeviceTool('reminder_list'),cancel:id=>callDeviceTool('reminder_cancel',{id}),stop:()=>callDeviceTool('alarm_stop')});
+  setAlarmDisplay({show:showRingingAlarm,close:hideRingingAlarm});
+  const token=config.archiveToken;
+  if(!token)return;
+  globalThis.stackchanArchiveTranscript=archiveTranscript;
+  globalThis.abort=(reason,exception)=>{try{writeUSB(JSON.stringify({event:'fatal',reason:String(reason),detail:String(exception).slice(0,300)}));}catch(_){};rebootUSB();return true;};
+  async function execute(request){
+    const capture=['/alarm-sound/preview','/motor/test','/image/finish','/photo','/record','/audio','/chat-record'].includes(request.op);
+    const paused=capture?pauseDirectChat():false;
+    try{
+      let result;
+      if(request.op.startsWith('/image/')){
+        if(request.op==='/image/finish'&&busy)throw new Error('本体で記録中です。少し待ってから送信してください');
+        const action=request.op.slice(7),part=imageUploadCommand(action,request.args||{},Base64.decode);
+        if(action==='finish'){const name='photo-'+id()+'.jpg';save(name,[part.buffer]);result={name,width:part.width,height:part.height,...await describeImage(robot,name,part.buffer,request.args?.question)};}else result=part;
+      }
+      else if(request.op==='/alarms/open')result=openAlarmSettings();
+      else if(request.op.startsWith('/alarm-sound/')&&request.op!=='/alarm-sound/preview')result=alarmSoundCommand(request.op.slice('/alarm-sound/'.length),request.args);
+      else if(request.op==='/alarm-sound/preview'){busy=true;try{result={played:await playAlarmSound(robot,()=>false,Math.max(1,Math.min(5,Number(request.args?.seconds)||2)))};}finally{busy=false;}}
+      else if(request.op==='/volume'){result=request.args?.percent===undefined?getVolume():setVolume(Number(request.args.percent),request.args.preview===true);}
+      else if(request.op==='/network/open')result=openControl(request.args?.mode);
+      else if(request.op==='/vision/status')result=visionStatus();
+      else if(request.op==='/network/status')result=controlStatus();
+      else if(request.op==='/wifi/reconnect')result=reconnectSavedWiFi();
+      else if(request.op==='/chat/gemini-test')result=await checkGemini();
+      else if(request.op==='/speaker/list')result=speakerList();
+      else if(request.op==='/speaker/select')result=selectSpeaker(request.args||{});
+      else if(request.op==='/speaker/register')result=selectSpeaker(request.args||{},true);
+      else if(request.op==='/chat/provider')result=configureChatProvider(request.args);
+      else if(request.op==='/chat/status')result=directChatStatus();
+      else if(request.op==='/chat/configure')result=configureDirectChat(request.args);
+      else if(request.op==='/chat/provision')result=await provisionDirectChat();
+      else if(request.op==='/chat/test')result=await testDirectConnection();
+      else if(request.op==='/chat/start')result=setChatMode(true);
+      else if(request.op==='/chat/stop')result=setChatMode(false);
+      else if(request.op==='/memory/history')result=history(request.args);
+      else if(request.op==='/memory/users')result=users(request.args);
+      else if(request.op==='/memory/save-user')result=saveUser(request.args);
+      else if(request.op==='/memory/status')result=memoryStatus();
+      else if(request.op==='/memory/file-status')result=memoryFileStatus();
+      else if(request.op==='/memory/preserve-invalid')result=preserveInvalidMemory();
+      else if(request.op==='/memory/import'){importLegacy();result=memoryStatus();}
+      else if(request.op==='/volume/open')result=openVolume();
+      else if(request.op==='/time'){const epoch=Number(request.args?.epoch);if(!Number.isSafeInteger(epoch)||epoch<1700000000000)throw new Error('Invalid time');Time.set(Math.floor(epoch/1000));result={now:Date.now()};}
+      else if(request.op==='/settings/open'){
+        robot.ui.application.behavior.closeDrawer?.();
+        if(!robot.ui.application.behavior.launchMiniApp('wifi-settings'))throw new Error('Settings screen could not open');
+        result=getSettingsStatus();
+      }else if(request.op==='/settings/close'){
+        closeSettings();robot.ui.showFace();result=getSettingsStatus();
+      }else if(request.op==='/settings/status')result=getSettingsStatus();
+      else if(request.op==='/settings/self-test')result=vaultSelfTest();
+      else if(request.op==='/settings/http-test')result=await settingsHttpSelfTest();
+      else if(request.op==='/settings/scan-test')result={count:(await scanNearby()).length};
+      else if(request.op==='/tools/list')result={tools:listDeviceTools()};
+      else if(request.op==='/tools/call')result=callDeviceTool(request.args?.name,request.args?.arguments??{});
+      else if(request.op==='/reminders')result=reminderStatus();
+      else if(request.op==='/motor/test'){
+        const driver=getM5StackChanDriver();if(!driver)throw new Error('Motor driver unavailable');
+        const diagnostics=()=>new Promise(resolve=>driver.getDiagnostics(resolve));
+        const before=await diagnostics(),base={...(driver.lastKnownRotation||robot.pose.body.rotation)},pose=robot.pose.body;
+        const targets=request.args?.large===true?[{...base,y:base.y+.3},{...base,y:base.y-.3},{...base,p:base.p+.14},{...base,p:base.p-.14}]:[{...base,p:base.p+(base.p>0?-.08:.08)}];
+        const samples=[];try{await robot.setTorque(true);for(const rotation of targets){await robot.setPose({...pose,rotation},.3);await new Promise(resolve=>Timer.set(resolve,450));samples.push(await diagnostics());}result={before,samples,moved:samples.some(d=>(before.pan?.success&&d.pan?.success&&Math.abs(before.pan.value.position-d.pan.value.position)>2)||(before.tilt?.success&&d.tilt?.success&&Math.abs(before.tilt.value.position-d.tilt.value.position)>2))};}
+        finally{await robot.setPose({...pose,rotation:base},.4);await new Promise(resolve=>Timer.set(resolve,550));await robot.setTorque(false);}
+      }
+      else if(request.op==='/motor-status'){const driver=getM5StackChanDriver();result=driver?await new Promise(resolve=>driver.getDiagnostics(resolve)):{error:'M5StackChan driver unavailable'};}
+      else if(request.op==='/transcript'){
+        result=archiveTranscript(request.args?.role,String(request.args?.text??'').slice(0,4096),request.args?.eventId);
+        if(!result)throw new Error('Transcript SD write failed');
+      }else if(request.op==='/speak-begin'){
+        const size=Number(request.args?.size);
+        if(!Number.isInteger(size)||size<44||size>1200044||busy)throw new Error('Invalid or busy audio upload');
+        audioUpload={buffer:new ArrayBuffer(size),offset:0,time:Date.now()};
+        result={ok:true};
+      }else if(request.op==='/speak-chunk'){
+        const bytes=Base64.decode(String(request.args?.data??''));
+        result=acceptAudioChunk(audioUpload,Number(request.args?.offset),bytes);
+      }else if(request.op==='/speak-cancel'){
+        audioUpload=undefined;result={ok:true};
+      }else if(request.op==='/speak-play'){
+        if(!audioUpload||audioUpload.offset!==audioUpload.buffer.byteLength||busy)throw new Error('Audio upload incomplete');
+        const buffer=audioUpload.buffer;audioUpload=undefined;busy=true;
+        try{trace('[archive] conversation playback start\n');result={played:await robot.audio.playAudio(buffer)};}
+        finally{busy=false;trace('[archive] conversation playback done\n');}
+      }
+      else if(request.op==='/chat-record'){await robot.audio.tone(880,100,Math.min(robot.audio.volume,0.25));result=await recordAudio(robot);}
+      else if(request.op==='/audio')result=await recordAudio(robot);
+      else if(request.op==='/photo')result=await photo(robot,request.args);
+      else if(request.op==='/record')result=await record(robot);
+      else if(request.op==='/status'){
+        let sd=false;try{files(()=>{});sd=true;}catch(e){lastError=String(e);}
+        result={sd,camera:robot.camera.available!==false,busy:busy&&!directChatStatus().busy,chat:directChatStatus(),lastError,headTouch:!!robot.touchPanel,headSample:Array.from(robot.touchPanel?.sample??[]),transport:'usb+wifi',petting:'m5stack/StackChan',wifi:getSettingsStatus(),wifiDisplay:wifiDisplayStatus(),firmware:'stack-chan + M5Stack petting + USB archive'};
+      }else if(request.op==='/files'){
+        if(busy&&!directChatStatus().busy)throw new Error('Camera busy');
+        result=files(root=>{
+          const list=[];for(const name of root.scan(folder)){
+            if(!safe(name))continue;
+            const stat=root.status(`${folder}/${name}`);
+            if(stat.isFile())list.push({name,size:stat.size});
+          }
+          return list;
+        });
+      }else if(request.op==='/file'){
+        const {name,offset=0,length=8192}=request.args||{};
+        if(!safe(name)||!Number.isSafeInteger(offset)||offset<0||!Number.isInteger(length)||length<1||length>8192)throw new Error('Invalid file range');
+        result=files(root=>{
+          const f=root.openFile({path:`${folder}/${name}`,mode:'r'});
+          try{return {base64:Base64.encode(f.read(Math.min(length,Math.max(0,f.status().size-offset)),offset))};}finally{f.close();}
+        });
+      }else throw new Error('Unknown operation');
+      return result;
+    }finally{if(paused)resumeDirectChat();}
+  }
+  let usbBusy=false;
+  let usbInitError=false;
+  Timer.repeat(async()=>{
+    if(usbBusy)return;
+    if(audioUpload&&Date.now()-audioUpload.time>120000)audioUpload=undefined;
+    let raw;
+    try{raw=readUSB();}catch(e){if(!usbInitError){trace('[archive] USB init failed: '+String(e)+'\n');usbInitError=true;}return;}
+    if(!raw)return;
+    let request;
+    try{request=JSON.parse(raw);}catch(_){return;}
+    if(!Number.isInteger(request.id)||request.token!==token)return;
+    usbBusy=true;
+    try {
+      const result=await execute(request);
+      writeUSB(JSON.stringify({id:request.id,result}));
+    }catch(e){lastError=String(e);writeUSB(JSON.stringify({id:request.id,error:lastError}));}
+    finally{usbBusy=false;}
+  },5);
+
+  try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},args=>photo(robot,{...args,analyze:true},true),()=>openControl('lan'));}catch(_){trace('[direct-chat] initialization unavailable\n');}
+  startWeb(robot,{
+    execute,
+    read(name,offset,length,whole=false){
+      if(!safe(name)||busy&&!directChatStatus().busy)throw new Error('Media unavailable');
+      return files(root=>{const f=root.openFile({path:folder+'/'+name,mode:'r'});try{const size=f.status().size;if(whole&&size>length)throw new Error('Media file too large');return f.read(Math.min(length,Math.max(0,size-offset)),offset);}finally{f.close();}});
+    },
+    messages(){importLegacy();return history({limit:10}).items;}
+  },token);
+  trace('[archive] USB and standalone network control ready\n');
+}

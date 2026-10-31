@@ -1,3 +1,6 @@
+import { getM5StackChanDriver } from 'm5stackchan-servo-driver'
+import { createM5HeadPetController, m5MotionDurationSeconds } from './m5-head-pet'
+import { M5PetEffect } from './m5-pet-effect'
 import type { StackchanAppBehavior } from 'app-behavior'
 import { DogFace, ImageFace, SimpleFace } from 'behaviors/face'
 import type { CameraImageType } from 'camera'
@@ -612,7 +615,7 @@ export const onContextCreated: NonNullable<StackchanAppBehavior['onContextCreate
       if (motionDetectPreviousEmotion === undefined) {
         // Save the base emotion, not the other temporary reaction.
         motionDetectPreviousEmotion =
-          pettingRestoreTimer && currentEmotion === Emotion.HAPPY
+          pettingPreviousEmotion !== undefined && currentEmotion === Emotion.HAPPY
             ? (pettingPreviousEmotion ?? currentEmotion)
             : currentEmotion
       }
@@ -622,7 +625,7 @@ export const onContextCreated: NonNullable<StackchanAppBehavior['onContextCreate
       motionDetectEmotion = motionEmotion
       setEmotionWithEffect(robot, motionEmotion)
       motionDetectRestoreTimer = Timer.set(() => {
-        const restoreEmotion = pettingRestoreTimer ? Emotion.HAPPY : (motionDetectPreviousEmotion ?? Emotion.NEUTRAL)
+        const restoreEmotion = pettingPreviousEmotion !== undefined ? Emotion.HAPPY : (motionDetectPreviousEmotion ?? Emotion.NEUTRAL)
         if (currentEmotion === motionEmotion) {
           trace(`[IMU] restore emotion ${restoreEmotion}\n`)
           setEmotionWithEffect(robot, restoreEmotion)
@@ -661,7 +664,78 @@ export const onContextCreated: NonNullable<StackchanAppBehavior['onContextCreate
     }
   }
 
-  if (robot.touchPanel != null) {
+  if (robot.touchPanel != null && (config as { archiveM5Pet?: boolean }).archiveM5Pet) {
+    let m5MotionGeneration = 0
+    let decoration: PiuContent | undefined
+    let decorationTimer: ReturnType<typeof Timer.set> | undefined
+    const removeDecoration = () => {
+      if (decoration) robot.ui.removeEffect(decoration)
+      decoration = undefined
+      if (decorationTimer) Timer.clear(decorationTimer)
+      decorationTimer = undefined
+    }
+    const controller = createM5HeadPetController({
+      snapshot: () => {
+        pettingPreviousEmotion = motionDetectRestoreTimer && currentEmotion === motionDetectEmotion
+          ? (motionDetectPreviousEmotion ?? currentEmotion) : currentEmotion
+        pettingPreviousRotation = { ...(getM5StackChanDriver()?.lastKnownRotation ?? robot.pose.body.rotation) }
+        return { emotion: pettingPreviousEmotion, rotation: pettingPreviousRotation }
+      },
+      happy: (durationMs) => {
+        trace(`[TouchPanel:M5] petting HAPPY; decorations ${durationMs}ms\n`)
+        setEmotionWithEffect(robot, Emotion.HAPPY)
+        if (emoticonEffect) robot.ui.removeEffect(emoticonEffect)
+        emoticonEffect = null
+        removeDecoration()
+        decoration = new M5PetEffect({})
+        robot.ui.addEffect(decoration)
+        decorationTimer = Timer.set(removeDecoration, durationMs)
+      },
+      move: async ({ rotation, action, speed }) => {
+        trace(`[TouchPanel:M5] motion action=${action} yaw=${rotation.y.toFixed(3)} pitch=${rotation.p.toFixed(3)} speed=${speed}\n`)
+        const generation = ++m5MotionGeneration
+        const duration = m5MotionDurationSeconds(speed)
+        await robot.setTorque(true)
+        if (generation !== m5MotionGeneration) return
+        await robot.setPose(poseForRotation(rotation), duration)
+        // Driver completion acknowledges the command; wait for the physical move as well.
+        await wait(duration * 1000 + 50)
+      },
+      restore: ({ emotion, rotation }) => {
+        trace('[TouchPanel:M5] restore after release + 3000ms\n')
+        removeDecoration()
+        const restored = motionDetectRestoreTimer ? (motionDetectEmotion ?? Emotion.NEUTRAL) : emotion
+        if (currentEmotion === Emotion.HAPPY) setEmotionWithEffect(robot, restored)
+        const generation = ++m5MotionGeneration
+        void (async () => {
+          const duration = m5MotionDurationSeconds(200)
+          try {
+            await robot.setTorque(true)
+            if (generation !== m5MotionGeneration) return
+            await robot.setPose(poseForRotation(rotation), duration)
+            await wait(duration * 1000 + 50)
+          } finally {
+            if (generation === m5MotionGeneration) await robot.setTorque(false)
+          }
+        })().catch((error) => trace(`[TouchPanel:M5] restore error ${errorMessage(error)}\n`))
+        pettingPreviousEmotion = undefined
+        pettingPreviousRotation = undefined
+      },
+      schedule: (callback, delayMs) => {
+        const timer = Timer.set(callback, delayMs)
+        return () => Timer.clear(timer)
+      },
+      error: (error) => {
+        trace(`[TouchPanel:M5] motion error ${errorMessage(error)}\n`)
+        void robot.setTorque(false).catch((torqueError) => trace(`[TouchPanel:M5] torque release error ${errorMessage(torqueError)}\n`))
+      },
+    })
+    trace('[TouchPanel:M5] manufacturer petting enabled; swipe=40, release restore=3000ms\n')
+    robot.touchPanel.subscribe((event) => {
+      trace(`[TouchPanel:M5] gesture ${event.gesture}\n`)
+      controller.handle(event.gesture)
+    })
+  } else if (robot.touchPanel != null) {
     let lastForwardSwipeTicks: number | undefined
     let lastBackwardSwipeTicks: number | undefined
     robot.touchPanel.subscribe((event) => {

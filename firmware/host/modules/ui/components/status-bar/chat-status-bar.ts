@@ -1,5 +1,5 @@
 import type { Port as PiuPort } from 'piu/MC'
-import { Container, Content, Label, Port, Skin } from 'piu/MC'
+import { Container, Content, Label, Port, Skin, Style } from 'piu/MC'
 import { ActionButton } from 'ui-controls'
 import { UI, uiStyles } from 'ui-theme'
 
@@ -344,6 +344,19 @@ class ChatStatusBarBehavior extends Behavior {
     this.updateFaceActions()
   }
 
+  onWiFiConnectionStatus(container: Container, result: {label?: string; visible?: boolean}) {
+    const badge = container.content('wifiBadge') as Label
+    result.label = badge.string
+    result.visible = badge.visible && container.visible
+  }
+
+  onWiFiConnection(container: Container, status: {label: string; color: string}) {
+    const badge = container.content('wifiBadge') as Label
+    if (badge.string !== status.label) {badge.string = status.label; badge.style = new Style({font:'k8x12-12',color:status.color,horizontal:'left',vertical:'middle'})}
+    badge.visible = true
+    this.updateUI()
+  }
+
   onChatState(_container: Container, state: ChatStatusBarState, _error?: string) {
     this.#state = state
     this.updateUI()
@@ -371,7 +384,7 @@ class ChatStatusBarBehavior extends Behavior {
     const faceStatusVisible = faceChromeVisible || persistentInputVisible
     const skins = getSkins()
     if (this.#container) {
-      this.#container.visible = !faceMode || faceStatusVisible
+      this.#container.visible = !faceMode || faceStatusVisible || !!this.#container.content('wifiBadge')?.visible
       this.#container.skin = !faceMode || faceChromeVisible ? skins.chrome : skins.bar
     }
     const clockBehavior = this.#clock?.behavior as ClockBehaviorContract | undefined
@@ -452,6 +465,7 @@ export const ChatStatusBar = Container.template((options: ChatStatusBarOptions =
     height: barHeight,
     skin: skins.bar,
     contents: [
+      new Label(null, {name:'wifiBadge',left:2,top:0,width:92,height:13,active:false,visible:false,string:'',style:new Style({font:'k8x12-12',color:'#167647',horizontal:'left',vertical:'middle'})}),
       new ActionButton(
         {
           name: 'backButton',

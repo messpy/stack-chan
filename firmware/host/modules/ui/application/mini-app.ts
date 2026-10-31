@@ -17,6 +17,7 @@ export type MiniAppDefinition = Readonly<{
   id: string
   title: string
   icon?: 'play'
+  hidden?: boolean
   create(context: MiniAppContext): PiuContainer | MiniAppInstance
 }>
 
@@ -51,6 +52,7 @@ function validateDefinition(definition: MiniAppDefinition): MiniAppDefinition {
     id: definition.id,
     title,
     ...(definition.icon ? { icon: definition.icon } : {}),
+    ...(definition.hidden ? { hidden: true } : {}),
     create: definition.create,
   })
 }
@@ -80,6 +82,7 @@ export class MiniAppRegistry implements MiniAppRegistryCapability {
 
   list(): RegisteredMiniApp[] {
     return [...this.#definitions.values()]
+      .filter((definition) => !definition.hidden)
       .map(({ id, title, icon }) => Object.freeze({ id, title, ...(icon ? { icon } : {}) }))
       .sort((left, right) => left.title.localeCompare(right.title))
   }

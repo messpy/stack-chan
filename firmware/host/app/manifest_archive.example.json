@@ -1,0 +1,173 @@
+{
+  "include": [
+    "./manifest_local.json",
+    "$(MODULES)/io/files/esp32/manifest_sdspi.json",
+    "$(MODULES)/data/base64/manifest.json",
+    "$(MODDABLE)/modules/drivers/sensors/si12t/manifest.json",
+    "$(MODULES)/network/wifi/manifest.json",
+    "$(MODULES)/network/sntp/manifest.json",
+    "../modules/conversation/chat-audioio/server.manifest.json"
+  ],
+  "modules": {
+    "lan-archive": "./lan-archive",
+    "archive-codec": "./archive-codec",
+    "stackchan-sdcard": "../platforms/m5stackchan_cores3/sd-card",
+    "stackchan-sdroot": "../platforms/m5stackchan_cores3/sd-root",
+    "mod-files": "./mod-files",
+    "archive-usb": [
+      "./archive-usb",
+      "./archive-usb.c"
+    ],
+    "archive-head-touch": "./archive-head-touch",
+    "archive-settings": "./archive-settings",
+    "archive-vault": "./archive-vault",
+    "archive-tools": "./archive-tools",
+    "archive-http-server": "./archive-http-server",
+    "archive-audio-upload": "./archive-audio-upload",
+    "archive-volume": "./archive-volume",
+    "archive-web": "./archive-web",
+    "archive-web-page": "./archive-web-page",
+    "archive-direct-chat": "./archive-direct-chat",
+    "archive-chat-audioio": "./archive-chat-audioio",
+    "archive-memory": [
+      "./archive-memory",
+      "./archive-memory.c"
+    ],
+    "stackchanOpusDecoder": "../modules/audio/platforms/m5stackchan-cores3/esp32-opus-decoder",
+    "stackchanOpusEncoder": "../modules/audio/platforms/m5stackchan-cores3/esp32-opus-encoder",
+    "archivePcmRingWriter": "../modules/conversation/chat-audioio/pcm-ring-writer-native",
+    "archiveGeminiLive": "./archive-gemini-worker",
+    "archive-gemini-protocol": "./archive-gemini-protocol",
+    "archive-alarm-sound": "./archive-alarm-sound",
+    "archive-alarm-ui": "./archive-alarm-ui",
+    "archive-reminder-time": "./archive-reminder-time",
+    "archive-vision": "./archive-vision",
+    "archive-vision-http": "./archive-vision-http",
+    "archive-xiaozhi-vision": "./archive-xiaozhi-vision",
+    "archive-image-upload": "./archive-image-upload",
+    "archive-wifi-display": "./archive-wifi-display",
+    "archive-image-page": "./archive-image-page",
+    "archive-gemini-check": "./archive-gemini-check",
+    "archive-speaker-ui": "./archive-speaker-ui",
+    "archive-speaker-page": "./archive-speaker-page",
+    "archive-button-schema": "./archive-button-schema",
+    "archive-ui-button": "./archive-ui-button",
+    "archive-ai-settings": "./archive-ai-settings"
+  },
+  "defines": {
+    "file": {
+      "root": "#/sdcard",
+      "format": 0,
+      "maxOpen": 8
+    },
+    "sdcard": {
+      "cs": 4,
+      "miso": 35,
+      "mosi": 37,
+      "sck": 36,
+      "spi_port": "SPI3_HOST",
+      "hz": 20000000
+    },
+    "xs": {
+      "abortHook": 1
+    },
+    "camera": {
+      "scl": -1,
+      "sda": -1,
+      "i2c_port": 0
+    }
+  },
+  "config": {
+    "archiveToken": "GENERATED_BY_INIT_SCRIPT",
+    "driver": {
+      "type": "m5stackchan",
+      "typeLocked": true,
+      "panId": 1,
+      "tiltId": 2,
+      "yawZeroPosition": 460,
+      "pitchZeroPosition": 620,
+      "serial": {
+        "transmit": 6,
+        "receive": 7,
+        "port": 1,
+        "baud": 1000000
+      },
+      "servoPower": {
+        "type": "py32",
+        "pin": 0,
+        "address": 111
+      }
+    },
+    "ui": {
+      "language": "ja"
+    },
+    "archiveUSBOnly": true,
+    "serial": {
+      "transmit": 6,
+      "receive": 7,
+      "port": 1,
+      "baud": 1000000
+    },
+    "led": {
+      "head": {
+        "type": "py32",
+        "length": 12,
+        "ledPin": 13,
+        "address": 111
+      }
+    },
+    "archiveM5Pet": true,
+    "xiaozhiV1Available": true
+  },
+  "platforms": {
+    "esp32": {
+      "dependency": [
+        {
+          "idf": "esp_driver_usb_serial_jtag",
+          "includes": [
+            "include"
+          ]
+        }
+      ]
+    },
+    "esp32/m5stack_cores3": {
+      "dependency": [
+        {
+          "idf": "esp_driver_usb_serial_jtag"
+        },
+        {
+          "idf": "mbedtls"
+        },
+        {
+          "idf": "nvs_flash"
+        },
+        {
+          "name": "esp_audio_codec",
+          "version": "~2.5.0",
+          "includes": [
+            "include/decoder",
+            "include/decoder/impl",
+            "include/encoder",
+            "include/encoder/impl"
+          ]
+        }
+      ]
+    }
+  },
+  "creation": {
+    "chunk": {
+      "initial": 524288,
+      "incremental": 65536
+    }
+  },
+  "resources": {
+    "*-mask": [
+      "./assets/m5-pet/m5-pet-heart",
+      "./assets/m5-pet/m5-pet-shy"
+    ],
+    "*": [
+      "./reminder-tools",
+      "$(MODULES)/crypt/data/ca170.der"
+    ]
+  }
+}

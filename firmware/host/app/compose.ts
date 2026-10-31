@@ -201,13 +201,16 @@ export function createStackchanContext(
   const tts = TTS(ttsPrefs)
 
   const touch = config.Touch ? new Touch(config.Touch, createTouchOptions()) : undefined
-  const touchPanelConstructor = (config.TouchPanel ?? globalEnv.device?.sensor?.TouchPanel) as
+  const optionalHead = !config.TouchPanel && !globalEnv.device?.sensor?.TouchPanel && Modules.has('archive-head-touch')
+    ? (Modules.importNow('archive-head-touch') as () => unknown)()
+    : undefined
+  const touchPanelConstructor = (config.TouchPanel ?? globalEnv.device?.sensor?.TouchPanel ?? optionalHead) as
     | ConstructorParameters<typeof TouchPanel>[0]
     | undefined
   if (touchPanelConstructor && !config.TouchPanel) {
-    trace('[main] using device.sensor.TouchPanel fallback\n')
+    trace('[main] using top touch-panel provider\n')
   }
-  const touchPanel = touchPanelConstructor ? new TouchPanel(touchPanelConstructor) : undefined
+  const touchPanel = touchPanelConstructor ? new TouchPanel(touchPanelConstructor, (config as { archiveM5Pet?: boolean }).archiveM5Pet ? { swipeThreshold: 40 } : {}) : undefined
   const imu = globalEnv.device?.sensor?.IMU
     ? new IMU(globalEnv.device.sensor.IMU as ConstructorParameters<typeof IMU>[0])
     : undefined

@@ -145,6 +145,7 @@ class HttpServerService {
   #server
   #closed = false
   #notFound
+  #diagnostic
 
   /** Create a server with a bounded request body (16 KiB by default). */
   constructor(options = {}) {
@@ -152,17 +153,21 @@ class HttpServerService {
     if (!Number.isSafeInteger(maxRequestBodyBytes) || maxRequestBodyBytes < 0) {
       throw new RangeError('maxRequestBodyBytes must be a non-negative safe integer')
     }
+    this.#diagnostic = options.onDiagnostic
     this.#notFound = options.onNotFound
     const service = this
-    this.#server = new device.network.http.server.io({
+    const Server = options.server ?? device.network.http.server.io
+    this.#server = new Server({
       ...device.network.http.server,
       port: options.port ?? 8080,
       /** Each connection owns one current request until its response finishes. */
       onConnect(connection) {
+        service.#diagnostic?.("tcp-open")
         let current
         connection.accept({
           /** Replace all body and response state when a keep-alive request begins. */
           onRequest(request) {
+            service.#diagnostic?.("http-headers")
             current = { request, chunks: [], length: 0, body: undefined, offset: 0 }
           },
           /** Buffer incoming bytes only while the cumulative request limit permits. */
@@ -179,6 +184,7 @@ class HttpServerService {
           },
           /** Route a complete request while guarding against connection closure. */
           onResponse(response) {
+            service.#diagnostic?.("http-body")
             const state = current
             service.#respond(this, state, response, () => !service.#closed && current === state)
           },
@@ -198,6 +204,7 @@ class HttpServerService {
           },
           /** Invalidate pending asynchronous replies when the connection fails. */
           onError() {
+            service.#diagnostic?.("tcp-error")
             current = undefined
           },
         })
@@ -261,7 +268,8 @@ class HttpServerService {
       rawResponse.status = response.status
       rawResponse.headers = response.headers
       connection.respond(rawResponse)
-    } catch {
+    } catch (error) {
+      this.#diagnostic?.("response-error:" + (error?.name ?? "Error"))
       if (isCurrent()) connection.close()
     }
   }

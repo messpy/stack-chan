@@ -1,3 +1,4 @@
+import Timer from 'timer'
 import {
   angleToRawPosition,
   createM5StackChanServoConfig,
@@ -34,15 +35,22 @@ type M5StackChanServoDriverProps = Partial<{
   }
 }>
 
+let activeDriver: M5StackChanServoDriver | undefined
+export function getM5StackChanDriver() { return activeDriver }
+
 export class M5StackChanServoDriver {
   #pan: SCServo
   #tilt: SCServo
   #config: M5StackChanServoConfig
+  #positionPoll?: ReturnType<typeof Timer.set>
+  #pollingPosition = false
+  #lastKnownRotation?: Rotation
   #rotation: Rotation = { y: 0, p: 0, r: 0 }
   #rotationResult: Maybe<Rotation> = { success: true, value: this.#rotation }
   #rotationErrorResult: { success: false; reason?: string } = { success: false }
   #servoPower?: {
     setEnabled: (enabled: boolean) => void
+    diagnostics: () => unknown
   }
 
   constructor(param: M5StackChanServoDriverProps = {}) {
@@ -62,18 +70,40 @@ export class M5StackChanServoDriver {
         ...(param.pitchZeroPosition !== undefined ? { zeroPosition: param.pitchZeroPosition } : {}),
       },
     })
-    this.#pan = new SCServo({ id: this.#config.yaw.id, serial: this.#config.serial, awaitWriteResponse: true })
-    this.#tilt = new SCServo({ id: this.#config.pitch.id, serial: this.#config.serial, awaitWriteResponse: true })
+    activeDriver = this
+    this.#pan = new SCServo({ id: this.#config.yaw.id, serial: this.#config.serial, awaitWriteResponse: false })
+    this.#tilt = new SCServo({ id: this.#config.pitch.id, serial: this.#config.serial, awaitWriteResponse: false })
     if (param.servoPower?.type !== 'none') {
       this.#servoPower = new PY32ServoPower(param.servoPower?.pin ?? 0, param.servoPower?.address)
     }
   }
 
+  getDiagnostics(done: (result: unknown) => void) {
+    const power = this.#servoPower?.diagnostics()
+    this.#pan.readRawPosition((pan) => {
+      this.#tilt.readRawPosition((tilt) => done({ serial: this.#config.serial, power, pan, tilt }))
+    })
+  }
+
+  get lastKnownRotation() { return this.#lastKnownRotation }
+
   onAttached() {
     this.#servoPower?.setEnabled(true)
+    // Read the initial physical pose once. Repeated polling would share the
+    // half-duplex bus with movement commands and can corrupt servo replies.
+    this.#positionPoll = Timer.set(() => {
+      if (this.#pollingPosition) return
+      this.#pollingPosition = true
+      this.getRotation((result) => {
+        this.#pollingPosition = false
+        if (result.success === false) trace(`[m5stackchan-servo] position read failed: ${result.reason}\n`)
+      })
+    }, 500)
   }
 
   onDetached() {
+    if (this.#positionPoll) Timer.clear(this.#positionPoll)
+    this.#positionPoll = undefined
     this.#servoPower?.setEnabled(false)
   }
 
@@ -127,6 +157,7 @@ export class M5StackChanServoDriver {
         this.#rotation.y = yawAngle / RAD_TO_01_DEGREE
         this.#rotation.p = -(pitchAngle / RAD_TO_01_DEGREE)
         this.#rotation.r = 0.0
+        this.#lastKnownRotation = { ...this.#rotation }
         callback(this.#rotationResult)
       })
     })
@@ -152,6 +183,14 @@ class PY32ServoPower {
     expander.setDirection(this.#pin, true)
     expander.setPullMode(this.#pin, true)
     trace(`[m5stackchan-servo] configured PY32 servo power pin ${this.#pin}\n`)
+  }
+
+  diagnostics() {
+    try {
+      const expander = this.#expander
+      if (!expander) return { available: false }
+      return { available: true, version: expander.readRegister8(2), output: expander.getWriteValue(this.#pin), direction: expander.readRegister8(3) }
+    } catch (error) { return { error: String(error) } }
   }
 
   setEnabled(enabled: boolean) {
