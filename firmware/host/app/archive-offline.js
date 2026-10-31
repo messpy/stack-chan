@@ -1,3 +1,4 @@
+import Timer from 'timer'
 import { Container, Label, Text, Skin, Style } from 'piu/MC'
 import { uiFont } from 'ui-theme'
 import { createUIButton } from 'archive-ui-button'
@@ -9,10 +10,13 @@ let robot,
   playing = false,
   lastText = '',
   error = '',
-  minutes = 3
+  minutes = 3,
+  faceButtons,
+  menuPage = 0
 export function offlineStatus() {
   return {
     available: true,
+    faceButtonsVisible: !!faceButtons,
     speech: 'local-japanese-tts',
     recognition: false,
     playing,
@@ -48,7 +52,11 @@ export async function offlineAction(action) {
     robot.showBalloon(text)
     unlock = robot.audio.acquireExclusive()
     if (globalThis.amp) globalThis.amp.sampleRate = 24000
-    voice ??= new TTS({ volume: robot.audio.volume })
+    voice ??= new TTS({
+      volume: robot.audio.volume,
+      onPlayed: (power) => robot.face?.setMouthOpen(Math.min(1, power / 2000)),
+      onDone: () => robot.face?.setMouthOpen(0),
+    })
     await new Promise((resolve, reject) => voice.stream(text, robot.audio.volume, (e) => (e ? reject(e) : resolve())))
     return { spoken: true, text }
   } catch (e) {
@@ -60,10 +68,79 @@ export async function offlineAction(action) {
     actions.release()
   }
 }
+function closeFaceButtons() {
+  if (faceButtons) {
+    robot.ui.removeEffect(faceButtons)
+    faceButtons = undefined
+  }
+}
+function showFaceButtons(mode) {
+  closeFaceButtons()
+  const strip = new Container(null, { left: 0, right: 0, bottom: 0, height: 44 })
+  const fail = (e) => robot.showBalloon(String(e.message || '操作できませんでした'))
+  const add = (text, method, methods, left, width) =>
+    strip.add(
+      createUIButton(
+        { text, method, background: '#236a5a', textColor: '#ffffff' },
+        methods,
+        { left, top: 2, width, height: 38 },
+        fail,
+      ),
+    )
+  if (mode === 'timer') {
+    const methods = {
+      less: () => {
+        minutes = Math.max(1, minutes - 1)
+        showFaceButtons('timer')
+      },
+      more: () => {
+        minutes = Math.min(120, minutes + 1)
+        showFaceButtons('timer')
+      },
+      start: () => offlineAction('timer'),
+      back: () => showFaceButtons('home'),
+    }
+    add('−', 'less', methods, 4, 60)
+    add(minutes + '分 開始', 'start', methods, 68, 120)
+    add('＋', 'more', methods, 192, 60)
+    add('戻る', 'back', methods, 256, 60)
+  } else {
+    const choices = [
+      ['こんにちは', 'hello'],
+      ['今何時？', 'time'],
+      ['タイマー', 'timer'],
+      ['アラーム', 'alarm'],
+      ['時計設定', 'clock'],
+      ['できること', 'status'],
+    ]
+    const methods = {
+      hello: () => offlineAction('hello'),
+      time: () => offlineAction('time'),
+      status: () => offlineAction('status'),
+      timer: () => showFaceButtons('timer'),
+      alarm: () => actions.openAlarms(),
+      clock: () => robot.ui.application.behavior.launchMiniApp('archive-local-clock'),
+      next: () => {
+        menuPage = (menuPage + 1) % 3
+        showFaceButtons('home')
+      },
+      close: closeFaceButtons,
+    }
+    for (let i = 0; i < 2; i++) {
+      const [text, method] = choices[menuPage * 2 + i]
+      add(text, method, methods, 4 + i * 108, 104)
+    }
+    add('次へ', 'next', methods, 220, 56)
+    add('×', 'close', methods, 280, 36)
+  }
+  faceButtons = strip
+  robot.ui.addEffect(strip, 'archive-offline-choices')
+}
 export function openOffline() {
   actions.stopCloud()
   robot.ui.application.behavior.closeDrawer?.()
-  robot.ui.application.behavior.launchMiniApp('archive-offline')
+  robot.ui.showFace()
+  showFaceButtons('home')
   return offlineStatus()
 }
 export function startOffline(context, callbacks) {
@@ -76,81 +153,10 @@ export function startOffline(context, callbacks) {
   robot.ui.miniApps.register({
     id: 'archive-offline',
     title: 'オフライン',
-    create() {
-      const methods = {
-        hello: () => offlineAction('hello'),
-        time: () => offlineAction('time'),
-        status: () => offlineAction('status'),
-        timer: () => robot.ui.application.behavior.launchMiniApp('archive-offline-timer'),
-        alarm: () => actions.openAlarms(),
-        clock: () => robot.ui.application.behavior.launchMiniApp('archive-local-clock'),
-      }
-      const root = new Container(null, { left: 0, right: 0, top: 0, bottom: 0, skin: new Skin({ fill: 'white' }) })
-      root.add(
-        new Text(null, {
-          left: 8,
-          right: 8,
-          top: 2,
-          height: 35,
-          style,
-          string: 'ネット不要・ボタンでおしゃべり\n音声の聞き取りには未対応です',
-        }),
-      )
-      for (const [i, [text, method]] of [
-        ['こんにちは', 'hello'],
-        ['今何時？', 'time'],
-        ['タイマー', 'timer'],
-        ['アラーム', 'alarm'],
-        ['時計設定', 'clock'],
-        ['できること', 'status'],
-      ].entries())
-        root.add(
-          button(text, method, methods, {
-            left: i % 2 ? 164 : 8,
-            top: 42 + Math.floor(i / 2) * 46,
-            width: 148,
-            height: 40,
-          }),
-        )
-      return { content: root }
-    },
-  })
-  robot.ui.miniApps.register({
-    id: 'archive-offline-timer',
-    title: 'オフラインタイマー',
-    hidden: true,
-    create() {
-      const value = new Label(null, { left: 8, right: 8, top: 4, height: 36, style, string: minutes + ' 分' })
-      const methods = {
-        less: () => {
-          minutes = Math.max(1, minutes - 1)
-          value.string = minutes + ' 分'
-        },
-        more: () => {
-          minutes = Math.min(120, minutes + 1)
-          value.string = minutes + ' 分'
-        },
-        start: () => offlineAction('timer'),
-        stop: () => {
-          actions.tool('alarm_stop')
-        },
-      }
-      return {
-        content: new Container(null, {
-          left: 0,
-          right: 0,
-          top: 0,
-          bottom: 0,
-          skin: new Skin({ fill: 'white' }),
-          contents: [
-            value,
-            button('−1分', 'less', methods, { left: 8, top: 44, width: 148, height: 36 }),
-            button('＋1分', 'more', methods, { right: 8, top: 44, width: 148, height: 36 }),
-            button('開始して声で確認', 'start', methods, { left: 8, right: 8, top: 88, height: 42 }),
-            button('鳴っている音を停止', 'stop', methods, { left: 8, right: 8, top: 138, height: 42 }),
-          ],
-        }),
-      }
+    create(context) {
+      context.close()
+      Timer.set(openOffline, 0)
+      return { content: new Container(null, { left: 0, right: 0, top: 0, bottom: 0 }) }
     },
   })
   robot.ui.miniApps.register({
