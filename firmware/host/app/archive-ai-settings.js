@@ -50,7 +50,7 @@ export function startAISettings(robot, actions) {
               {
                 text:
                   (provider === 'ollama' ? 'Ollama Cloud' : provider === 'gemini' ? 'Gemini' : 'XiaoZhi') +
-                  (s.provider === provider ? ' ✓' : ''),
+                  (s.provider === provider ? ' [選択中]' : ''),
                 background: s.provider === provider ? '#167647' : '#596375',
                 textColor: '#ffffff',
                 method: 'selectAI',

@@ -108,7 +108,7 @@
       {
         "source": "../modules/ui/assets/fonts/k8x12",
         "size": 24,
-        "characters": "Stack-chan[\u30fb\uff3f\u30fb]0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ停止中",
+        "characters": "Stack-chan[\u30fb\uff3f\u30fb]0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ停止中%",
         "monochrome": true
       }
     ]

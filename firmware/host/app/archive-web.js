@@ -86,7 +86,7 @@ export function startWeb(context,callbacks,token){
       try{
         const d=actions.diagnostics(),w=d.wifi,a=d.ai;
         const states={off:'停止',identity:'話す人を選択待ち',waiting:'待機',connecting:'接続中',listening:'聞き取り中',speaking:'返答中',retrying:'再接続待ち',unconfigured:'未設定'};
-        text.string=tab===0?'Wi-Fi・USB\nWi-Fi: '+(w.connected?'接続済み':'未接続')+'\nIP: '+(w.ip||'なし')+'\n強度: '+(d.signal.rssi===null?'取得不可':d.signal.rssi+' dBm / '+d.signal.bars+'/4')+'\nUSB: '+(d.connection.usb?'PC接続':'PC未接続')+' / 自動OFFLINE '+(d.connection.enabled?'ON':'OFF'):
+        text.string=tab===0?'Wi-Fi・USB\nWi-Fi: '+(w.connected?'接続済み':'未接続')+'\nIP: '+(w.ip||'なし')+'\n強度: '+(d.signal.rssi===null?'取得不可':d.signal.rssi+' dBm / '+d.signal.bars+'/5')+'\nUSB: '+(d.connection.usb?'PC接続':'PC未接続')+' / 自動OFFLINE '+(d.connection.enabled?'ON':'OFF'):
           tab===1?'AI: '+a.provider+'\n設定: '+(a.configured?'登録済み':'未設定')+' / 会話 '+(a.enabled?'ON':'OFF')+'\n接続: '+(states[a.state]||'状態不明')+'\nエラー: '+(a.error?'あり（ログを確認）':'なし')+'\n'+(a.model||'XiaoZhiの設定モデル'):
           '音声・本体\n音量: '+d.volume.percent+'%\nマイク: '+(a.state==='listening'?'聞き取り中':'待機・停止')+' / 再生: '+(d.local.playing||a.state==='speaking'?'再生中':'停止')+'\n入力 '+a.audio.inputEvents+'回 / 出力 '+a.audio.outputEvents+'回\n時計: '+(d.clock.ready?'設定済み':'未設定');
       }catch(_){text.string='情報を取得できませんでした。\nもう一度「再取得」を押してください。';}

@@ -43,7 +43,8 @@ export async function offlineAction(action, options = {}) {
         ? '今は、' + s.parts.hour + '時' + s.parts.minute + '分です。'
         : '時計がまだ設定されていません。時計設定で合わせてね。'
     } else if (action === 'timer') {
-      actions.tool('timer_create', { seconds: minutes * 60, title: 'オフラインタイマー' })
+      const created=actions.tool('timer_create', { seconds: minutes * 60, title: 'オフラインタイマー' })
+      options.onTimerCreated?.(created)
       text = minutes + '分のタイマーを設定しました。'
     } else if (action === 'stop') {
       actions.tool('alarm_stop', {})
@@ -100,6 +101,7 @@ function showFaceButtons(mode) {
       ),
     )
   if (mode === 'timer') {
+    let started=false
     const methods = {
       less: () => {
         minutes = Math.max(1, minutes - 1)
@@ -109,7 +111,18 @@ function showFaceButtons(mode) {
         minutes = Math.min(120, minutes + 1)
         showFaceButtons('timer')
       },
-      start: () => offlineAction('timer'),
+      start: async () => {
+        if(started)return
+        started=true
+        let committed=false
+        try{
+          return await offlineAction('timer',{onTimerCreated:()=>{committed=true;if(faceButtons===strip)showFaceButtons('home')}})
+        }catch(error){
+          if(!committed)started=false
+          if(committed)throw new Error('タイマーは設定済みです。読み上げだけ失敗しました')
+          throw error
+        }
+      },
       back: () => showFaceButtons('home'),
     }
     add('−', 'less', methods, 4, 60)

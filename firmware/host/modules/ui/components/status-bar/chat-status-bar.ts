@@ -25,9 +25,9 @@ const iconTop = (barHeight - iconSize) / 2
 const defaultIconLeft = 8
 const faceStatusScale = 2
 const batteryIconLeft = 8
-const batteryIconWidth = 24 * faceStatusScale
-const batteryIconHeight = 16 * faceStatusScale
-const batteryIconTop = (barHeight - batteryIconHeight) / 2
+const batteryIconWidth = 32
+const batteryIconHeight = 20
+const batteryIconTop = 18
 const batteryStatusIconLeft = batteryIconLeft + batteryIconWidth + 4
 const clockWidth = 64 * faceStatusScale
 const clockLeft = (UI.screenWidth - clockWidth) / 2
@@ -247,19 +247,13 @@ class BatteryBehavior extends Behavior implements BatteryBehaviorContract {
 
   onDraw(port: PiuPort) {
     const color = UI.colors.text
-    port.fillColor(color, 0, 2 * faceStatusScale, 20 * faceStatusScale, 2 * faceStatusScale)
-    port.fillColor(color, 0, 12 * faceStatusScale, 20 * faceStatusScale, 2 * faceStatusScale)
-    port.fillColor(color, 0, 4 * faceStatusScale, 2 * faceStatusScale, 8 * faceStatusScale)
-    port.fillColor(color, 18 * faceStatusScale, 4 * faceStatusScale, 2 * faceStatusScale, 8 * faceStatusScale)
-    port.fillColor(color, 20 * faceStatusScale, 6 * faceStatusScale, 3 * faceStatusScale, 4 * faceStatusScale)
+    port.fillColor(color, 0, 2, 28, 2)
+    port.fillColor(color, 0, 16, 28, 2)
+    port.fillColor(color, 0, 4, 2, 12)
+    port.fillColor(color, 26, 4, 2, 12)
+    port.fillColor(color, 28, 7, 3, 6)
     for (let index = 0; index < this.#segments; index += 1) {
-      port.fillColor(
-        color,
-        (3 + index * 4) * faceStatusScale,
-        5 * faceStatusScale,
-        3 * faceStatusScale,
-        6 * faceStatusScale,
-      )
+      port.fillColor(color, 3 + index * 6, 5, 4, 10)
     }
   }
 }
@@ -465,7 +459,7 @@ export const ChatStatusBar = Container.template((options: ChatStatusBarOptions =
     height: barHeight,
     skin: skins.bar,
     contents: [
-      new Label(null, {name:'wifiBadge',left:2,top:0,width:92,height:13,active:false,visible:false,string:'',style:new Style({font:'k8x12-12',color:'#167647',horizontal:'left',vertical:'middle'})}),
+      new Label(null, {name:'wifiBadge',left:2,top:0,width:60,height:13,active:false,visible:false,string:'',style:new Style({font:'k8x12-12',color:'#167647',horizontal:'left',vertical:'middle'})}),
       new ActionButton(
         {
           name: 'backButton',

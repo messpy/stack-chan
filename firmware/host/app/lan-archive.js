@@ -1,3 +1,4 @@
+import {captureFrame,screenCommand,showScreen} from 'archive-screen';
 import {startDebugDrain,armDebugDrain,debugLogStatus} from 'archive-debug';
 import {startChecks,checkStatus} from 'archive-checks';
 import {Emotion} from 'face-state';
@@ -172,6 +173,17 @@ export function startArchive(robot) {
         const action=request.op.slice(7),part=imageUploadCommand(action,request.args||{},Base64.decode);
         if(action==='finish'){const name='photo-'+id()+'.jpg';save(name,[part.buffer]);result={name,width:part.width,height:part.height,...await describeImage(robot,name,part.buffer,request.args?.question)};}else result=part;
       }
+      else if(request.op==='/screen/begin')result=await captureFrame(robot);
+      else if(request.op==='/screen/read')result={base64:Base64.encode(screenCommand('read',request.args))};
+      else if(request.op==='/screen/tap'){
+        const {x,y}=request.args||{};
+        if(!Number.isInteger(x)||!Number.isInteger(y)||x<0||x>=320||y<0||y>=240)throw new Error('Invalid touch coordinates');
+        if(directChatStatus().enabled||(busy&&!reminderStatus().ringing))throw new Error('本体が使用中です');
+        const view=globalThis.screen.context;
+        view.onTouchBegan(0,x,y,Time.ticks);await new Promise(resolve=>Timer.set(resolve,60));view.onTouchEnded(0,x,y,Time.ticks);
+        result={tapped:true};
+      }
+      else if(request.op==='/screen/show'){if(busy||directChatStatus().enabled||reminderStatus().ringing)throw new Error('本体の操作が終わってから画面を確認してください');result=showScreen(robot,request.args?.scene);await new Promise(resolve=>Timer.set(resolve,150));}
       else if(request.op==='/debug/status')result=debugLogStatus();
       else if(request.op==='/offline/auto')result=autoOffline(request.args?.enabled);
       else if(request.op==='/offline/status')result=offlineStatus();

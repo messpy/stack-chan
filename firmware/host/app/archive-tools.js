@@ -48,11 +48,11 @@ export function callDeviceTool(name,args={}){
   if(name==='timer_create'&&!ready())item.clockPending=true;
   changeSettings(data=>{data.reminders=compact(data.reminders);data.reminders.push(item);});
   if(name==='timer_create')liveTimers.set(item.id,{started:Time.ticks,duration:args.seconds*1000});
-  trace('[tools] reminder scheduled\n');
+  trace('[tools] '+item.kind+' scheduled id='+item.id+(item.kind==='timer'?' seconds='+args.seconds:'')+'\n');
   return item;
 }
 async function notify(item){
-  ringing=true;stopped=false;
+  ringing=true;stopped=false;trace('[tools] '+item.kind+' notification begin id='+item.id+'\n');
   try{
     try{robot.lightRainbow?.('head');}catch(_){trace('[tools] rainbow LED unavailable\n');}
     let visible=false;try{visible=alarmDisplay?.show(item)===true;}catch(_){trace('[tools] alarm screen unavailable\n');}if(!visible)robot.showBalloon(item.title);
@@ -62,7 +62,7 @@ async function notify(item){
       await wait(180);
     }
     changeSettings(data=>{data.reminders=data.reminders.map(row=>row.id===item.id&&row.status==='pending'?finishReminder(row,Date.now()):row);});
-    trace('[tools] reminder notification completed\n');
+    trace('[tools] '+item.kind+' notification completed id='+item.id+'\n');
   }catch(_){trace('[tools] reminder notification failed; kept pending\n');}
   finally{try{robot.lightOff?.('head');}catch(_){}try{alarmDisplay?.close();}catch(_){}robot.hideBalloon();ringing=false;release();}
 }

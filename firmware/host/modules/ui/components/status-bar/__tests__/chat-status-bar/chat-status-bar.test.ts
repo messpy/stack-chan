@@ -136,8 +136,8 @@ assert((baseTimeSize.width ?? 0) > 0, 'base time width should be measurable')
 assert((baseTimeSize.height ?? 0) > 0, 'base time height should be measurable')
 equal(appBarTimeSize?.width, (baseTimeSize.width ?? 0) * 2, 'AppBar time should render at twice the base width')
 equal(appBarTimeSize?.height, (baseTimeSize.height ?? 0) * 2, 'AppBar time should render at twice the base height')
-equal(battery.width, 48, 'battery status should use a double-width drawing surface')
-equal(battery.height, 32, 'battery status should use a double-height drawing surface')
+assert((battery.width ?? 44) < 44, 'battery status should fit inside one compact control width')
+assert((battery.height ?? 32) < 32, 'battery status should leave room for the WiFi label above it')
 const batteryDrawBounds = { width: 0, height: 0 }
 battery.behavior?.onDraw?.({
   fillColor(_color: unknown, x: number, y: number, width: number, height: number) {
@@ -145,8 +145,8 @@ battery.behavior?.onDraw?.({
     batteryDrawBounds.height = Math.max(batteryDrawBounds.height, y + height)
   },
 })
-assert(batteryDrawBounds.width > (battery.width ?? 0) * 0.9, 'battery drawing should fill the double-width surface')
-assert(batteryDrawBounds.height > (battery.height ?? 0) * 0.8, 'battery drawing should fill the double-height surface')
+assert(batteryDrawBounds.width > (battery.width ?? 0) * 0.9, 'battery drawing should fill the compact surface')
+assert(batteryDrawBounds.height > (battery.height ?? 0) * 0.8, 'battery drawing should fill the compact surface')
 equal(statusIcon.x, 8, 'persistent microphone status should use the natural top-left position')
 assert(
   (statusIndicator.x ?? 0) > (battery.x ?? 0) + (battery.width ?? 0),

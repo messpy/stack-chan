@@ -104,6 +104,9 @@ async function main() {
   try {
     if (Modules.has('archive-debug')) (Modules.importNow('archive-debug') as { installDebugLog: () => void }).installDebugLog()
   } catch { trace('[debug] log initialization unavailable\n') }
+  try {
+    if (Modules.has('archive-screen')) (Modules.importNow('archive-screen') as { installScreenCapture: () => void }).installScreenCapture()
+  } catch { trace('[screen] capture initialization unavailable\n') }
   trace('[main] start\n')
   let dockRuntime: StackchanDockRuntime | undefined
   let context: StackchanContext | undefined
