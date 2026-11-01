@@ -55,6 +55,7 @@ const BALLOON_OPTION_KEYS = [
   'rows',
   'marquee',
   'speed',
+  'holdMs',
 ] as const
 
 type SpeechBalloonBehavior = {

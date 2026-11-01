@@ -58,6 +58,7 @@ type BalloonOptions = {
   space?: number
   radius?: number
   speed?: number
+  holdMs?: number
 }
 
 type WithSkin = PiuContent & { skin?: unknown }
@@ -176,6 +177,7 @@ export const SpeechBalloon = Container.template((opts: BalloonOptions = {}) => {
       completionTimer = undefined
     }
   }
+  const holdMs = Number.isFinite(opts.holdMs) ? Math.max(1000, Math.min(120000, opts.holdMs!)) : 5000
   const completeAfter = (milliseconds: number) => {
     if (!opts.onComplete) return
     cancelCompletion()
@@ -358,8 +360,11 @@ export const SpeechBalloon = Container.template((opts: BalloonOptions = {}) => {
 
       updateText(self: PiuContainer, text: string) {
         if (marqueeModel && marqueeLabel && marqueeView) {
-          if (!marqueeModel.setText(text, Math.max(1, resolveWidth(self) - paddingX * 2))) return
-          completeAfter(5000)
+          if (!marqueeModel.setText(text, Math.max(1, resolveWidth(self) - paddingX * 2))) {
+            if (opts.holdMs !== undefined) completeAfter(holdMs)
+            return
+          }
+          completeAfter(holdMs)
           marqueeView.stop()
           marqueeView.time = 0
           lastTick = 0
@@ -380,7 +385,7 @@ export const SpeechBalloon = Container.template((opts: BalloonOptions = {}) => {
         if (textInitialized && bodyText.string === nextText) return
         textInitialized = true
         bodyText.string = nextText
-        completeAfter(5000)
+        completeAfter(holdMs)
         if (fixedHeight === undefined) {
           const nextHeight = resolveHeight(self, text ?? '')
           applyHeight(self as ResizableContainer, nextHeight)
@@ -398,7 +403,7 @@ export const SpeechBalloon = Container.template((opts: BalloonOptions = {}) => {
         const changed = nextLines.length !== currentLines.length || nextLines.some((line, i) => line !== currentLines[i])
         currentLines = nextLines
         this.ensureParts(self)
-        if (changed) completeAfter(5000)
+        if (changed) completeAfter(holdMs)
         for (let row = 0; row < rowLabels.length; row++) {
           const next = currentLines[row] ?? ''
           if (rowLabels[row].string !== next) rowLabels[row].string = next
@@ -413,7 +418,7 @@ export const SpeechBalloon = Container.template((opts: BalloonOptions = {}) => {
       onDisplaying(content: PiuContainer) {
         this.ensureParts(content)
         this.updatePalette(currentFace)
-        completeAfter(5000)
+        completeAfter(holdMs)
       }
 
       onUndisplaying(_content: PiuContainer) {

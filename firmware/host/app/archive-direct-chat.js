@@ -56,11 +56,12 @@ let photoHandler, modeChanged
 let greetingPending = true,
   conversationProviderSeen,
   introText = ''
-let identityNotice='',subtitleAt=0
+let identityNotice='',subtitleAt=0,lastSubtitle=''
 const enrollment = new VoiceRegistration()
 function resetTranscripts() {
   input = ''
   output = ''
+  lastSubtitle = ''
   subtitleAt = 0
   lastInputId = ''
   introText = ''
@@ -390,6 +391,8 @@ export function setChatMode(on) {
 function closeChat() {
   identityNotice=''
   microphoneIndicator(false)
+  conversationIndicator('off')
+  robot.face?.setMouthOpen?.(0)
   setXiaoZhiVision(null)
   generation++
   connecting = false
@@ -422,9 +425,9 @@ function failed(reason) {
     if (secret) detail = detail.split(secret).join('[redacted]')
   detail = detail.slice(0, 160)
   microphoneIndicator(false)
+  conversationIndicator('off')
   state = 'retrying'
   retryAt = Date.now() + retryDelay
-  conversationIndicator('off')
   retryDelay = Math.min(60000, retryDelay * 2)
   Timer.set(() => {
     if (generation === failedGeneration && chat === failedChat) {
@@ -675,6 +678,7 @@ async function connect() {
             }, 0)
           }
           if (value === ChatState.CONNECTED || value === ChatState.SPEAKING) {
+            if(lastSubtitle){robot.showBalloon(lastSubtitle,{bottom:48,holdMs:15000});lastSubtitle=''}
             const becameReady = state !== 'listening'
             state = 'listening'
             microphoneAt=Date.now()
@@ -699,19 +703,21 @@ async function connect() {
           audioStats.inputPeak = Math.max(audioStats.inputPeak, level || 0)
           audioStats.lastInputAt = Date.now()
         },
+        onEmotionChanged(emotion){robot.face?.setEmotion?.(({neutral:0,angry:1,sad:2,happy:3,laughing:3,funny:3,sleepy:4})[String(emotion).toLowerCase()]??0)},
         onOutputLevelChanged(level) {
+          robot.face?.setMouthOpen?.(Math.min(1,Math.max(0,level||0)/8000))
           audioStats.outputEvents++
           audioStats.outputPeak = Math.max(audioStats.outputPeak, level || 0)
           audioStats.lastOutputAt = Date.now()
         },
         onInputTranscript(text, more) {
           if (chat !== instance) return
+          if (text) conversationIndicator(more ? 'transcribing' : 'thinking')
+          else if (!more && input) conversationIndicator('thinking')
           input = (input + (text || '')).slice(-4096)
           if (!more && input) {
             audioStats.recognizedEvents++;audioStats.lastTranscriptAt=Date.now()
             if (input === introText) {
-          if (text) conversationIndicator(more ? 'transcribing' : 'thinking')
-          else if (!more && input) conversationIndicator('thinking')
               input = ''
               return
             }
@@ -737,28 +743,30 @@ async function connect() {
         },
         onOutputTranscript(text, more) {
           if (chat !== instance) return
+          if (text) conversationIndicator('off')
           if (more && text === '') output = ''
           else output = (output + (text || '')).slice(-4096)
-          if (!more && output) {
-            if (!enrollment.active) {
-          if (text) conversationIndicator('off')
-              archive('output', output)
           if (text && !enrollment.active && (Date.now()-subtitleAt>=250 || !more)) {
-            robot.showBalloon(output)
+            lastSubtitle=output
+            robot.showBalloon(output,{bottom:48,holdMs:60000})
             subtitleAt=Date.now()
           }
-              robot.showBalloon(output)
+          if (!more && output) {
+            if (!enrollment.active) {
+              archive('output', output)
+              lastSubtitle=output
+              robot.showBalloon(output,{bottom:48,holdMs:60000})
             }
             output = ''
           }
         },
         onFunctionCall(call, name, args) {
           if (chat !== instance || enrollment.active) return
+          conversationIndicator('thinking')
           trace('[chat-tool] begin '+name+'\n')
           Promise.resolve()
             .then(async () => {
               if (provider === 'ollama' && name === 'ollama_reply') {
-          conversationIndicator('thinking')
                 if (ollamaBusy) throw new Error('Ollama Cloudで回答中です')
                 ollamaBusy = true
                 try {
@@ -832,6 +840,26 @@ export async function provisionDirectChat() {
   await provision()
   return { configured: true }
 }
+export function requestListening(){
+  if(!enabled())setChatMode(true)
+  if(chat && state==='listening'){
+    chat.setMicrophoneEnabled(true)
+    chat.startListening('auto')
+    microphoneIndicator(false)
+    microphoneIndicator(true)
+    robot.showBalloon('聞いています。どうぞ話してください',{bottom:48})
+  }else{
+    // Restart a stalled/busy session without registering the person again or
+    // generating a greeting over their first words.
+    closeChat()
+    greetingPending=false
+    state='waiting'
+    retryAt=0
+    robot.showBalloon('聞き取りを準備しています。緑になったら話してください',{bottom:48})
+    void connect()
+  }
+  trace('[direct-chat] manual listening requested\n')
+}
 let speakerStrip, speakerPage=0, speakerExpanded=false
 function showSpeakerStrip(){
   if(speakerStrip)robot.ui.removeEffect(speakerStrip)
@@ -839,7 +867,7 @@ function showSpeakerStrip(){
   const strip=new Container(null,{left:4,right:4,bottom:4,height:speakerExpanded?76:36})
   const add=(label,fn,left,width,top=0)=>strip.add(new ActionButton({label,onTap:()=>{try{fn()}catch(e){robot.showBalloon(String(e.message||'選択できませんでした'))}}},{left,width,top,height:34}))
   const person=selected?.id?people.find(p=>p.id===selected.id):recent
-  add(selected?.guest?'ゲスト':person?((selected?'会話中: ':'前回: ')+person.name):'名前を教えてね',()=>{if(person)selectSpeaker(person);else openSpeakerChooser()},0,268)
+  add(selected?.guest?'ゲスト':person?((selected?'会話中: ':'前回: ')+person.name):'名前を教えてね',()=>{if(selected)requestListening();else if(person)selectSpeaker(person);else openSpeakerChooser()},0,268)
   add('^',()=>{speakerExpanded=!speakerExpanded;showSpeakerStrip()},272,40)
   if(speakerExpanded){const others=people.filter(p=>p.id!==selected?.id);const p=others[speakerPage%Math.max(1,others.length)];add(p?p.name:'登録済みの人なし',()=>{if(p){selectSpeaker(p);speakerExpanded=false;showSpeakerStrip()}},0,224,40);add('次',()=>{speakerPage++;showSpeakerStrip()},228,84,40)}
   speakerStrip=strip;robot.ui.addEffect(strip,'archive-speaker-strip')
@@ -995,11 +1023,11 @@ export async function testDirectConnection(provider = chatProvider(), options = 
         finished = true
         if(options.recognition)try{instance?.setMicrophoneEnabled(false);}catch(_){}
         microphoneIndicator(false)
+        conversationIndicator('off')
         Timer.clear(timeout)
         Timer.clear(cancelTimer)
         Timer.set(() => {
           try {
-        conversationIndicator('off')
             instance?.close()
           } catch (_) {}
           error ? reject(error) : resolve({ connected: true, provider, microphoneTransmission: !!options.recognition, transcript })

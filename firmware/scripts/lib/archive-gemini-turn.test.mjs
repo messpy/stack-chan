@@ -35,3 +35,7 @@ test('final subtitle text is delivered before the completion delimiter',()=>{
  const messages=m.messages.filter(message=>message.id==='receiveOutputText');
  assert.deepEqual(messages.map(message=>[message.text,!!message.more]),[['こんにちは',true],['',false]]);
 });
+
+test('explicit listening button rearms microphone transmission without generating speech',()=>{
+ const m=new context.Model();m.speaking=false;m.startListening();assert.equal(m.speaking,true);assert.equal(m.lastSent,undefined);
+});

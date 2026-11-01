@@ -278,6 +278,8 @@ export type LifecycleCapability = {
 export type BalloonTail = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 
 export type ShowBalloonOptions = {
+  /** Time to retain the latest text before dismissal, in milliseconds. */
+  holdMs?: number
   /** Single-line one-pass scroll for long text. Default true in runtime showBalloon. */
   marquee?: boolean
   /** Marquee speed in pixels per second. */

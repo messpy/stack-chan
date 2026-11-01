@@ -231,3 +231,9 @@ const latest=memory.deviceHistory({limit:100}).items;assert.equal(latest.length,
 assert.deepEqual(latest.map(m=>m.id),Array.from({length:10},(_,i)=>'cursor-tie-'+String(24-i).padStart(2,'0')));
 const alicePage=memory.deviceHistory({user_id:alice.id}).items;assert.equal(alicePage.length,10);assert.ok(alicePage.every(m=>Number(m.id.slice(-2))%2===0));
 console.log('Device history: newest ten only, stable equal-time ordering and person isolation: PASS');
+
+let manualEnabled=false,manualMode='';const personBefore=JSON.stringify(memory.currentSpeaker());
+c.manualChat={setMicrophoneEnabled(value){manualEnabled=value},startListening(mode){manualMode=mode}};
+data.chatMode=true;vm.runInContext("chat=manualChat;state='listening';requestListening()",c);
+assert.equal(manualEnabled,true);assert.equal(manualMode,'auto');assert.equal(JSON.stringify(memory.currentSpeaker()),personBefore);assert.equal(vm.runInContext('chat===manualChat',c),true);
+console.log('PASS: tap to listen rearms the current session without re-registering or changing the person');

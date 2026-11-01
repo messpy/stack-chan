@@ -4,6 +4,11 @@ import GoogleGeminiLiveModel from 'googleGeminiLiveModel';
 import {geminiSetup,monoPCM} from 'archive-gemini-protocol';
 class ArchiveGeminiLiveModel extends GoogleGeminiLiveModel {
   configure(message){super.configure(message);this.path='/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key='+encodeURIComponent(message.apiKey||'');this.setup=geminiSetup(message.modelID,message.functions||[],message.instructions);}
+  startListening() {
+    this.speaking=true;
+    this.inputStats=null;
+    trace('[gemini] manual listening armed\n');
+  }
   sendAudio(message) {
     if(!this.speaking)return;
     const pcm=monoPCM(this.inputBuffer,message.offset,message.size,message.channels??1);
