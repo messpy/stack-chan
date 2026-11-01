@@ -11,3 +11,16 @@ Node・Moddable・ESP-IDFの環境を読み込み、npmの公式ラッパーで�
 ビルドのみは `./scripts/update-archive.sh --build-only`。直前に成功したビルドを変更せず再書き込みする場合のみ `./scripts/update-archive.sh --flash-only` を使えます。通常は引数なしで実行してください。詳細出力はログへ保存し、端末には進行と成否だけを表示します。ログはGit対象外の `firmware/dist/update-logs/` に保存され、同時更新はロックで防ぎます。プライベートmanifestや認証情報を表示する処理はありません。ログはローカルで保管してください。
 
 このPCのSDKパスを既定値にしています。別PCでは `STACKCHAN_NODE_BIN`、`STACKCHAN_XS_ENV`、`STACKCHAN_IDF_ENV` で変更できます。USB権限とsystemdユーザーセッションが必要です。古い生成物を毎回削除しないため、2回目以降は変更部分が中心のビルドになります。SDK・ネイティブコード変更時は時間がかかります。
+
+
+## ユーザー実行で更新する運用
+
+今後、Codexは修正とテストを終えたところで「実行待ち」と伝えて停止します。ユーザーが明示的に書き込みを依頼した場合を除き、Codexがビルドの進行を何度も確認する運用はしません。
+
+デスクトップの「StackChan 更新」を開き、Enterで開始します。端末は準備中・ビルド中・書き込み中・復帰中・成功/失敗を表示し、最後まで開いたままになります。「StackChan 更新.sh」も同じ起動用シェルです。
+
+`firmware/dist/update-logs/latest.json` に最新の状態とログの絶対パスを原子的に保存します。`state` は `preparing`, `building`, `flashing`, `restoring`, `built`（ビルドのみ成功）, `succeeded`（書き込み成功）, `failed`。`exit_code`, `run_id`, `updated_at`, `needs_review` も含みます。電源断・強制killで途中の状態が残った場合は完了とみなさず、プロセスが残っているか確認してください。状態は `scripts/update-archive.sh --status` でも読めます。
+
+完了したらこのチャットで「更新が終わった。ログ見て」と伝えてください。Codexはlatest.jsonを一度読み、該当ログの必要部分だけを確認します。書き込み成功は会話・タッチ・表示の実機検証成功を意味しません。端末は会話内容やAPIキーを含む可能性のある詳細ログを外部送信せず、状態ファイルにもコピーしません。
+
+シェルはCodex CLI/APIを起動せず、ローカル処理だけで動作します。状態ファイルの変更でチャットが自動再開する連携は未設定です。
