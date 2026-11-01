@@ -30,8 +30,17 @@ export function currentSpeaker(){if(guestSpeaker)return {guest:true};return acti
 // Kana-based matching stays local; kanji readings are supplied by the AI tool.
 export function nameReading(value){
   let name=String(value||'').trim();
-  if(typeof name.normalize==='function')name=name.normalize('NFKC');
+  // XS exposes normalize() even when Unicode normalization is not built in.
+  // Do not call it: Japanese input then throws RangeError("not built-in").
+  const half='ｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ';
+  const full='ヲァィゥェォャュョッーアイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワン';
+  name=name.replace(/[ｦ-ﾝ]/g,c=>full[half.indexOf(c)]);
+
   name=name.replace(/[ァ-ヶ]/g,c=>String.fromCharCode(c.charCodeAt(0)-0x60)).replace(/[\s・･]/g,'').replace(/(?:さん|くん|ちゃん)$/,'');
+  name=name.replace(/([ぁ-ゖ])[ﾞﾟ\u3099\u309a]/g,(whole,base)=>{
+    const semi=/[ﾟ\u309a]$/.test(whole),from=semi?'はひふへほ':'かきくけこさしすせそたちつてとはひふへほう',to=semi?'ぱぴぷぺぽ':'がぎぐげござじずぜぞだぢづでどばびぶべぼゔ';
+    const index=from.indexOf(base);return index<0?whole:to[index];
+  });
   return /^[ぁ-ゖー]+$/.test(name)?name:'';
 }
 function distance(a,b){
@@ -74,7 +83,7 @@ export function identifySpeaker(args){
   const person=matches[0]||saveUser({name:reading||name,name_reading:reading||undefined,nicknames:reading&&reading!==name?[name]:[],kind:'person',source_message_ids:args.source_message_id?[args.source_message_id]:[]}).users[0];
   activeSpeaker=person.id;guestSpeaker=false;
   if(args.source_message_id){const source=text(args.source_message_id,100);db('UPDATE messages SET speaker_id=? WHERE id=? AND role=?',[person.id,source,'user']);db('INSERT OR IGNORE INTO message_context(message_id,user_id) SELECT id,? FROM messages WHERE id=?',[person.id,source]);}
-  return {identified:true,newUser:!matches.length,person,now:Date.now(),timezone:'Asia/Tokyo',recent:history({user_id:person.id,limit:3}).items};
+  return {identified:true,instruction:'話者は確定しました。名前を聞き直したり再確認せず、名前を呼んで短く挨拶し通常会話へ進んでください。',newUser:!matches.length,person,now:Date.now(),timezone:'Asia/Tokyo',recent:history({user_id:person.id,limit:3}).items};
 }
 export function recordMemory(event){const owner=Object.hasOwn(event,'speakerId')?event.speakerId:activeSpeaker;db('INSERT OR IGNORE INTO messages(id,role,text,created,speaker_id) VALUES(?,?,?,?,?)',[event.id,event.role,event.text,event.created,event.role==='assistant'?'stackchan-self':owner]);if(owner)db('INSERT OR IGNORE INTO message_context(message_id,user_id) VALUES(?,?)',[event.id,owner]);if(typeof event.image==='string'&&/^photo-[a-z0-9-]+\.jpg$/.test(event.image))db('INSERT OR REPLACE INTO message_media(message_id,filename) VALUES(?,?)',[event.id,event.image]);}
 export function history(args={}){
