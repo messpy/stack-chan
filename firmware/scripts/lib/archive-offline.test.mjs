@@ -60,3 +60,7 @@ assert.equal(bootResult.text,'スタックチャン');
 assert.equal(spoken.at(-1).text,'すたっくちゃん。');
 assert.equal(offline.offlineStatus().playing,false);
 console.log('PASS: boot announcement says only the device name and releases audio after playback');
+
+const bootPolicy=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(new URL('../../host/app/archive-offline-speech.js',import.meta.url))).toString('base64'));
+assert.equal(bootPolicy.bootSpeechEnabled({}),true);assert.equal(bootPolicy.bootSpeechEnabled({bootSpeak:true}),true);assert.equal(bootPolicy.bootSpeechEnabled({bootSpeak:false}),false);
+console.log('PASS: startup local speech defaults on and respects an explicit off setting');

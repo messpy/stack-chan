@@ -1,3 +1,4 @@
+export function bootSpeechEnabled(settings={}) { return settings.bootSpeak !== false }
 const digits = ['', 'いち', 'に', 'さん', 'よん', 'ご', 'ろく', 'なな', 'はち', 'きゅう']
 const hours = [
   'れいじ',

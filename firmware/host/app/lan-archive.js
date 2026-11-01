@@ -1,3 +1,4 @@
+import {bootSpeechEnabled} from 'archive-offline-speech';
 import {startHistoryUI} from 'archive-history-ui';
 import {startTimerUI} from 'archive-timer-ui';
 import {createAlarmDance} from 'archive-alarm-motion';
@@ -315,7 +316,7 @@ export function startArchive(robot) {
     finally{usbBusy=false;}
   },5);
 
-  try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},args=>photo(robot,{...args,analyze:true},true),on=>{if(on){if(offlineStatus().playing)throw new Error('読み上げが終わってから会話を開始してください');closeOffline();}},async()=>{if(getSettings().bootSpeak===true){trace('[boot] speaking name\n');await offlineAction('boot');robot.hideBalloon();}});}catch(_){trace('[direct-chat] initialization unavailable\n');}
+  try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},args=>photo(robot,{...args,analyze:true},true),on=>{if(on){if(offlineStatus().playing)throw new Error('読み上げが終わってから会話を開始してください');closeOffline();}},async()=>{if(bootSpeechEnabled(getSettings())){trace('[boot] speaking name\n');await offlineAction('boot');robot.hideBalloon();}});}catch(_){trace('[direct-chat] initialization unavailable\n');}
   startChecks(robot,{
     prepare(){if((busy&&!directChatStatus().busy)||offlineStatus().playing||reminderStatus().ringing)throw new Error('busy');if(directChatStatus().enabled)setChatMode(false);closeOffline();},
     async test(kind,report,stopped){
@@ -367,7 +368,7 @@ export function startArchive(robot) {
   },1000);
   startWeb(robot,{
     autoOffline,openOffline,closeOffline,
-    bootSpeech(value){if(typeof value==='boolean')changeSettings(s=>{s.bootSpeak=value});return getSettings().bootSpeak===true;},
+    bootSpeech(value){if(typeof value==='boolean')changeSettings(s=>{s.bootSpeak=value});return bootSpeechEnabled(getSettings());},
     diagnostics:()=>({wifi:getSettingsStatus(),signal:wifiDisplayStatus(),ai:directChatStatus(),volume:getVolume(),connection:autoOffline(),local:offlineStatus(),clock:localClockStatus()}),
     execute,
     read(name,offset,length,whole=false){
