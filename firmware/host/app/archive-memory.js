@@ -26,7 +26,7 @@ function db(sql,args=[]){initialize();return mounted(()=>run(sql,args));}
 function text(value,max=512){return typeof value==='string'?value.trim().slice(0,max):'';}
 function profile(row){return {...row,lastConversation:row.lastConversation||null,nicknames:JSON.parse(row.nicknames),likes:JSON.parse(row.likes)};}
 export function beginConversation(){activeSpeaker=null;guestSpeaker=false;activeProfile=null;}
-export function currentSpeaker(){if(guestSpeaker)return {guest:true};if(!activeSpeaker)return null;if(!activeProfile)activeProfile=users({id:activeSpeaker}).users[0]||null;return activeProfile;}
+export function currentSpeaker(){if(guestSpeaker)return activeProfile||{guest:true};if(!activeSpeaker)return null;if(!activeProfile)activeProfile=users({id:activeSpeaker}).users[0]||null;return activeProfile;}
 // Kana-based matching stays local; kanji readings are supplied by the AI tool.
 export function nameReading(value){
   let name=String(value||'').trim();
@@ -64,15 +64,17 @@ export function nameSimilarity(left,right){
   return .55;
 }
 export function identifySpeaker(args){
-  if(args?.guest===true){activeSpeaker=null;activeProfile=null;guestSpeaker=true;return {identified:false,guest:true};}
-  const name=text(args?.name,80);if(!name)throw new Error('本人の名前を確認してください');
+  if(args?.guest===true){activeSpeaker=null;guestSpeaker=true;const name=nameReading(args.name_reading||args.name)||text(args.name,80);activeProfile=name?{guest:true,name,unregistered:true}:null;return {identified:false,guest:true,canContinue:true,displayName:name||'ゲスト'};}
+  const byID=args.id?users({id:args.id}).users.filter(p=>p.kind==='person'):[];
+  const name=text(args?.name||byID[0]?.name,80);if(!name)throw new Error('本人の名前を確認してください');
   const reading=nameReading(args.name_reading||name);
-  if(/[一-龯]/.test(name)&&!reading&&!args.id)throw new Error('漢字の推測表記で登録せず、本人の名前をひらがなのname_readingで渡してください');
-  const people=users(args.id?{id:args.id}:{limit:50}).users.filter(p=>p.kind==='person');
+  if(/[一-龯]/.test(name)&&!reading&&!byID.length)throw new Error('漢字の推測表記で登録せず、本人の名前をひらがなのname_readingで渡してください');
+  // An unknown/stale/model-invented ID is not proof that the person is absent.
+  // Recover by spoken name and reading; never use that ID for a new profile.
+  const people=byID.length?byID:users({limit:50}).users.filter(p=>p.kind==='person');
   const exact=p=>p.name.toLowerCase()===name.toLowerCase()||p.nicknames.some(n=>n.toLowerCase()===name.toLowerCase());
   const readingMatches=reading?people.filter(p=>[p.name_reading,p.name,...p.nicknames].some(n=>nameSimilarity(reading,n)===1)):[];
-  let matches=args.id?people.filter(p=>p.id===args.id):(readingMatches.length?readingMatches:people.filter(exact));
-  if(args.id&&!matches.length)throw new Error('人物IDが見つかりません');
+  let matches=byID.length?byID:(readingMatches.length?readingMatches:people.filter(exact));
   if(!matches.length&&reading){
     const ranked=people.map(person=>({person,score:Math.max(...[person.name_reading,person.name,...person.nicknames].map(n=>nameSimilarity(reading,n)))})).filter(p=>p.score>0).sort((a,b)=>b.score-a.score);
     if(ranked.length&&ranked[0].score>=.86&&(!ranked[1]||ranked[0].score-ranked[1].score>=.1))matches=[ranked[0].person];
@@ -87,7 +89,7 @@ export function identifySpeaker(args){
   }
   activeSpeaker=person.id;activeProfile=person;guestSpeaker=false;
   if(args.source_message_id){const source=text(args.source_message_id,100);db('UPDATE messages SET speaker_id=? WHERE id=? AND role=?',[person.id,source,'user']);db('INSERT OR IGNORE INTO message_context(message_id,user_id) SELECT id,? FROM messages WHERE id=?',[person.id,source]);}
-  return {identified:true,instruction:'話者は確定しました。名前を聞き直したり再確認せず、名前を呼んで短く挨拶し通常会話へ進んでください。',newUser:!matches.length,person,now:Date.now(),timezone:'Asia/Tokyo',recent:history({user_id:person.id,limit:3}).items};
+  return {identified:true,canContinue:true,displayName:person.name,recoveredFromMissingId:!!args.id&&!byID.length,message:person.name+'さん、'+(!matches.length?'登録しました。よろしくね。':'よろしくね。'),instruction:'話者は確定しました。名前を聞き直したり再確認せず、名前を呼んで短く挨拶し通常会話へ進んでください。',newUser:!matches.length,person,now:Date.now(),timezone:'Asia/Tokyo',recent:history({user_id:person.id,limit:3}).items};
 }
 export function recordMemory(event){const owner=Object.hasOwn(event,'speakerId')?event.speakerId:activeSpeaker;if(owner===activeSpeaker&&activeProfile&&event.created>(activeProfile.lastConversation||0))activeProfile.lastConversation=event.created;db('INSERT OR IGNORE INTO messages(id,role,text,created,speaker_id) VALUES(?,?,?,?,?)',[event.id,event.role,event.text,event.created,event.role==='assistant'?'stackchan-self':owner]);if(owner)db('INSERT OR IGNORE INTO message_context(message_id,user_id) VALUES(?,?)',[event.id,owner]);if(typeof event.image==='string'&&/^photo-[a-z0-9-]+\.jpg$/.test(event.image))db('INSERT OR REPLACE INTO message_media(message_id,filename) VALUES(?,?)',[event.id,event.image]);}
 export function history(args={}){
@@ -150,7 +152,7 @@ export function importLegacy(){
   db('INSERT OR REPLACE INTO memory_meta(key,value) VALUES(?,?)',['legacy-imported','1']);
 }
 export const memoryTools=[
- {name:'conversation_identify',description:'新しい会話はまず「あなたは誰？お名前を教えて」と本人の名前を尋ねる。本人が名乗った後、名前を漢字に推測変換せずひらがなのname_readingを必ず添えてこの道具で現在の話者を確定し、その後に通常の会話へ進む。第三者の名前や推測で確定しない。同名候補が複数なら本人に確認する。返った本人プロフィールを参照できるが、音声による本人認証ではない。',inputSchema:{type:'object',properties:{name:{type:'string'},name_reading:{type:'string',description:'本人が言った名前のひらがなの読み。漢字表記は推測しない'},id:{type:'string'},guest:{type:'boolean',description:'本人が名前を名乗りたくないと明示した場合のみtrue'}},additionalProperties:false}},
+ {name:'conversation_identify',description:'新しい会話はまず「あなたは誰？お名前を教えて」と本人の名前を尋ねる。本人が名乗った後、名前を漢字に推測変換せずひらがなのname_readingを必ず添えてこの道具で現在の話者を確定し、その後に通常の会話へ進む。第三者の名前や推測で確定しない。同名候補が複数なら本人に確認する。返った本人プロフィールを参照できるが、音声による本人認証ではない。',inputSchema:{type:'object',properties:{name:{type:'string'},name_reading:{type:'string',description:'本人が言った名前のひらがなの読み。漢字表記は推測しない'},id:{type:'string',description:'道具が返した既存人物IDだけを使う。新規人物では省略し、IDを自作しない'},guest:{type:'boolean',description:'本人が名前を名乗りたくないと明示した場合のみtrue'}},additionalProperties:false}},
  {name:'conversation_history',description:'必要な会話だけをSDから検索する。queryでキーワード、minutes_ago:60で約1時間前（前後10分）を指定できる。全履歴を一括取得しない。',inputSchema:{type:'object',properties:{query:{type:'string'},minutes_ago:{type:'number'},window_minutes:{type:'number'},after:{type:'string'},before:{type:'string'},user_id:{type:'string'},limit:{type:'integer',minimum:1,maximum:10}},additionalProperties:false}},
  {name:'user_lookup',description:'会話に登場する人物を名前・ニックネーム・人物IDで探し、プロフィールのみ取得する。会話本文は含まない。曖昧な人物は確認する。',inputSchema:{type:'object',properties:{name:{type:'string'},id:{type:'string'}},additionalProperties:false}},
  {name:'user_remember',description:'会話で明示された人物の名前、ニックネーム、好み、人柄などをusersへ保存・訂正する。推測を事実として保存しない。既存人物はuser_lookupで確認してIDを指定し、更新する配列は現在の内容を含めて渡す。source_message_idsに根拠となる会話IDを付ける。',inputSchema:{type:'object',properties:{id:{type:'string'},name:{type:'string'},name_reading:{type:'string'},kind:{type:'string',enum:['person','robot']},nicknames:{type:'array',items:{type:'string'}},likes:{type:'array',items:{type:'string'}},about:{type:'string'},stackchan_name:{type:'string'},family:{type:'string'},hobbies:{type:'string'},location:{type:'string'},source_message_ids:{type:'array',items:{type:'string'}}},required:['name'],additionalProperties:false}}

@@ -267,3 +267,15 @@ const misheard=memory.saveUser({name:'ゼント',likes:['読書']}).users[0];mem
 const corrected=memory.identifySpeaker({id:misheard.id,name:'ゼント',name_reading:'けんと'});
 assert.equal(corrected.person.id,misheard.id);assert.equal(corrected.person.name,'けんと');assert.ok(corrected.person.likes.includes('読書'));assert.ok(corrected.person.nicknames.includes('ゼント'));assert.equal(memory.currentSpeaker().name,'けんと');
 console.log('PASS: repeated speaker status uses cache, updates stay visible, confirmed kana corrects display without changing identity or losing profile');
+
+memory.beginConversation();const recovered=memory.identifySpeaker({id:'model-invented-id',name:'Alice'});assert.equal(recovered.canContinue,true);assert.equal(recovered.person.id,alice.id);assert.equal(recovered.recoveredFromMissingId,true);
+memory.beginConversation();const newNamed=memory.identifySpeaker({id:'another-missing-id',name:'はるま',name_reading:'はるま'});assert.equal(newNamed.newUser,true);assert.notEqual(newNamed.person.id,'another-missing-id');assert.equal(newNamed.displayName,'はるま');assert.ok(newNamed.message.includes('登録しました'));
+// A failed registration must yield an unregistered conversation, not a tool error loop.
+vm.runInContext('setChatMode(false);beginConversation();setChatMode(true)',c);Chat.prototype.start=function(){};await vm.runInContext('connect()',c);
+const fallbackSession=connections.at(-1);c.callMemory=()=>{throw new Error('simulated SD failure')};
+fallbackSession.callbacks.onInputTranscript('名前を伝えます',false);
+fallbackSession.callbacks.onFunctionCall('guest-fallback','conversation_identify',{name:'ゆうた',name_reading:'ゆうた'});
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(toolReply.result.canContinue,true);assert.equal(toolReply.result.guest,true);assert.equal(toolReply.result.registration,'unconfirmed');assert.equal(toolReply.result.displayName,'ゆうた');assert.equal(memory.currentSpeaker().guest,true);assert.equal(memory.currentSpeaker().name,'ゆうた');assert.ok(shown.at(-1).includes('ゆうたさん'));assert.equal(toolReply.result.error,undefined);
+fallbackSession.callbacks.onOutputTranscript('では今日のお話を聞かせてね',true);fallbackSession.callbacks.onOutputTranscript('',false);assert.equal(shown.at(-1),'では今日のお話を聞かせてね');
+console.log('PASS: invalid IDs recover by name or register a new person; failed storage still returns a named guest and normal replies continue');
