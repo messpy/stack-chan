@@ -184,11 +184,19 @@ function conversationInstructions() {
   )
 }
 
-let micLit=false,microphoneAt=0
+let micLit=false,microphoneAt=0,conversationLight='off'
+export function conversationIndicator(stage){
+  if(conversationLight===stage)return
+  conversationLight=stage
+  // Brown is represented by dim orange on an emissive RGB LED.
+  const colors={recording:[0,48,0],transcribing:[36,12,3],thinking:[48,40,0]}
+  try{const rgb=colors[stage];if(rgb)robot?.lightOn?.('head',...rgb);else robot?.lightOff?.('head')}catch(_){}
+  trace('[conversation-led] '+stage+'\n')
+}
 export function microphoneIndicator(active){
   if(micLit===active)return
   micLit=active
-  try{if(active)robot?.lightOn?.('head',0,48,0);else robot?.lightOff?.('head')}catch(_){}
+  conversationIndicator(active?'recording':'off')
   trace('[microphone] '+(active?'recording':'stopped')+'\n')
 }
 const audioStats = { recognizedEvents:0,lastTranscriptAt:0,inputEvents: 0, inputPeak: 0, outputEvents: 0, outputPeak: 0, lastInputAt: 0, lastOutputAt: 0 }
@@ -415,6 +423,7 @@ function failed(reason) {
   microphoneIndicator(false)
   state = 'retrying'
   retryAt = Date.now() + retryDelay
+  conversationIndicator('off')
   retryDelay = Math.min(60000, retryDelay * 2)
   Timer.set(() => {
     if (generation === failedGeneration && chat === failedChat) {
@@ -700,6 +709,8 @@ async function connect() {
           if (!more && input) {
             audioStats.recognizedEvents++;audioStats.lastTranscriptAt=Date.now()
             if (input === introText) {
+          if (text) conversationIndicator(more ? 'transcribing' : 'thinking')
+          else if (!more && input) conversationIndicator('thinking')
               input = ''
               return
             }
@@ -729,6 +740,7 @@ async function connect() {
           else output = (output + (text || '')).slice(-4096)
           if (!more && output) {
             if (!enrollment.active) {
+          if (text) conversationIndicator('off')
               archive('output', output)
               robot.showBalloon(output)
             }
@@ -741,6 +753,7 @@ async function connect() {
           Promise.resolve()
             .then(async () => {
               if (provider === 'ollama' && name === 'ollama_reply') {
+          conversationIndicator('thinking')
                 if (ollamaBusy) throw new Error('Ollama Cloudで回答中です')
                 ollamaBusy = true
                 try {
@@ -981,6 +994,7 @@ export async function testDirectConnection(provider = chatProvider(), options = 
         Timer.clear(cancelTimer)
         Timer.set(() => {
           try {
+        conversationIndicator('off')
             instance?.close()
           } catch (_) {}
           error ? reject(error) : resolve({ connected: true, provider, microphoneTransmission: !!options.recognition, transcript })

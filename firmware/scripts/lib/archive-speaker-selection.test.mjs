@@ -157,6 +157,11 @@ const micLights=[];c.robotStub.lightOn=(...args)=>micLights.push(['on',...args])
 vm.runInContext('microphoneIndicator(true);microphoneIndicator(true);microphoneIndicator(false)',c);
 assert.equal(micLights.length,2);assert.deepEqual(micLights[0],['on','head',0,48,0]);assert.equal(micLights[1][0],'off');
 console.log('Microphone indicator: green while recording, repeated PCM does not rewrite LED, stop clears LED: PASS');
+micLights.length=0;
+vm.runInContext("microphoneIndicator(true);conversationIndicator('transcribing');microphoneIndicator(true);conversationIndicator('thinking');conversationIndicator('thinking');microphoneIndicator(false)",c);
+assert.deepEqual(micLights,[['on','head',0,48,0],['on','head',36,12,3],['on','head',48,40,0],['off','head']]);
+console.log('Conversation indicator: green capture, brown transcription, yellow reasoning, PCM does not overwrite processing colors: PASS');
+
 
 let greetingRoute;
 Chat.prototype.sendText=function(text){greetingRoute='text';assert.ok(text.length<100)};
