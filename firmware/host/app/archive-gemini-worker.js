@@ -4,7 +4,19 @@ import GoogleGeminiLiveModel from 'googleGeminiLiveModel';
 import {geminiSetup,monoPCM} from 'archive-gemini-protocol';
 class ArchiveGeminiLiveModel extends GoogleGeminiLiveModel {
   configure(message){super.configure(message);this.path='/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key='+encodeURIComponent(message.apiKey||'');this.setup=geminiSetup(message.modelID,message.functions||[],message.instructions);}
-  sendAudio(message){if(!this.speaking)return;const pcm=monoPCM(this.inputBuffer,message.offset,message.size,message.channels||2);this.sendJSON({realtimeInput:{audio:{mimeType:'audio/pcm;rate=16000',data:new Uint8Array(pcm).toBase64()}}});}
+  sendAudio(message) {
+    if(!this.speaking)return;
+    const pcm=monoPCM(this.inputBuffer,message.offset,message.size,message.channels??1);
+    this.sendJSON({realtimeInput:{audio:{mimeType:'audio/pcm;rate=16000',data:new Uint8Array(pcm).toBase64()}}});
+    const stats=this.inputStats||(this.inputStats={at:Date.now(),bytes:0,peak:0,energy:0,samples:0});
+    stats.bytes+=pcm.byteLength;
+    const samples=new Int16Array(pcm);
+    for(let i=0;i<samples.length;i+=16){const value=samples[i];stats.peak=Math.max(stats.peak,Math.abs(value));stats.energy+=value*value;stats.samples++;}
+    if(Date.now()-stats.at>=5000){
+      trace('[gemini-input] submittedBytes='+stats.bytes+' peak='+stats.peak+' rms='+Math.round(Math.sqrt(stats.energy/Math.max(1,stats.samples)))+' intervalMs='+(Date.now()-stats.at)+'\n');
+      this.inputStats=null;
+    }
+  }
   serverContent(data) {
     // The SDK emits the input delimiter before reading transcription in the
     // same packet. Process text first, and flush late text at turn completion.
