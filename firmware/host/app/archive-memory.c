@@ -12,6 +12,7 @@
 #include <errno.h>
 #include "esp_heap_caps.h"
 #include "esp_random.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #define SQLITE_OS_OTHER 1
@@ -70,13 +71,21 @@ static int dbRound(int n){return (n+7)&~7;}
 static int dbInit(void*p){(void)p;return SQLITE_OK;}
 static void dbShutdown(void*p){(void)p;}
 static sqlite3* db;
+// Only the main VM uses this connection. Bound CPU time so a pathological
+// query cannot indefinitely freeze touch, captions, USB and audio callbacks.
+static int archiveQueryDeadline(void *value) {
+ return esp_timer_get_time() > *(int64_t *)value;
+}
 void xs_archive_database(xsMachine*the){
  xsmcVars(4);
  if(!db){sqlite3_mem_methods memory={dbMalloc,dbFree,dbRealloc,dbSize,dbRound,dbInit,dbShutdown,NULL};sqlite3_config(SQLITE_CONFIG_MALLOC,&memory);int rc=sqlite3_open_v2(MODDEF_FILE_ROOT "/stackchan/memory.sqlite3",&db,SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE,"stackchan-sd");if(rc!=SQLITE_OK){if(db)sqlite3_close(db);db=NULL;xsUnknownError("SD database open failed (%d)",rc);}sqlite3_busy_timeout(db,2000);}
  sqlite3_stmt*statement=NULL;int rc=sqlite3_prepare_v2(db,xsmcToString(xsArg(0)),-1,&statement,NULL);if(rc!=SQLITE_OK)xsUnknownError("SD database prepare failed (%d)",rc);
  if(xsmcArgc>1){xsmcGet(xsVar(3),xsArg(1),xsID("length"));int length=xsmcToInteger(xsVar(3));for(int i=0;i<length;i++){xsmcGetIndex(xsVar(0),xsArg(1),i);int type=xsmcTypeOf(xsVar(0));if(type==xsStringType)rc=sqlite3_bind_text(statement,i+1,xsmcToString(xsVar(0)),-1,SQLITE_TRANSIENT);else if(type==xsNumberType||type==xsIntegerType)rc=sqlite3_bind_double(statement,i+1,xsmcToNumber(xsVar(0)));else if(type==xsBooleanType)rc=sqlite3_bind_int(statement,i+1,xsmcToBoolean(xsVar(0)));else rc=sqlite3_bind_null(statement,i+1);if(rc!=SQLITE_OK){sqlite3_finalize(statement);xsUnknownError("SD database bind failed (%d)",rc);}}}
+ int64_t deadline=esp_timer_get_time()+1500000;
+ sqlite3_progress_handler(db,1000,archiveQueryDeadline,&deadline);
  xsResult=xsNewArray(0);unsigned rows=0;
- while((rc=sqlite3_step(statement))==SQLITE_ROW){if(rows>=200){sqlite3_finalize(statement);xsUnknownError("SD database result limit exceeded");}xsmcSetNewObject(xsVar(1));for(int i=0;i<sqlite3_column_count(statement);i++){int kind=sqlite3_column_type(statement,i);if(kind==SQLITE_NULL)xsVar(2)=xsNull;else if(kind==SQLITE_INTEGER||kind==SQLITE_FLOAT)xsmcSetNumber(xsVar(2),sqlite3_column_double(statement,i));else xsmcSetString(xsVar(2),(char*)sqlite3_column_text(statement,i));xsmcSet(xsVar(1),xsID(sqlite3_column_name(statement,i)),xsVar(2));}xsmcSetIndex(xsResult,rows++,xsVar(1));}
+ while((rc=sqlite3_step(statement))==SQLITE_ROW){if(rows>=200){sqlite3_progress_handler(db,0,NULL,NULL);sqlite3_finalize(statement);xsUnknownError("SD database result limit exceeded");}xsmcSetNewObject(xsVar(1));for(int i=0;i<sqlite3_column_count(statement);i++){int kind=sqlite3_column_type(statement,i);if(kind==SQLITE_NULL)xsVar(2)=xsNull;else if(kind==SQLITE_INTEGER||kind==SQLITE_FLOAT)xsmcSetNumber(xsVar(2),sqlite3_column_double(statement,i));else xsmcSetString(xsVar(2),(char*)sqlite3_column_text(statement,i));xsmcSet(xsVar(1),xsID(sqlite3_column_name(statement,i)),xsVar(2));}xsmcSetIndex(xsResult,rows++,xsVar(1));}
+ sqlite3_progress_handler(db,0,NULL,NULL);
  sqlite3_finalize(statement);if(rc!=SQLITE_DONE)xsUnknownError("SD database execution failed (%d)",rc);
 }
 

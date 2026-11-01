@@ -97,7 +97,7 @@ export function deviceHistory(args={}){
 
 export function users(args={}){
   const name=text(args.name,80),id=text(args.id,64);let rows;
-  const base='SELECT p.*,(SELECT reading FROM name_readings WHERE user_id=p.id) AS name_reading,(SELECT MAX(created) FROM messages WHERE speaker_id=p.id OR id IN (SELECT message_id FROM message_context WHERE user_id=p.id)) AS lastConversation FROM user_profile p';
+  const base='SELECT p.*,(SELECT reading FROM name_readings WHERE user_id=p.id) AS name_reading,NULLIF(max(COALESCE((SELECT MAX(created) FROM messages WHERE speaker_id=p.id),0),COALESCE((SELECT MAX(m.created) FROM message_context c JOIN messages m ON m.id=c.message_id WHERE c.user_id=p.id),0)),0) AS lastConversation FROM user_profile p';
   if(id)rows=db(base+' WHERE p.id=? LIMIT 5',[id]);
   else if(name)rows=db(base+' WHERE name LIKE ? OR nicknames LIKE ? ORDER BY updated_at DESC LIMIT 5',['%'+name+'%','%'+name+'%']);
   else rows=db(base+' ORDER BY lastConversation DESC,updated_at DESC LIMIT ?',[Math.min(50,Math.max(1,Number(args.limit)||5))]);
