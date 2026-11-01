@@ -17,7 +17,10 @@
     "stackchan-sdroot": "../platforms/m5stackchan_cores3/sd-root",
     "mod-files": "./mod-files",
     "archive-debug": "./archive-debug",
-    "archive-screen": ["./archive-screen", "./archive-screen.c"],
+    "archive-screen": [
+      "./archive-screen",
+      "./archive-screen.c"
+    ],
     "archive-usb": [
       "./archive-usb",
       "./archive-usb.c"
@@ -91,6 +94,10 @@
       "scl": -1,
       "sda": -1,
       "i2c_port": 0
+    },
+    "audioIn": {
+      "sampleRate": 16000,
+      "numChannels": 2
     }
   },
   "config": {
