@@ -3,6 +3,7 @@
 #include "xsHost.h"
 #include "driver/usb_serial_jtag.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <string.h>
 
 #define ARCHIVE_USB_PACKET_LIMIT 20000
@@ -222,6 +223,7 @@ void xs_archive_heap_status(xsMachine *the) {
     const uint32_t internal=MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT;
     const uint32_t external=MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT;
 #define SC_HEAP_FIELD(name,value) xsmcSetInteger(xsVar(0),(int)(value));xsmcSet(xsResult,xsID(name),xsVar(0))
+    SC_HEAP_FIELD("nativeStackMinimumFree",uxTaskGetStackHighWaterMark(NULL)*sizeof(StackType_t));
     SC_HEAP_FIELD("internalFree",heap_caps_get_free_size(internal));
     SC_HEAP_FIELD("internalMinimum",heap_caps_get_minimum_free_size(internal));
     SC_HEAP_FIELD("internalLargest",heap_caps_get_largest_free_block(internal));

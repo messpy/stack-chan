@@ -6,6 +6,7 @@ import AudioIn from 'embedded:io/audio/in'
 import AudioOut from 'embedded:io/audio/out'
 import { PlaybackBuffer } from 'archive-playback-buffer'
 import Worker from 'worker'
+import Timer from 'timer'
 
 const CONNECTION_ENVELOPE = '__stackchanConnectionConfiguration'
 
@@ -96,6 +97,7 @@ export default class ChatAudioIO extends ChatAudioIOBase {
       onWritable: (size) => this.writePlayback(output, playback, size),
     })
     this.output = output
+    playback.output = output
     output.volume = this.volume
     output.start()
   }
@@ -148,10 +150,16 @@ export default class ChatAudioIO extends ChatAudioIOBase {
     // Native writes queue audio; keep output alive until the final samples drain.
     if (!playback.drainUntil)
       playback.drainUntil = Date.now() + Math.ceil((playback.maxWritable * 1000) / (playback.rate * 2)) + 80
-    if (Date.now() >= playback.drainUntil) {
-      this.worker.postMessage({ id: 'listened' })
-      this.state = ChatAudioIO.SPEAKING
-      this.ensureInput()
+    if (Date.now() >= playback.drainUntil && !playback.resuming) {
+      playback.resuming=true
+      // Leave the AudioOut native callback before closing I2S, constructing
+      // AudioIn and running state/UI callbacks on the native C stack.
+      Timer.set(()=>{
+        if(this.output!==playback.output||this.state!==ChatAudioIO.WAITING||!this.worker)return
+        this.worker.postMessage({id:'listened'})
+        this.state=ChatAudioIO.SPEAKING
+        this.ensureInput()
+      },0)
     }
   }
 

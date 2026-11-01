@@ -1,7 +1,7 @@
 import {withSDCard} from 'stackchan-sdcard';
 import {randomHex,getSettings} from 'archive-vault';
 const run=native('xs_archive_database');
-let ready=false,activeSpeaker=null,guestSpeaker=false,activeProfile=null;
+let ready=false,activeSpeaker=null,guestSpeaker=false,activeProfile=null,greetingSnapshot=null;
 function mounted(fn){return withSDCard(root=>{try{root.createDirectory('stackchan');}catch(_){}return fn();});}
 function initialize(){if(ready)return;mounted(()=>{
   run('PRAGMA journal_mode=PERSIST',[]);run('PRAGMA synchronous=FULL',[]);run('PRAGMA temp_store=MEMORY',[]);
@@ -25,7 +25,7 @@ function initialize(){if(ready)return;mounted(()=>{
 function db(sql,args=[]){initialize();return mounted(()=>run(sql,args));}
 function text(value,max=512){return typeof value==='string'?value.trim().slice(0,max):'';}
 function profile(row){return {...row,lastConversation:row.lastConversation||null,nicknames:JSON.parse(row.nicknames),likes:JSON.parse(row.likes)};}
-export function beginConversation(){activeSpeaker=null;guestSpeaker=false;activeProfile=null;}
+export function beginConversation(){activeSpeaker=null;guestSpeaker=false;activeProfile=null;greetingSnapshot=null;}
 export function currentSpeaker(){if(guestSpeaker)return activeProfile||{guest:true};if(!activeSpeaker)return null;if(!activeProfile)activeProfile=users({id:activeSpeaker}).users[0]||null;return activeProfile;}
 // Kana-based matching stays local; kanji readings are supplied by the AI tool.
 export function nameReading(value){
@@ -64,7 +64,7 @@ export function nameSimilarity(left,right){
   return .55;
 }
 export function identifySpeaker(args){
-  if(args?.guest===true){activeSpeaker=null;guestSpeaker=true;const name=nameReading(args.name_reading||args.name)||text(args.name,80);activeProfile=name?{guest:true,name,unregistered:true}:null;return {identified:false,guest:true,canContinue:true,displayName:name||'ゲスト'};}
+  if(args?.guest===true){activeSpeaker=null;guestSpeaker=true;greetingSnapshot=null;const name=nameReading(args.name_reading||args.name)||text(args.name,80);activeProfile=name?{guest:true,name,unregistered:true}:null;return {identified:false,guest:true,canContinue:true,displayName:name||'ゲスト'};}
   const byID=args.id?users({id:args.id}).users.filter(p=>p.kind==='person'):[];
   const name=text(args?.name||byID[0]?.name,80);if(!name)throw new Error('本人の名前を確認してください');
   const reading=nameReading(args.name_reading||name);
@@ -87,9 +87,18 @@ export function identifySpeaker(args){
     const canonical=nameReading(person.name)===person.name?person.name:reading;
     if(person.name!==canonical||person.name_reading!==canonical)person=saveUser({id:person.id,name:canonical,name_reading:canonical,nicknames:[...person.nicknames,...(person.name!==canonical?[person.name]:[])]}).users[0];
   }
+  if(greetingSnapshot?.id!==person.id){
+    const previous=Number(person.lastConversation)||null,now=Date.now();
+    const firstMeeting=!matches.length||!previous;
+    let greeting=person.name+'さん、';
+    if(firstMeeting)greeting+='はじめまして。'+(!matches.length?'登録しました。':'')+'よろしくね。';
+    else if(previous<=now){const d=new Date(previous+9*60*60*1000);greeting+='前は'+(d.getUTCMonth()+1)+'月'+d.getUTCDate()+'日にお話ししたね。また会えてうれしいよ。';}
+    else greeting+='また会えてうれしいよ。';
+    greetingSnapshot={id:person.id,previousConversationAt:previous,firstMeeting,greeting};
+  }
   activeSpeaker=person.id;activeProfile=person;guestSpeaker=false;
   if(args.source_message_id){const source=text(args.source_message_id,100);db('UPDATE messages SET speaker_id=? WHERE id=? AND role=?',[person.id,source,'user']);db('INSERT OR IGNORE INTO message_context(message_id,user_id) SELECT id,? FROM messages WHERE id=?',[person.id,source]);}
-  return {identified:true,canContinue:true,displayName:person.name,recoveredFromMissingId:!!args.id&&!byID.length,message:person.name+'さん、'+(!matches.length?'登録しました。よろしくね。':'よろしくね。'),instruction:'話者は確定しました。名前を聞き直したり再確認せず、名前を呼んで短く挨拶し通常会話へ進んでください。',newUser:!matches.length,person,now:Date.now(),timezone:'Asia/Tokyo',recent:history({user_id:person.id,limit:3}).items};
+  return {identified:true,canContinue:true,displayName:person.name,recoveredFromMissingId:!!args.id&&!byID.length,message:greetingSnapshot.greeting,greeting:greetingSnapshot.greeting,previousConversationAt:greetingSnapshot.previousConversationAt,firstMeeting:greetingSnapshot.firstMeeting,instruction:'話者は確定しました。greetingを一度だけ短く伝え、名前を聞き直さず質問を一つして会話を続けてください。次の相手の回答からはpersonとrecentの関連する情報だけを使って普通に会話してください。記録にないプロフィールや過去の会話を作らないでください。',newUser:!matches.length,person,now:Date.now(),timezone:'Asia/Tokyo',recent:history({user_id:person.id,limit:3}).items};
 }
 export function recordMemory(event){const owner=Object.hasOwn(event,'speakerId')?event.speakerId:activeSpeaker;if(owner===activeSpeaker&&activeProfile&&event.created>(activeProfile.lastConversation||0))activeProfile.lastConversation=event.created;db('INSERT OR IGNORE INTO messages(id,role,text,created,speaker_id) VALUES(?,?,?,?,?)',[event.id,event.role,event.text,event.created,event.role==='assistant'?'stackchan-self':owner]);if(owner)db('INSERT OR IGNORE INTO message_context(message_id,user_id) VALUES(?,?)',[event.id,owner]);if(typeof event.image==='string'&&/^photo-[a-z0-9-]+\.jpg$/.test(event.image))db('INSERT OR REPLACE INTO message_media(message_id,filename) VALUES(?,?)',[event.id,event.image]);}
 export function history(args={}){

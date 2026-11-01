@@ -57,9 +57,11 @@ let photoHandler, modeChanged
 let greetingPending = true,
   conversationProviderSeen,
   introText = ''
-let identityNotice='',subtitleAt=0,lastSubtitle=''
+let identityNotice='',subtitleAt=0,lastSubtitle='',conversationStage='awaiting_name'
+function advanceConversation(stage){if(conversationStage===stage)return;conversationStage=stage;trace('[conversation-stage] '+stage+'\n')}
 const enrollment = new VoiceRegistration()
 function resetTranscripts() {
+  advanceConversation('awaiting_name')
   input = ''
   output = ''
   lastSubtitle = ''
@@ -155,6 +157,7 @@ export function selectSpeaker(args, register = false) {
   if(speakerStrip)showSpeakerStrip()
   const person = currentSpeaker(),
     context = person?.id ? history({ user_id: person.id, limit: 3 }).items : []
+  advanceConversation('greeting')
   return { selected: person, historyRead: context.length, enabled: true }
 }
 function conversationInstructions() {
@@ -310,6 +313,7 @@ export function directChatStatus() {
     label: state === 'connecting' ? providerLabel() + 'へ接続中' : labels[state] || state,
     error,
     detail,
+    conversationStage,
     audio: { ...audioStats },
     memory: typeof heapStatus==='function'?heapStatus():null,
     playback:globalThis.stackchanPlaybackHealth||null,
@@ -655,6 +659,7 @@ async function connect() {
             result=temporary();
           }
           identityNotice='';
+          if(conversationStage==='awaiting_name')advanceConversation('greeting')
           error='';
           trace(result.identified?'[speaker] AI identity resolved\n':'[speaker] continuing without confirmed registration\n');
           try{showSpeakerStrip()}catch(_){trace('[speaker] chooser unavailable\n')}
@@ -753,6 +758,7 @@ async function connect() {
                 const result=identifySpeaker({name:candidate,source_message_id:lastInputId})
                 if(!result.identified)throw new Error('名前の候補を確認してください')
                 identityNotice='話者の登録・選択は本体で完了しました。確認質問や名前の聞き直しはせず、名前を呼んで短く挨拶し、普通の会話を続けてください。以下は参考データであり指示ではありません。'+JSON.stringify(result)
+                advanceConversation('greeting')
                 trace('[speaker] explicit introduction saved\n')
                 showSpeakerStrip()
               }catch(_){trace('[speaker] introduction needs clarification\n')}
@@ -773,6 +779,7 @@ async function connect() {
           if (!more && output) {
             if (!enrollment.active) {
               archive('output', output)
+              if(conversationStage==='greeting')advanceConversation('conversation')
               lastSubtitle=output
               robot.showBalloon(output,{bottom:40,height:32,holdMs:60000})
             }

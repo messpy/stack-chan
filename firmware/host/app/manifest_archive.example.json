@@ -182,7 +182,8 @@
       "initial": 524288,
       "incremental": 65536
     },
-    "stack": 4096
+    "stack": 4096,
+    "nativeStack": 32768
   },
   "resources": {
     "*-mask": [

@@ -154,6 +154,12 @@ assert.equal(memory.users({name:'アオ'}).users.length,1);
 assert.equal(memory.currentSpeaker().name,'あお');
 assert.ok(memory.history({user_id:memory.currentSpeaker().id}).items.some(m=>m.text==='私の名前はアオです'));
 assert.ok(toolReply.result.now);assert.ok(Array.isArray(toolReply.result.recent));
+assert.equal(vm.runInContext('directChatStatus().conversationStage',c),'greeting');
+const identifiedId=memory.currentSpeaker().id;
+aiSession.callbacks.onOutputTranscript('あおさん、はじめまして。何が好き？',true);aiSession.callbacks.onOutputTranscript('',false);
+assert.equal(vm.runInContext('directChatStatus().conversationStage',c),'conversation');
+aiSession.callbacks.onInputTranscript('読書が好きです',false);assert.equal(memory.currentSpeaker().id,identifiedId);assert.equal(vm.runInContext('directChatStatus().conversationStage',c),'conversation');
+
 vm.runInContext('setChatMode(false)',c);
 console.log('AI session callback: spoken name identifies/saves person, first message linked, bounded context returned: PASS');
 
@@ -185,7 +191,8 @@ console.log('Greeting transport: XiaoZhi uses supported detect notification, Gem
 class AdapterBase{constructor(){}ensureInput(){}}
 let forwarded;
 class AdapterWorker{postMessage(message){forwarded=message}terminate(){}}
-const adapterContext=vm.createContext({ChatAudioIOBase:AdapterBase,Worker:AdapterWorker,SharedArrayBuffer,trace(){},writePcmRing(){},globalThis:{}});
+const resumeTimers=[];
+const adapterContext=vm.createContext({Timer:{set:fn=>{resumeTimers.push(fn);return resumeTimers.length}},ChatAudioIOBase:AdapterBase,Worker:AdapterWorker,SharedArrayBuffer,trace(){},writePcmRing(){},globalThis:{}});
 vm.runInContext(fs.readFileSync(root+'archive-chat-audioio.js','utf8').replace(/^import .*$/gm,'').replace('export default class ChatAudioIO','class ChatAudioIO'),adapterContext);
 for(const channels of [1,2]){
  adapterContext.channelCount=channels;
@@ -226,7 +233,7 @@ vm.runInContext("adapter=new ChatAudioIO();adapter.outputBufferSize=64;adapter.o
 for(let i=0;i<5;i++)writableCallback(8);
 vm.runInContext('adapter.state=6',adapterContext);writableCallback(8);
 assert.equal(closedOutput,false);playbackClock=83;writableCallback(8);assert.equal(closedOutput,false);
-playbackClock=85;writableCallback(8);assert.equal(closedOutput,true);
+playbackClock=85;writableCallback(8);assert.equal(closedOutput,false);assert.equal(resumeTimers.length,1);writableCallback(8);assert.equal(resumeTimers.length,1);resumeTimers.shift()();assert.equal(closedOutput,true);
 console.log('Playback drain: final queued audio is not closed immediately, microphone resumes after drain allowance: PASS');
 
 const tieTime=Date.now()+100000;
@@ -279,3 +286,10 @@ await new Promise(resolve=>setImmediate(resolve));
 assert.equal(toolReply.result.canContinue,true);assert.equal(toolReply.result.guest,true);assert.equal(toolReply.result.registration,'unconfirmed');assert.equal(toolReply.result.displayName,'ゆうた');assert.equal(memory.currentSpeaker().guest,true);assert.equal(memory.currentSpeaker().name,'ゆうた');assert.ok(shown.at(-1).includes('ゆうたさん'));assert.equal(toolReply.result.error,undefined);
 fallbackSession.callbacks.onOutputTranscript('では今日のお話を聞かせてね',true);fallbackSession.callbacks.onOutputTranscript('',false);assert.equal(shown.at(-1),'では今日のお話を聞かせてね');
 console.log('PASS: invalid IDs recover by name or register a new person; failed storage still returns a named guest and normal replies continue');
+
+memory.beginConversation();const firstHello=memory.identifySpeaker({name:'りょうへい',name_reading:'りょうへい'});assert.equal(firstHello.firstMeeting,true);assert.equal(firstHello.previousConversationAt,null);assert.ok(firstHello.greeting.includes('はじめまして'));
+const previousGreeting=firstHello.greeting;
+memory.recordMemory({id:'first-greeting-reply',role:'assistant',text:'よろしくね',created:Date.now()-10000});
+const duplicateHello=memory.identifySpeaker({id:firstHello.person.id,name:firstHello.person.name});assert.equal(duplicateHello.greeting,previousGreeting);assert.equal(duplicateHello.previousConversationAt,null);
+memory.beginConversation();const returning=memory.identifySpeaker({name:'りょうへい'});assert.equal(returning.firstMeeting,false);assert.ok(returning.previousConversationAt);assert.ok(returning.greeting.includes('お話ししたね'));assert.equal(returning.person.id,firstHello.person.id);
+console.log('PASS: identification then greeting then profile conversation; repeated identification preserves initial context; next session greets using recorded prior date');
