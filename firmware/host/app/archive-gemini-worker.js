@@ -1,7 +1,7 @@
 import {installDebugLog} from 'archive-debug';
 // Uses the Moddable SDK Gemini Live transport (LGPL-3.0-or-later).
 import GoogleGeminiLiveModel from 'googleGeminiLiveModel';
-import {geminiSetup,monoPCM} from 'archive-gemini-protocol';
+import {geminiSetup,recognitionPCM} from 'archive-gemini-protocol';
 class ArchiveGeminiLiveModel extends GoogleGeminiLiveModel {
   configure(message){super.configure(message);this.path='/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key='+encodeURIComponent(message.apiKey||'');this.setup=geminiSetup(message.modelID,message.functions||[],message.instructions);}
   startListening() {
@@ -11,14 +11,16 @@ class ArchiveGeminiLiveModel extends GoogleGeminiLiveModel {
   }
   sendAudio(message) {
     if(!this.speaking)return;
-    const pcm=monoPCM(this.inputBuffer,message.offset,message.size,message.channels??1);
+    const signal=recognitionPCM(this.inputBuffer,message.offset,message.size,message.channels??1);
+    const pcm=signal.buffer;
     this.sendJSON({realtimeInput:{audio:{mimeType:'audio/pcm;rate=16000',data:new Uint8Array(pcm).toBase64()}}});
-    const stats=this.inputStats||(this.inputStats={at:Date.now(),bytes:0,peak:0,energy:0,samples:0});
+    const stats=this.inputStats||(this.inputStats={at:Date.now(),bytes:0,peak:0,energy:0,samples:0,leftRms:0,rightRms:0});
     stats.bytes+=pcm.byteLength;
+    stats.leftRms=Math.max(stats.leftRms,signal.leftRms);stats.rightRms=Math.max(stats.rightRms,signal.rightRms);
     const samples=new Int16Array(pcm);
     for(let i=0;i<samples.length;i+=16){const value=samples[i];stats.peak=Math.max(stats.peak,Math.abs(value));stats.energy+=value*value;stats.samples++;}
     if(Date.now()-stats.at>=5000){
-      trace('[gemini-input] submittedBytes='+stats.bytes+' peak='+stats.peak+' rms='+Math.round(Math.sqrt(stats.energy/Math.max(1,stats.samples)))+' intervalMs='+(Date.now()-stats.at)+'\n');
+      trace('[gemini-input] submittedBytes='+stats.bytes+' peak='+stats.peak+' rms='+Math.round(Math.sqrt(stats.energy/Math.max(1,stats.samples)))+' leftRms='+stats.leftRms+' rightRms='+stats.rightRms+' gain=4 intervalMs='+(Date.now()-stats.at)+'\n');
       this.inputStats=null;
     }
   }

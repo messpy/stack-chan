@@ -13,7 +13,7 @@ class SDK {
   if(data.turnComplete){this.postMessage({id:'receiveOutputText',text:''});this.speaking=true;}
  }
 }
-const context=vm.createContext({GoogleGeminiLiveModel:SDK,installDebugLog(){},trace(){},monoPCM:protocol.monoPCM,geminiSetup:protocol.geminiSetup,Uint8Array:class extends Uint8Array{toBase64(){return Buffer.from(this).toString('base64');}}});
+const context=vm.createContext({GoogleGeminiLiveModel:SDK,installDebugLog(){},trace(){},recognitionPCM:protocol.recognitionPCM,geminiSetup:protocol.geminiSetup,Uint8Array:class extends Uint8Array{toBase64(){return Buffer.from(this).toString('base64');}}});
 vm.runInContext(source,context);
 function transcript(model){let pending='',turns=[];for(const m of model.messages){if(m.id!=='receiveInputText')continue;pending+=m.text;if(!m.more&&pending){turns.push(pending);pending='';}}return {pending,turns};}
 const audio={modelTurn:{parts:[{inlineData:{mimeType:'audio/pcm;rate=24000'}}]}};
@@ -26,7 +26,7 @@ test('microphone packets preserve 16kHz mono samples and stop during playback',(
  m.sendAudio({offset:0,size:8,channels:2});
  const audio=m.lastSent.realtimeInput.audio;
  assert.equal(audio.mimeType,'audio/pcm;rate=16000');
- const pcm=Buffer.from(audio.data,'base64');assert.equal(pcm.length,4);assert.equal(pcm.readInt16LE(0),2000);assert.equal(pcm.readInt16LE(2),-2000);
+ const pcm=Buffer.from(audio.data,'base64');assert.equal(pcm.length,4);assert.equal(pcm.readInt16LE(0),12000);assert.equal(pcm.readInt16LE(2),-12000);
  m.speaking=false;m.lastSent=null;m.sendAudio({offset:0,size:8,channels:2});assert.equal(m.lastSent,null);
 });
 
@@ -38,4 +38,14 @@ test('final subtitle text is delivered before the completion delimiter',()=>{
 
 test('explicit listening button rearms microphone transmission without generating speech',()=>{
  const m=new context.Model();m.speaking=false;m.startListening();assert.equal(m.speaking,true);assert.equal(m.lastSent,undefined);
+});
+
+test('recognition keeps antiphase speech and quiet-channel input, with saturation',()=>{
+ const opposite=protocol.recognitionPCM(new Int16Array([1000,-1000,-1000,1000]).buffer,0,8,2);
+ assert.deepEqual(Array.from(new Int16Array(opposite.buffer)),[4000,-4000]);
+ const strong=protocol.recognitionPCM(new Int16Array([0,12000,0,-12000]).buffer,0,8,2);
+ assert.equal(strong.channel,1);assert.deepEqual(Array.from(new Int16Array(strong.buffer)),[32767,-32768]);
+ assert.equal(strong.leftRms,0);assert.equal(strong.rightRms,12000);
+ const mono=protocol.recognitionPCM(new Int16Array([10,-20]).buffer,0,4,1);
+ assert.deepEqual(Array.from(new Int16Array(mono.buffer)),[40,-80]);
 });
