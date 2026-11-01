@@ -232,3 +232,29 @@ void xs_archive_heap_status(xsMachine *the) {
     SC_HEAP_FIELD("psramTotal",heap_caps_get_total_size(external));
 #undef SC_HEAP_FIELD
 }
+
+#include <math.h>
+#include "archive-recognition-pcm.h"
+void xs_archive_recognition_pcm(xsMachine *the) {
+    xsmcVars(2);
+    void *input,*output;xsUnsignedValue length,outputLength;
+    xsmcGetBufferReadable(xsArg(0),&input,&length);
+    int offset=xsmcToInteger(xsArg(1)),size=xsmcToInteger(xsArg(2)),channels=xsmcToInteger(xsArg(3));
+    int gain=xsmcArgc>4?xsmcToInteger(xsArg(4)):4;
+    if((channels!=1&&channels!=2)||offset<0||size<0||(offset&1)||size%(channels*2)||(uint64_t)offset+(uint64_t)size>length)xsRangeError("Invalid microphone PCM");
+    if(gain<1)gain=1;else if(gain>8)gain=8;
+    xsmcSetArrayBuffer(xsVar(0),NULL,size/channels);
+    // Reacquire pointers after allocation; JS values remain rooted in args/vars.
+    xsmcGetBufferReadable(xsArg(0),&input,&length);
+    xsmcGetBufferWritable(xsVar(0),&output,&outputLength);
+    ScRecognitionPCM stats=sc_recognition_pcm((const int16_t*)((const uint8_t*)input+offset),output,size/(channels*2),channels,gain);
+    xsmcSetNewObject(xsResult);xsmcSet(xsResult,xsID("buffer"),xsVar(0));
+#define SC_PCM_FIELD(name,value) xsmcSetInteger(xsVar(1),(int)(value));xsmcSet(xsResult,xsID(name),xsVar(1))
+    SC_PCM_FIELD("channel",stats.channel);
+    SC_PCM_FIELD("frames",stats.frames);
+    SC_PCM_FIELD("peak",stats.peak);
+    SC_PCM_FIELD("rms",sqrt((double)stats.output_energy/(stats.frames?stats.frames:1))+0.5);
+    SC_PCM_FIELD("leftRms",sqrt((double)stats.left_energy/(stats.frames?stats.frames:1))+0.5);
+    SC_PCM_FIELD("rightRms",sqrt((double)stats.right_energy/(stats.frames?stats.frames:1))+0.5);
+#undef SC_PCM_FIELD
+}

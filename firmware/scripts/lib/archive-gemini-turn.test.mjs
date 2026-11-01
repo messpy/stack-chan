@@ -13,7 +13,7 @@ class SDK {
   if(data.turnComplete){this.postMessage({id:'receiveOutputText',text:''});this.speaking=true;}
  }
 }
-const context=vm.createContext({GoogleGeminiLiveModel:SDK,installDebugLog(){},trace(){},recognitionPCM:protocol.recognitionPCM,geminiSetup:protocol.geminiSetup,Uint8Array:class extends Uint8Array{toBase64(){return Buffer.from(this).toString('base64');}}});
+const context=vm.createContext({GoogleGeminiLiveModel:SDK,installDebugLog(){},trace(){},prepareRecognitionPCM:protocol.recognitionPCM,geminiSetup:protocol.geminiSetup,Uint8Array:class extends Uint8Array{toBase64(){return Buffer.from(this).toString('base64');}}});
 vm.runInContext(source,context);
 function transcript(model){let pending='',turns=[];for(const m of model.messages){if(m.id!=='receiveInputText')continue;pending+=m.text;if(!m.more&&pending){turns.push(pending);pending='';}}return {pending,turns};}
 const audio={modelTurn:{parts:[{inlineData:{mimeType:'audio/pcm;rate=24000'}}]}};
