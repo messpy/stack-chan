@@ -10,7 +10,7 @@ class SDK {
  sendJSON(message){this.lastSent=message;}
  serverContent(data){
   if(data.modelTurn?.parts?.some(p=>p.inlineData)&&this.speaking){this.postMessage({id:'receiveInputText',text:''});this.speaking=false;}
-  if(data.turnComplete)this.speaking=true;
+  if(data.turnComplete){this.postMessage({id:'receiveOutputText',text:''});this.speaking=true;}
  }
 }
 const context=vm.createContext({GoogleGeminiLiveModel:SDK,installDebugLog(){},trace(){},monoPCM:protocol.monoPCM,geminiSetup:protocol.geminiSetup,Uint8Array:class extends Uint8Array{toBase64(){return Buffer.from(this).toString('base64');}}});
@@ -28,4 +28,10 @@ test('microphone packets preserve 16kHz mono samples and stop during playback',(
  assert.equal(audio.mimeType,'audio/pcm;rate=16000');
  const pcm=Buffer.from(audio.data,'base64');assert.equal(pcm.length,4);assert.equal(pcm.readInt16LE(0),2000);assert.equal(pcm.readInt16LE(2),-2000);
  m.speaking=false;m.lastSent=null;m.sendAudio({offset:0,size:8,channels:2});assert.equal(m.lastSent,null);
+});
+
+test('final subtitle text is delivered before the completion delimiter',()=>{
+ const m=new context.Model();m.serverContent(audio);m.serverContent({outputTranscription:{text:'こんにちは'},turnComplete:true});
+ const messages=m.messages.filter(message=>message.id==='receiveOutputText');
+ assert.deepEqual(messages.map(message=>[message.text,!!message.more]),[['こんにちは',true],['',false]]);
 });

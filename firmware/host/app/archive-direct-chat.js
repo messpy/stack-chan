@@ -56,11 +56,12 @@ let photoHandler, modeChanged
 let greetingPending = true,
   conversationProviderSeen,
   introText = ''
-let identityNotice=''
+let identityNotice='',subtitleAt=0
 const enrollment = new VoiceRegistration()
 function resetTranscripts() {
   input = ''
   output = ''
+  subtitleAt = 0
   lastInputId = ''
   introText = ''
   identityNotice=''
@@ -742,6 +743,10 @@ async function connect() {
             if (!enrollment.active) {
           if (text) conversationIndicator('off')
               archive('output', output)
+          if (text && !enrollment.active && (Date.now()-subtitleAt>=250 || !more)) {
+            robot.showBalloon(output)
+            subtitleAt=Date.now()
+          }
               robot.showBalloon(output)
             }
             output = ''

@@ -32,3 +32,13 @@ for(let seed=1;seed<=30;seed++){
  assert.equal(consumed,2000);assert.equal(expected.length,0);
 }
 console.log('PASS: 30 deterministic jitter streams preserve all PCM bytes through repeated ring wraps');
+
+const adaptive=new PlaybackBuffer(512000,24000,2000);
+let state=adaptive.plan(96000,0,4800);assert.equal(state.count,4800);
+state=adaptive.plan(96000,95000,4800);assert.equal(state.count,0);assert.equal(adaptive.underruns,1);
+// After starvation, a 2-second burst is held until a larger cushion exists.
+assert.equal(adaptive.plan(191000,95000,4800).count,0);
+assert.equal(adaptive.plan(287000,95000,4800).count,4800);
+// A short completed answer must never wait for the large streaming threshold.
+const final=adaptive.plan(96000,95000,4800,true);assert.equal(final.count,1000);assert.equal(final.complete,true);
+console.log('PASS: adaptive buffering increases jitter tolerance while completed short replies drain');

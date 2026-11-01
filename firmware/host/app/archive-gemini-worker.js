@@ -26,8 +26,13 @@ class ArchiveGeminiLiveModel extends GoogleGeminiLiveModel {
       this.postMessage({id:'receiveInputText',text:transcription.text,more:true});
     }
     if (transcription?.finished && this.pendingInputTranscript) this.finishInputTranscript();
+    // Handle text before the SDK's turn-complete delimiter, including when
+    // the final output transcription shares the completion packet.
+    if (data.outputTranscription?.text)
+      this.postMessage({id:'receiveOutputText',text:data.outputTranscription.text,more:true});
     const content = {...data};
     delete content.inputTranscription;
+    delete content.outputTranscription;
     const startsAudio = data.modelTurn?.parts?.some(part => part.inlineData?.mimeType === 'audio/pcm;rate=24000');
     if ((startsAudio || data.turnComplete) && this.pendingInputTranscript) this.finishInputTranscript();
     super.serverContent(content);

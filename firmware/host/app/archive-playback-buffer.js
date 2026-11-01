@@ -3,6 +3,7 @@ export class PlaybackBuffer {
   constructor(capacity, sampleRate = 24000, prebufferMs = 600) {
     this.capacity = capacity
     this.threshold = Math.min(capacity / 2, Math.ceil((sampleRate * 2 * prebufferMs) / 1000))
+    this.maxThreshold = Math.min(capacity / 2, sampleRate * 2 * 5)
     this.primed = false
     this.underruns = 0
   }
@@ -12,6 +13,7 @@ export class PlaybackBuffer {
     if (this.primed && !finished && available < requested) {
       this.primed = false
       this.underruns++
+      this.threshold = Math.min(this.maxThreshold, this.threshold * 2)
     }
     const count = this.primed ? Math.min(available, requested) & ~1 : 0
     const segments = []

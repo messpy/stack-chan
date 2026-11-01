@@ -81,7 +81,7 @@ export default class ChatAudioIO extends ChatAudioIOBase {
     const rate = this.outputSampleRate || 24000
     const playback = {
       rate,
-      planner: new PlaybackBuffer(this.outputBufferSize, rate),
+      planner: new PlaybackBuffer(this.outputBufferSize, rate, this.playbackPrebufferMs ?? 600),
       health: { underruns: 0, bufferedMs: 0, prebuffering: true },
       drainUntil: 0,
       maxWritable: 0,
@@ -161,6 +161,7 @@ export default class ChatAudioIO extends ChatAudioIOBase {
       providerID = undefined
     }
 
+    this.playbackPrebufferMs = specifier === 'archiveGeminiLive' ? 2000 : 600
     const usesNativePcmRing = specifier === 'xiaozhiV1'
     this.immediateInputReady = usesNativePcmRing
     if (usesNativePcmRing || specifier === 'archiveGeminiLive') this.inputSampleRate = 16000
