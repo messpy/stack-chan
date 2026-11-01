@@ -1,4 +1,4 @@
-import {initDebugLog,pushDebugLog,popDebugLog,debugLogStatus,usbConnected,writeDebugUSB} from 'archive-usb';
+import {heapStatus,initDebugLog,pushDebugLog,popDebugLog,debugLogStatus,usbConnected,writeDebugUSB} from 'archive-usb';
 import Timer from 'timer';
 let installed=false,draining=false,armed=false;
 export function armDebugDrain(){armed=true;}
@@ -14,11 +14,16 @@ export function installDebugLog(){
 }
 export function startDebugDrain(){
   if(draining)return;draining=true;
-  let pending;
+  let pending,nextMemory=0;
   Timer.repeat(()=>{
     try{
       if(!usbConnected()){armed=false;return;}
       if(!armed)return;
+      if(Date.now()>=nextMemory){
+        nextMemory=Date.now()+30000;
+        const m=heapStatus();
+        trace('[heap] internalFree='+m.internalFree+' internalMinimum='+m.internalMinimum+' internalLargest='+m.internalLargest+' psramFree='+m.psramFree+' psramMinimum='+m.psramMinimum+' psramLargest='+m.psramLargest+'\n');
+      }
       for(let i=0;i<8;i++){
         pending??=popDebugLog();if(pending===undefined)break;
         let end=Math.min(400,pending.length);

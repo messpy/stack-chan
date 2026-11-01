@@ -18,3 +18,5 @@ export const pushDebugLog = native('xs_archive_log_push');
 export const popDebugLog = native('xs_archive_log_pop');
 export const debugLogStatus = native('xs_archive_log_status');
 export const writeDebugUSB = native('xs_archive_debug_write');
+
+export const heapStatus = native('xs_archive_heap_status');

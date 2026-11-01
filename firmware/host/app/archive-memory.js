@@ -1,7 +1,7 @@
 import {withSDCard} from 'stackchan-sdcard';
 import {randomHex,getSettings} from 'archive-vault';
 const run=native('xs_archive_database');
-let ready=false,activeSpeaker=null,guestSpeaker=false;
+let ready=false,activeSpeaker=null,guestSpeaker=false,activeProfile=null;
 function mounted(fn){return withSDCard(root=>{try{root.createDirectory('stackchan');}catch(_){}return fn();});}
 function initialize(){if(ready)return;mounted(()=>{
   run('PRAGMA journal_mode=PERSIST',[]);run('PRAGMA synchronous=FULL',[]);run('PRAGMA temp_store=MEMORY',[]);
@@ -25,8 +25,8 @@ function initialize(){if(ready)return;mounted(()=>{
 function db(sql,args=[]){initialize();return mounted(()=>run(sql,args));}
 function text(value,max=512){return typeof value==='string'?value.trim().slice(0,max):'';}
 function profile(row){return {...row,lastConversation:row.lastConversation||null,nicknames:JSON.parse(row.nicknames),likes:JSON.parse(row.likes)};}
-export function beginConversation(){activeSpeaker=null;guestSpeaker=false;}
-export function currentSpeaker(){if(guestSpeaker)return {guest:true};return activeSpeaker?users({id:activeSpeaker}).users[0]||null:null;}
+export function beginConversation(){activeSpeaker=null;guestSpeaker=false;activeProfile=null;}
+export function currentSpeaker(){if(guestSpeaker)return {guest:true};if(!activeSpeaker)return null;if(!activeProfile)activeProfile=users({id:activeSpeaker}).users[0]||null;return activeProfile;}
 // Kana-based matching stays local; kanji readings are supplied by the AI tool.
 export function nameReading(value){
   let name=String(value||'').trim();
@@ -64,7 +64,7 @@ export function nameSimilarity(left,right){
   return .55;
 }
 export function identifySpeaker(args){
-  if(args?.guest===true){activeSpeaker=null;guestSpeaker=true;return {identified:false,guest:true};}
+  if(args?.guest===true){activeSpeaker=null;activeProfile=null;guestSpeaker=true;return {identified:false,guest:true};}
   const name=text(args?.name,80);if(!name)throw new Error('本人の名前を確認してください');
   const reading=nameReading(args.name_reading||name);
   if(/[一-龯]/.test(name)&&!reading&&!args.id)throw new Error('漢字の推測表記で登録せず、本人の名前をひらがなのname_readingで渡してください');
@@ -80,12 +80,16 @@ export function identifySpeaker(args){
   }
   if(matches.length>1)return {identified:false,needsConfirmation:true,candidates:matches.map(p=>({id:p.id,name:p.name})),instruction:'同名候補を確認して人物IDを指定してください'};
   if(!matches.length&&users({name}).users.some(p=>p.kind==='robot'))throw new Error('本体とは別の名前を確認してください');
-  const person=matches[0]||saveUser({name:reading||name,name_reading:reading||undefined,nicknames:reading&&reading!==name?[name]:[],kind:'person',source_message_ids:args.source_message_id?[args.source_message_id]:[]}).users[0];
-  activeSpeaker=person.id;guestSpeaker=false;
+  let person=matches[0]||saveUser({name:reading||name,name_reading:reading||undefined,nicknames:reading&&reading!==name?[name]:[],kind:'person',source_message_ids:args.source_message_id?[args.source_message_id]:[]}).users[0];
+  if(matches.length&&args.name_reading&&reading){
+    const canonical=nameReading(person.name)===person.name?person.name:reading;
+    if(person.name!==canonical||person.name_reading!==canonical)person=saveUser({id:person.id,name:canonical,name_reading:canonical,nicknames:[...person.nicknames,...(person.name!==canonical?[person.name]:[])]}).users[0];
+  }
+  activeSpeaker=person.id;activeProfile=person;guestSpeaker=false;
   if(args.source_message_id){const source=text(args.source_message_id,100);db('UPDATE messages SET speaker_id=? WHERE id=? AND role=?',[person.id,source,'user']);db('INSERT OR IGNORE INTO message_context(message_id,user_id) SELECT id,? FROM messages WHERE id=?',[person.id,source]);}
   return {identified:true,instruction:'話者は確定しました。名前を聞き直したり再確認せず、名前を呼んで短く挨拶し通常会話へ進んでください。',newUser:!matches.length,person,now:Date.now(),timezone:'Asia/Tokyo',recent:history({user_id:person.id,limit:3}).items};
 }
-export function recordMemory(event){const owner=Object.hasOwn(event,'speakerId')?event.speakerId:activeSpeaker;db('INSERT OR IGNORE INTO messages(id,role,text,created,speaker_id) VALUES(?,?,?,?,?)',[event.id,event.role,event.text,event.created,event.role==='assistant'?'stackchan-self':owner]);if(owner)db('INSERT OR IGNORE INTO message_context(message_id,user_id) VALUES(?,?)',[event.id,owner]);if(typeof event.image==='string'&&/^photo-[a-z0-9-]+\.jpg$/.test(event.image))db('INSERT OR REPLACE INTO message_media(message_id,filename) VALUES(?,?)',[event.id,event.image]);}
+export function recordMemory(event){const owner=Object.hasOwn(event,'speakerId')?event.speakerId:activeSpeaker;if(owner===activeSpeaker&&activeProfile&&event.created>(activeProfile.lastConversation||0))activeProfile.lastConversation=event.created;db('INSERT OR IGNORE INTO messages(id,role,text,created,speaker_id) VALUES(?,?,?,?,?)',[event.id,event.role,event.text,event.created,event.role==='assistant'?'stackchan-self':owner]);if(owner)db('INSERT OR IGNORE INTO message_context(message_id,user_id) VALUES(?,?)',[event.id,owner]);if(typeof event.image==='string'&&/^photo-[a-z0-9-]+\.jpg$/.test(event.image))db('INSERT OR REPLACE INTO message_media(message_id,filename) VALUES(?,?)',[event.id,event.image]);}
 export function history(args={}){
   const limit=Math.max(1,Math.min(10,Math.floor(Number(args.limit)||5))),where=[],values=[];
   if(args.query){where.push('text LIKE ?');values.push('%'+text(args.query,120)+'%');}
@@ -132,7 +136,7 @@ export function saveUser(args){
     for(const source of strings(args.source_message_ids).slice(0,8))if(db('SELECT id FROM messages WHERE id=?',[source]).length)db('INSERT OR IGNORE INTO user_evidence(user_id,message_id) VALUES(?,?)',[id,source]);
     db('COMMIT');
   }catch(error){db('ROLLBACK');throw error;}
-  return users({id});
+  const saved=users({id});if(activeSpeaker===id)activeProfile=saved.users[0]||null;return saved;
 }
 export function memoryStatus(){return {messages:db('SELECT count(*) AS count FROM messages')[0].count,users:db('SELECT count(*) AS count FROM entities')[0].count,integrity:db('PRAGMA quick_check')[0].quick_check};}
 export function importLegacy(){

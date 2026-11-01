@@ -1,7 +1,7 @@
 import {fileURLToPath} from 'node:url';
 import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';
 const root=fileURLToPath(new URL('../../host/app/',import.meta.url));let data={api:{gemini:'DUMMY_KEY'},conversationProvider:'gemini',chatMode:false,directChat:{cloudConsent:true,endpoint:'wss://api.tenclass.net/test',deviceId:'00:00:00:00:00:00',clientId:'test-client',accessToken:'dummy',provisionedAt:Date.now()}};
-const sql=new DatabaseSync(':memory:');let sequence=0;const memContext=vm.createContext({native:()=>((q,args)=>sql.prepare(q).all(...args))});const sd=new vm.SyntheticModule(['withSDCard'],function(){this.setExport('withSDCard',fn=>fn({createDirectory(){},scan(){return []}}));},{context:memContext});const vault=new vm.SyntheticModule(['randomHex','getSettings'],function(){this.setExport('randomHex',()=>('person-'+(++sequence)));this.setExport('getSettings',()=>data);},{context:memContext});const module=new vm.SourceTextModule(fs.readFileSync(root+'archive-memory.js','utf8'),{context:memContext});await module.link(name=>name==='stackchan-sdcard'?sd:vault);await module.evaluate();const memory=module.namespace;
+const sql=new DatabaseSync(':memory:');let sequence=0,databaseCalls=0;const memContext=vm.createContext({native:()=>((q,args)=>{databaseCalls++;return sql.prepare(q).all(...args)})});const sd=new vm.SyntheticModule(['withSDCard'],function(){this.setExport('withSDCard',fn=>fn({createDirectory(){},scan(){return []}}));},{context:memContext});const vault=new vm.SyntheticModule(['randomHex','getSettings'],function(){this.setExport('randomHex',()=>('person-'+(++sequence)));this.setExport('getSettings',()=>data);},{context:memContext});const module=new vm.SourceTextModule(fs.readFileSync(root+'archive-memory.js','utf8'),{context:memContext});await module.link(name=>name==='stackchan-sdcard'?sd:vault);await module.evaluate();const memory=module.namespace;
 // Match the production XS build: method exists but Japanese normalization throws.
 vm.runInContext("String.prototype.normalize=function(){throw new RangeError('not built-in')}",memContext);
 assert.equal(memory.nameReading('ｹﾝﾄ'),'けんと');assert.equal(memory.nameReading('ﾍﾞﾝﾄ'),'べんと');assert.equal(memory.nameReading('ヘ\u3099ント'),'べんと');assert.equal(memory.nameReading('ﾊﾟﾝ'),'ぱん');
@@ -257,3 +257,13 @@ console.log('PASS: kana and near homophones reuse the person; ambiguous names do
 
 const mistaken=memory.saveUser({name:'ベント'}).users[0];memory.beginConversation();assert.equal(memory.identifySpeaker({name:'ベント',name_reading:'けんと'}).person.id,kento.id);assert.notEqual(mistaken.id,kento.id);
 console.log('PASS: explicit hiragana reading takes priority over an older erroneous spelling');
+
+memory.identifySpeaker({id:kento.id,name:'けんと'});const beforeCachedRead=databaseCalls;
+for(let n=0;n<100;n++)assert.equal(memory.currentSpeaker().id,kento.id);
+assert.equal(databaseCalls,beforeCachedRead);
+memory.saveUser({id:kento.id,name:'けんと',likes:['カレー']});assert.ok(memory.currentSpeaker().likes.includes('カレー'));
+const futureTime=Date.now()+1000;memory.recordMemory({id:'cached-latest-time',role:'assistant',text:'こんにちは',created:futureTime});assert.equal(memory.currentSpeaker().lastConversation,futureTime);
+const misheard=memory.saveUser({name:'ゼント',likes:['読書']}).users[0];memory.beginConversation();
+const corrected=memory.identifySpeaker({id:misheard.id,name:'ゼント',name_reading:'けんと'});
+assert.equal(corrected.person.id,misheard.id);assert.equal(corrected.person.name,'けんと');assert.ok(corrected.person.likes.includes('読書'));assert.ok(corrected.person.nicknames.includes('ゼント'));assert.equal(memory.currentSpeaker().name,'けんと');
+console.log('PASS: repeated speaker status uses cache, updates stay visible, confirmed kana corrects display without changing identity or losing profile');

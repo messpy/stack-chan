@@ -214,3 +214,21 @@ void xs_archive_debug_write(xsMachine *the) {
     if(sent!=(int)length+6)sc_log_usb_dropped++;
     xsmcSetBoolean(xsResult,sent==(int)length+6);
 }
+
+// Small scalar-only RAM snapshot; no allocation contents or keys are exposed.
+void xs_archive_heap_status(xsMachine *the) {
+    xsmcVars(1);
+    xsmcSetNewObject(xsResult);
+    const uint32_t internal=MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT;
+    const uint32_t external=MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT;
+#define SC_HEAP_FIELD(name,value) xsmcSetInteger(xsVar(0),(int)(value));xsmcSet(xsResult,xsID(name),xsVar(0))
+    SC_HEAP_FIELD("internalFree",heap_caps_get_free_size(internal));
+    SC_HEAP_FIELD("internalMinimum",heap_caps_get_minimum_free_size(internal));
+    SC_HEAP_FIELD("internalLargest",heap_caps_get_largest_free_block(internal));
+    SC_HEAP_FIELD("internalTotal",heap_caps_get_total_size(internal));
+    SC_HEAP_FIELD("psramFree",heap_caps_get_free_size(external));
+    SC_HEAP_FIELD("psramMinimum",heap_caps_get_minimum_free_size(external));
+    SC_HEAP_FIELD("psramLargest",heap_caps_get_largest_free_block(external));
+    SC_HEAP_FIELD("psramTotal",heap_caps_get_total_size(external));
+#undef SC_HEAP_FIELD
+}

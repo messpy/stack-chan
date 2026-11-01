@@ -68,6 +68,7 @@ export default class ChatAudioIO extends ChatAudioIOBase {
         offset: this.inputBufferOffset,
         size: data.byteLength,
         channels: input.channels,
+        capturedAt: Date.now(),
       })
     }
     this.inputBufferOffset += data.byteLength

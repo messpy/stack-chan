@@ -1,3 +1,4 @@
+import {heapStatus} from 'archive-usb'
 import { ollamaChat, ollamaModel, validOllamaModel, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
 import { VoiceRegistration, enrollmentInstructions, explicitSpeakerName } from 'archive-speaker-registration'
 import { speakerButtons } from 'archive-button-schema'
@@ -310,6 +311,7 @@ export function directChatStatus() {
     error,
     detail,
     audio: { ...audioStats },
+    memory: typeof heapStatus==='function'?heapStatus():null,
     playback:globalThis.stackchanPlaybackHealth||null,
     busy: !!chat || connecting,
     phase: state,
