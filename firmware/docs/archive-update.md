@@ -28,3 +28,7 @@ Node・Moddable・ESP-IDFの環境を読み込み、npmの公式ラッパーで�
 ## 2026-11-01 マイク設定の修正（実行待ち）
 
 ChatAudioIOのmono設定がCoreS3のstereo構成を上書きしていたため、archive manifestで16kHz・2ch入力を指定しました。入力ドライバーはstereoとして読み、Gemini workerのmonoPCMで16kHz・1chへ変換して送ります。次回更新後に、生成されたmc.defines.hのMODDEF_AUDIOIN_NUMCHANNELS=2を確認し、録音中5秒あたり約160000バイトのmono送信になるか（処理遅延分を考慮）をログで確認してください。設定変更によりネイティブ部分のビルドにも時間がかかる場合があります。
+
+## SDK Promiseキュー停止対策
+
+2026-11-01の実機JTAG調査で、名前確定後の画面・USB停止がSDKのPromise予約キュー待ちと判明しました。更新シェルは環境準備後、`scripts/patch-promise-checkpoint.py` を実行して再現可能なSDK修正を適用します。詳細と実機確認項目は `docs/archive-promise-deadlock.md` を参照してください。SDKネイティブ部分の再ビルドになるため、次の更新は普段より時間がかかる場合があります。

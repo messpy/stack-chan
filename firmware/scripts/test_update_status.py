@@ -16,6 +16,7 @@ class UpdateStatusTests(unittest.TestCase):
             (root / 'host/app/manifest_archive_private.json').write_text('{}')
             for name in ('update-archive.sh', 'update-status.py'):
                 shutil.copyfile(Path(__file__).with_name(name), root / 'scripts' / name)
+            (root / 'scripts/patch-promise-checkpoint.py').write_text('print("SDK patch fixture")\n')
             binary = root / 'bin'
             binary.mkdir()
             npm = binary / 'npm'
