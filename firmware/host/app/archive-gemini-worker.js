@@ -24,6 +24,14 @@ class ArchiveGeminiLiveModel extends GoogleGeminiLiveModel {
       this.inputStats=null;
     }
   }
+  toolCall(data) {
+    if(!data.functionCalls?.length)return;
+    // The SDK switches main to playback for a tool call but leaves this flag
+    // true. Mark the response active so even a tool-only completion drains
+    // playback and returns to microphone input.
+    this.speaking=false;
+    super.toolCall(data);
+  }
   serverContent(data) {
     // The SDK emits the input delimiter before reading transcription in the
     // same packet. Process text first, and flush late text at turn completion.
@@ -42,7 +50,9 @@ class ArchiveGeminiLiveModel extends GoogleGeminiLiveModel {
     delete content.outputTranscription;
     const startsAudio = data.modelTurn?.parts?.some(part => part.inlineData?.mimeType === 'audio/pcm;rate=24000');
     if ((startsAudio || data.turnComplete) && this.pendingInputTranscript) this.finishInputTranscript();
+    const completesWithoutPlayback=data.turnComplete&&this.speaking&&!startsAudio;
     super.serverContent(content);
+    if(completesWithoutPlayback)this.postMessage({id:'receiveOutputText',text:''});
     if (data.turnComplete) trace('[gemini] response turn complete\n');
   }
   finishInputTranscript() {

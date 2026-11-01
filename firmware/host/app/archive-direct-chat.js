@@ -639,6 +639,7 @@ async function connect() {
           if(input.trim()){const event=archive('input',input);lastInputId=event?.id||'';input=''}
           if (!lastInputId) throw new Error('本人が名乗ってから登録してください')
           const result = callMemory(name, {...args, source_message_id:lastInputId})
+          if(result.identified)identityNotice=''
           trace(result.identified?'[speaker] AI identity resolved\n':'[speaker] identity candidate confirmation needed\n')
           showSpeakerStrip()
           return result

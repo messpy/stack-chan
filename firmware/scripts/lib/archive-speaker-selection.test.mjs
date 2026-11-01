@@ -146,9 +146,10 @@ c.archiveEvent=(role,text)=>{const e={id:'ai-callback-'+(++sequence),role:role==
 data.conversationProvider='gemini';
 vm.runInContext('setChatMode(false);archive=archiveEvent;setChatMode(true)',c);await vm.runInContext('connect()',c);
 const aiSession=connections.at(-1);aiSession.callbacks.onInputTranscript('私の名前はアオです',false);
+vm.runInContext("identityNotice='pending local identification notice'",c);
 aiSession.callbacks.onFunctionCall('identity-call','conversation_identify',{name:'アオ'});
 await new Promise(resolve=>setImmediate(resolve));
-assert.equal(toolReply.result.identified,true);assert.equal(toolReply.result.newUser,false); // explicit transcript already saved this person
+assert.equal(toolReply.result.identified,true);assert.equal(vm.runInContext('identityNotice',c),'');assert.equal(toolReply.result.newUser,false); // explicit transcript already saved this person
 assert.equal(memory.users({name:'アオ'}).users.length,1);
 assert.equal(memory.currentSpeaker().name,'あお');
 assert.ok(memory.history({user_id:memory.currentSpeaker().id}).items.some(m=>m.text==='私の名前はアオです'));
