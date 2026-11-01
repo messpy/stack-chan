@@ -147,7 +147,7 @@ aiSession.callbacks.onFunctionCall('identity-call','conversation_identify',{name
 await new Promise(resolve=>setImmediate(resolve));
 assert.equal(toolReply.result.identified,true);assert.equal(toolReply.result.newUser,false); // explicit transcript already saved this person
 assert.equal(memory.users({name:'アオ'}).users.length,1);
-assert.equal(memory.currentSpeaker().name,'アオ');
+assert.equal(memory.currentSpeaker().name,'あお');
 assert.ok(memory.history({user_id:memory.currentSpeaker().id}).items.some(m=>m.text==='私の名前はアオです'));
 assert.ok(toolReply.result.now);assert.ok(Array.isArray(toolReply.result.recent));
 vm.runInContext('setChatMode(false)',c);
@@ -237,3 +237,19 @@ c.manualChat={setMicrophoneEnabled(value){manualEnabled=value},startListening(mo
 data.chatMode=true;vm.runInContext("chat=manualChat;state='listening';requestListening()",c);
 assert.equal(manualEnabled,true);assert.equal(manualMode,'auto');assert.equal(JSON.stringify(memory.currentSpeaker()),personBefore);assert.equal(vm.runInContext('chat===manualChat',c),true);
 console.log('PASS: tap to listen rearms the current session without re-registering or changing the person');
+
+const kento=memory.saveUser({name:'けんと',name_reading:'けんと'}).users[0];
+const countBeforeNames=memory.users({limit:50}).users.length;
+for(const name of ['ケント','ベント']){memory.beginConversation();const found=memory.identifySpeaker({name});assert.equal(found.person.id,kento.id);assert.equal(found.newUser,false);}
+memory.beginConversation();assert.equal(memory.identifySpeaker({name:'検討',name_reading:'けんとう'}).person.id,kento.id);
+assert.equal(memory.users({limit:50}).users.length,countBeforeNames);
+assert.equal(memory.users({id:kento.id}).users[0].name_reading,'けんと');
+assert.throws(()=>memory.identifySpeaker({name:'検討'}));
+memory.saveUser({name:'けんた'});memory.saveUser({name:'けんが'});
+memory.beginConversation();const ambiguous=memory.identifySpeaker({name:'けんだ'});assert.equal(ambiguous.identified,false);assert.equal(ambiguous.needsConfirmation,true);assert.equal(memory.currentSpeaker(),null);
+assert.equal(memory.users({limit:50}).users.length,countBeforeNames+2);
+assert.equal(memory.nameSimilarity('けんと','せんご'),0);assert.equal(memory.nameSimilarity('あき','まき'),0);
+console.log('PASS: kana and near homophones reuse the person; ambiguous names do not create profiles');
+
+const mistaken=memory.saveUser({name:'ベント'}).users[0];memory.beginConversation();assert.equal(memory.identifySpeaker({name:'ベント',name_reading:'けんと'}).person.id,kento.id);assert.notEqual(mistaken.id,kento.id);
+console.log('PASS: explicit hiragana reading takes priority over an older erroneous spelling');

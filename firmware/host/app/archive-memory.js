@@ -6,6 +6,7 @@ function mounted(fn){return withSDCard(root=>{try{root.createDirectory('stackcha
 function initialize(){if(ready)return;mounted(()=>{
   run('PRAGMA journal_mode=PERSIST',[]);run('PRAGMA synchronous=FULL',[]);run('PRAGMA temp_store=MEMORY',[]);
   run('CREATE TABLE IF NOT EXISTS entities(id TEXT PRIMARY KEY,name TEXT NOT NULL,kind TEXT NOT NULL DEFAULT \'person\',nicknames TEXT NOT NULL DEFAULT \'[]\',likes TEXT NOT NULL DEFAULT \'[]\',about TEXT NOT NULL DEFAULT \'\',updated_at INTEGER NOT NULL)',[]);
+  run("CREATE TABLE IF NOT EXISTS name_readings(user_id TEXT PRIMARY KEY,reading TEXT NOT NULL)",[]);
   run('CREATE INDEX IF NOT EXISTS users_name ON entities(name COLLATE NOCASE)',[]);
   run('CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,role TEXT NOT NULL,text TEXT NOT NULL,created INTEGER NOT NULL,speaker_id TEXT)',[]);
   run('CREATE TABLE IF NOT EXISTS message_context(message_id TEXT NOT NULL,user_id TEXT NOT NULL,PRIMARY KEY(message_id,user_id))',[]);
@@ -26,14 +27,51 @@ function text(value,max=512){return typeof value==='string'?value.trim().slice(0
 function profile(row){return {...row,lastConversation:row.lastConversation||null,nicknames:JSON.parse(row.nicknames),likes:JSON.parse(row.likes)};}
 export function beginConversation(){activeSpeaker=null;guestSpeaker=false;}
 export function currentSpeaker(){if(guestSpeaker)return {guest:true};return activeSpeaker?users({id:activeSpeaker}).users[0]||null:null;}
+// Kana-based matching stays local; kanji readings are supplied by the AI tool.
+export function nameReading(value){
+  let name=String(value||'').trim();
+  if(typeof name.normalize==='function')name=name.normalize('NFKC');
+  name=name.replace(/[ァ-ヶ]/g,c=>String.fromCharCode(c.charCodeAt(0)-0x60)).replace(/[\s・･]/g,'').replace(/(?:さん|くん|ちゃん)$/,'');
+  return /^[ぁ-ゖー]+$/.test(name)?name:'';
+}
+function distance(a,b){
+  let row=Array.from({length:b.length+1},(_,i)=>i);
+  for(let i=0;i<a.length;i++){const next=[i+1];for(let j=0;j<b.length;j++)next[j+1]=Math.min(next[j]+1,row[j+1]+1,row[j]+(a[i]===b[j]?0:1));row=next;}
+  return row[b.length];
+}
+function vowels(value){
+  const groups=['あかがさざただなはばぱまゃやらわぁ','いきぎしじちぢにひびぴみりぃ','うくぐすずつづぬふぶぷむゅゆるぅ','えけげせぜてでねへべぺめれぇ','おこごそぞとどのほぼぽもょよろをぉ'];
+  return Array.from(value,c=>c==='ん'?'N':c==='っ'?'Q':c==='ー'?'':String(groups.findIndex(g=>g.includes(c)))).join('');
+}
+export function nameSimilarity(left,right){
+  const a=nameReading(left),b=nameReading(right);if(!a||!b)return 0;
+  if(a===b)return 1;
+  if(Math.min(a.length,b.length)<3||Math.abs(a.length-b.length)>1||distance(a,b)!==1)return 0;
+  // A vowel pattern alone is insufficient: allow only one changed kana,
+  // or a trailing long vowel, with the remaining kana preserved.
+  if(a.length===b.length&&vowels(a)===vowels(b))return .86;
+  const long=a.length>b.length?a:b,short=a.length>b.length?b:a;
+  if(long.slice(0,-1)===short&&/[うおー]$/.test(long))return .86;
+  return .55;
+}
 export function identifySpeaker(args){
   if(args?.guest===true){activeSpeaker=null;guestSpeaker=true;return {identified:false,guest:true};}
   const name=text(args?.name,80);if(!name)throw new Error('本人の名前を確認してください');
-  let matches=users(args.id?{id:args.id}:{name}).users.filter(p=>p.kind==='person'&&(p.name.toLowerCase()===name.toLowerCase()||p.nicknames.some(n=>n.toLowerCase()===name.toLowerCase())));
-  if(matches.length>1)throw new Error('同名の人物が複数います。本人に確認して人物IDを指定してください');
-  if(args.id&&!matches.length)throw new Error('人物IDと名前が一致しません');
+  const reading=nameReading(args.name_reading||name);
+  if(/[一-龯]/.test(name)&&!reading&&!args.id)throw new Error('漢字の推測表記で登録せず、本人の名前をひらがなのname_readingで渡してください');
+  const people=users(args.id?{id:args.id}:{limit:50}).users.filter(p=>p.kind==='person');
+  const exact=p=>p.name.toLowerCase()===name.toLowerCase()||p.nicknames.some(n=>n.toLowerCase()===name.toLowerCase());
+  const readingMatches=reading?people.filter(p=>[p.name_reading,p.name,...p.nicknames].some(n=>nameSimilarity(reading,n)===1)):[];
+  let matches=args.id?people.filter(p=>p.id===args.id):(readingMatches.length?readingMatches:people.filter(exact));
+  if(args.id&&!matches.length)throw new Error('人物IDが見つかりません');
+  if(!matches.length&&reading){
+    const ranked=people.map(person=>({person,score:Math.max(...[person.name_reading,person.name,...person.nicknames].map(n=>nameSimilarity(reading,n)))})).filter(p=>p.score>0).sort((a,b)=>b.score-a.score);
+    if(ranked.length&&ranked[0].score>=.86&&(!ranked[1]||ranked[0].score-ranked[1].score>=.1))matches=[ranked[0].person];
+    else if(ranked.length)return {identified:false,needsConfirmation:true,candidates:ranked.slice(0,3).map(p=>({id:p.person.id,name:p.person.name,name_reading:p.person.name_reading})),instruction:'候補を本人に確認し、正しい人物IDで呼び直してください。新規登録しないでください。'};
+  }
+  if(matches.length>1)return {identified:false,needsConfirmation:true,candidates:matches.map(p=>({id:p.id,name:p.name})),instruction:'同名候補を確認して人物IDを指定してください'};
   if(!matches.length&&users({name}).users.some(p=>p.kind==='robot'))throw new Error('本体とは別の名前を確認してください');
-  const person=matches[0]||saveUser({name,kind:'person',source_message_ids:args.source_message_id?[args.source_message_id]:[]}).users[0];
+  const person=matches[0]||saveUser({name:reading||name,name_reading:reading||undefined,nicknames:reading&&reading!==name?[name]:[],kind:'person',source_message_ids:args.source_message_id?[args.source_message_id]:[]}).users[0];
   activeSpeaker=person.id;guestSpeaker=false;
   if(args.source_message_id){const source=text(args.source_message_id,100);db('UPDATE messages SET speaker_id=? WHERE id=? AND role=?',[person.id,source,'user']);db('INSERT OR IGNORE INTO message_context(message_id,user_id) SELECT id,? FROM messages WHERE id=?',[person.id,source]);}
   return {identified:true,newUser:!matches.length,person,now:Date.now(),timezone:'Asia/Tokyo',recent:history({user_id:person.id,limit:3}).items};
@@ -59,7 +97,7 @@ export function deviceHistory(args={}){
 
 export function users(args={}){
   const name=text(args.name,80),id=text(args.id,64);let rows;
-  const base='SELECT p.*,(SELECT MAX(created) FROM messages WHERE speaker_id=p.id OR id IN (SELECT message_id FROM message_context WHERE user_id=p.id)) AS lastConversation FROM user_profile p';
+  const base='SELECT p.*,(SELECT reading FROM name_readings WHERE user_id=p.id) AS name_reading,(SELECT MAX(created) FROM messages WHERE speaker_id=p.id OR id IN (SELECT message_id FROM message_context WHERE user_id=p.id)) AS lastConversation FROM user_profile p';
   if(id)rows=db(base+' WHERE p.id=? LIMIT 5',[id]);
   else if(name)rows=db(base+' WHERE name LIKE ? OR nicknames LIKE ? ORDER BY updated_at DESC LIMIT 5',['%'+name+'%','%'+name+'%']);
   else rows=db(base+' ORDER BY lastConversation DESC,updated_at DESC LIMIT ?',[Math.min(50,Math.max(1,Number(args.limit)||5))]);
@@ -77,6 +115,9 @@ export function saveUser(args){
   const about=args.about===undefined?(old?.about||''):text(args.about,1000);
   db('BEGIN IMMEDIATE');try{
     db('INSERT INTO entities(id,name,kind,nicknames,likes,about,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,nicknames=excluded.nicknames,likes=excluded.likes,about=excluded.about,updated_at=excluded.updated_at',[id,name,kind,JSON.stringify(nicknames),JSON.stringify(likes),about,Date.now()]);
+    const reading=nameReading(args.name_reading||(!old?name:''));
+    if(args.name_reading!==undefined&&!reading)throw new Error('読みはひらがなで入力してください');
+    if(reading)db('INSERT OR REPLACE INTO name_readings(user_id,reading) VALUES(?,?)',[id,reading]);
     const fields=['stackchan_name','family','hobbies','location'];
     if(fields.some(k=>args[k]!==undefined)){const oldDetails=db('SELECT * FROM profile_details WHERE user_id=?',[id])[0]||{};db('INSERT OR REPLACE INTO profile_details(user_id,stackchan_name,family,hobbies,location) VALUES(?,?,?,?,?)',[id,...fields.map(k=>args[k]===undefined?(oldDetails[k]||''):text(args[k],240))]);}
     for(const source of strings(args.source_message_ids).slice(0,8))if(db('SELECT id FROM messages WHERE id=?',[source]).length)db('INSERT OR IGNORE INTO user_evidence(user_id,message_id) VALUES(?,?)',[id,source]);
@@ -96,10 +137,10 @@ export function importLegacy(){
   db('INSERT OR REPLACE INTO memory_meta(key,value) VALUES(?,?)',['legacy-imported','1']);
 }
 export const memoryTools=[
- {name:'conversation_identify',description:'新しい会話はまず「あなたは誰？お名前を教えて」と本人の名前を尋ねる。本人が名乗った後にこの道具で現在の話者を確定し、その後に通常の会話へ進む。第三者の名前や推測で確定しない。同名候補が複数なら本人に確認する。返った本人プロフィールを参照できるが、音声による本人認証ではない。',inputSchema:{type:'object',properties:{name:{type:'string'},id:{type:'string'},guest:{type:'boolean',description:'本人が名前を名乗りたくないと明示した場合のみtrue'}},additionalProperties:false}},
+ {name:'conversation_identify',description:'新しい会話はまず「あなたは誰？お名前を教えて」と本人の名前を尋ねる。本人が名乗った後、名前を漢字に推測変換せずひらがなのname_readingを必ず添えてこの道具で現在の話者を確定し、その後に通常の会話へ進む。第三者の名前や推測で確定しない。同名候補が複数なら本人に確認する。返った本人プロフィールを参照できるが、音声による本人認証ではない。',inputSchema:{type:'object',properties:{name:{type:'string'},name_reading:{type:'string',description:'本人が言った名前のひらがなの読み。漢字表記は推測しない'},id:{type:'string'},guest:{type:'boolean',description:'本人が名前を名乗りたくないと明示した場合のみtrue'}},additionalProperties:false}},
  {name:'conversation_history',description:'必要な会話だけをSDから検索する。queryでキーワード、minutes_ago:60で約1時間前（前後10分）を指定できる。全履歴を一括取得しない。',inputSchema:{type:'object',properties:{query:{type:'string'},minutes_ago:{type:'number'},window_minutes:{type:'number'},after:{type:'string'},before:{type:'string'},user_id:{type:'string'},limit:{type:'integer',minimum:1,maximum:10}},additionalProperties:false}},
  {name:'user_lookup',description:'会話に登場する人物を名前・ニックネーム・人物IDで探し、プロフィールのみ取得する。会話本文は含まない。曖昧な人物は確認する。',inputSchema:{type:'object',properties:{name:{type:'string'},id:{type:'string'}},additionalProperties:false}},
- {name:'user_remember',description:'会話で明示された人物の名前、ニックネーム、好み、人柄などをusersへ保存・訂正する。推測を事実として保存しない。既存人物はuser_lookupで確認してIDを指定し、更新する配列は現在の内容を含めて渡す。source_message_idsに根拠となる会話IDを付ける。',inputSchema:{type:'object',properties:{id:{type:'string'},name:{type:'string'},kind:{type:'string',enum:['person','robot']},nicknames:{type:'array',items:{type:'string'}},likes:{type:'array',items:{type:'string'}},about:{type:'string'},stackchan_name:{type:'string'},family:{type:'string'},hobbies:{type:'string'},location:{type:'string'},source_message_ids:{type:'array',items:{type:'string'}}},required:['name'],additionalProperties:false}}
+ {name:'user_remember',description:'会話で明示された人物の名前、ニックネーム、好み、人柄などをusersへ保存・訂正する。推測を事実として保存しない。既存人物はuser_lookupで確認してIDを指定し、更新する配列は現在の内容を含めて渡す。source_message_idsに根拠となる会話IDを付ける。',inputSchema:{type:'object',properties:{id:{type:'string'},name:{type:'string'},name_reading:{type:'string'},kind:{type:'string',enum:['person','robot']},nicknames:{type:'array',items:{type:'string'}},likes:{type:'array',items:{type:'string'}},about:{type:'string'},stackchan_name:{type:'string'},family:{type:'string'},hobbies:{type:'string'},location:{type:'string'},source_message_ids:{type:'array',items:{type:'string'}}},required:['name'],additionalProperties:false}}
 ];
 export function callMemory(name,args){if(name==='conversation_identify')return identifySpeaker(args);if(name==='conversation_history')return history(args);if(name==='user_lookup')return users(args);if(name==='user_remember')return saveUser(args);throw new Error('Unknown memory tool');}
 
