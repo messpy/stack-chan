@@ -4,16 +4,17 @@ set -Eeuo pipefail
 umask 077
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 if [[ ${1:-} == --help ]]; then
-  echo 'Usage: scripts/update-archive.sh [--build-only]'
+  echo 'Usage: scripts/update-archive.sh [--build-only|--flash-only]'
   echo 'Optional: STACKCHAN_NODE_BIN, STACKCHAN_XS_ENV, STACKCHAN_IDF_ENV, STACKCHAN_HUB_SERVICE'
   exit 0
 fi
 mode=${1:-}
-[[ -z $mode || $mode == --build-only ]] || { echo 'Unknown option' >&2; exit 2; }
+[[ -z $mode || $mode == --build-only || $mode == --flash-only ]] || { echo 'Unknown option' >&2; exit 2; }
 mkdir -p dist/update-logs
 log_file="$PWD/dist/update-logs/$(date +%Y%m%d-%H%M%S)-$$.log"
-exec > >(tee -a "$log_file") 2>&1
-printf 'Update log: %s\n' "$log_file"
+exec 3>&1
+exec >> "$log_file" 2>&1
+printf 'Update log: %s\n' "$log_file" >&3
 exec 9>dist/update-logs/update.lock
 flock -n 9 || { echo 'Another firmware update is running.' >&2; exit 1; }
 node_bin=${STACKCHAN_NODE_BIN:-/mnt/data/Development/node22/current/bin}
@@ -32,12 +33,16 @@ finish() {
   if $restart_hub; then
     systemctl --user start "$service" || { echo 'Failed to restart USB hub.' >&2; result=1; }
   fi
-  printf 'Update finished: exit=%s; log=%s\n' "$result" "$log_file"
+  if (( result != 0 )); then tail -n 12 "$log_file" >&3; fi
+  printf 'Update finished: exit=%s; log=%s\n' "$result" "$log_file" >&3
   exit "$result"
 }
 trap finish EXIT
 # Keep incremental outputs; do not clean or build a second custom output tree.
-npm run build:archive
+if [[ $mode != --flash-only ]]; then
+  echo "Building firmware (details in log)…" >&3
+  npm run build:archive
+fi
 [[ $mode != --build-only ]] || exit 0
 shopt -s nullglob
 ports=(/dev/ttyACM* /dev/ttyUSB*)
@@ -47,4 +52,6 @@ if systemctl --user is-active --quiet "$service"; then
   restart_hub=true
   systemctl --user stop "$service"
 fi
+echo "Flashing firmware…" >&3
+export UPLOAD_PORT="${ports[0]}"
 npm run deploy:archive
