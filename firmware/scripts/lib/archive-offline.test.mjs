@@ -64,3 +64,20 @@ console.log('PASS: boot announcement says only the device name and releases audi
 const bootPolicy=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(new URL('../../host/app/archive-offline-speech.js',import.meta.url))).toString('base64'));
 assert.equal(bootPolicy.bootSpeechEnabled({}),true);assert.equal(bootPolicy.bootSpeechEnabled({bootSpeak:true}),true);assert.equal(bootPolicy.bootSpeechEnabled({bootSpeak:false}),false);
 console.log('PASS: startup local speech defaults on and respects an explicit off setting');
+
+// A reboot during notification must suppress the interrupted occurrence only.
+wall=Date.parse('2026-11-01T11:00:00Z');
+settings.reminders=[{id:'interrupted-once',kind:'timer',status:'pending',notificationStarted:wall-1000,due:wall-1000},{id:'interrupted-daily',kind:'alarm',status:'pending',notificationStarted:wall-1000,due:wall-1000,repeat:'daily',hour:7,minute:10},{id:'untouched',kind:'alarm',status:'scheduled',due:wall+100000}];
+tools.startDeviceTools({drawer:{addDrawerButton(){}}},()=>false,()=>{});
+assert.equal(settings.reminders[0].status,'cancelled');
+assert.equal(settings.reminders[1].status,'scheduled');assert.ok(settings.reminders[1].due>wall);assert.equal(settings.reminders[1].hour,7);assert.equal(settings.reminders[1].minute,10);
+assert.equal(settings.reminders[2].due,wall+100000);assert.equal(settings.reminders[2].status,'scheduled');
+const recovered=JSON.stringify(settings.reminders);tools.startDeviceTools({drawer:{addDrawerButton(){}}},()=>false,()=>{});assert.equal(JSON.stringify(settings.reminders),recovered);
+console.log('PASS: interrupted notification cannot reboot-loop; daily reservation survives and unrelated jobs remain unchanged');
+settings.reminders=[{id:'normal-daily',kind:'alarm',status:'pending',due:wall-1000,repeat:'daily',hour:7,minute:10}];
+tools.startDeviceTools({drawer:{addDrawerButton(){}},showBalloon(){},hideBalloon(){}},()=>true,()=>{});
+callbacks.filter(c=>c.ms===1000).at(-1).fn();
+assert.equal(settings.reminders[0].notificationStarted,wall,'persist notification start before playing');
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(settings.reminders[0].status,'scheduled');assert.equal(settings.reminders[0].notificationStarted,undefined,'normal completion clears recovery marker for next occurrence');
+console.log('PASS: normal daily notification saves a start marker before playback and clears it on completion');

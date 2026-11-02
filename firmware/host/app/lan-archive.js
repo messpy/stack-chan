@@ -1,4 +1,10 @@
+import {mediaTrash,mediaFilePage} from 'archive-media-trash';
+import {createLANMonitor} from 'archive-lan-monitor';
+import AudioIn from 'embedded:io/audio/in';
+import {TTS as MonitorTTS} from 'archive-offline-tts';
+import {prepareRecognitionPCM} from 'archive-usb';
 import {bootSpeechEnabled} from 'archive-offline-speech';
+import {startCustomFace,faceCommand} from 'archive-custom-face';
 import {startHistoryUI} from 'archive-history-ui';
 import {startTimerUI} from 'archive-timer-ui';
 import {createAlarmDance} from 'archive-alarm-motion';
@@ -7,7 +13,7 @@ import {startDebugDrain,armDebugDrain,debugLogStatus} from 'archive-debug';
 import {startChecks,checkStatus} from 'archive-checks';
 import {Emotion} from 'face-state';
 import {OfflinePolicy} from 'archive-offline-policy';
-import {getSettings,changeSettings} from 'archive-vault';
+import {getSettings,changeSettings,randomHex} from 'archive-vault';
 import {startLocalClock,setLocalTime,localClockStatus} from 'archive-local-clock';
 import {startOffline,openOffline,closeOffline,offlineAction,offlineStatus} from 'archive-offline';
 import {checkOllama} from 'archive-ollama';
@@ -21,7 +27,7 @@ import {analyzeJPEG,visionStatus} from 'archive-vision';
 import {startAlarmSettings,openAlarmSettings,showRingingAlarm,hideRingingAlarm} from 'archive-alarm-ui';
 import {alarmSoundCommand,playAlarmSound} from 'archive-alarm-sound';
 import {startWeb,openControl,controlStatus} from 'archive-web';
-import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat} from 'archive-direct-chat';
+import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat} from 'archive-direct-chat';
 import {recordMemory,history,deviceHistory,currentSpeaker,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
 import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
 import {acceptAudioChunk} from 'archive-audio-upload';
@@ -67,6 +73,21 @@ export function archiveTranscript(role,text,eventId,image,speakerId) {
     try{recordMemory(event);}catch(_){trace('[memory] transcript database write failed\n');}
     return event;
   } catch(e) {lastError=String(e);trace('[archive] transcript could not be saved\n');}
+}
+// Preview frames stay in RAM: no SD writes or cloud image recognition.
+async function cameraPreview(robot) {
+ if(busy)throw new Error('本体で処理中です。会話や録画を停止してからお試しください');
+ const paused=pauseDirectChat();
+ if(busy){if(paused)resumeDirectChat();throw new Error('本体で処理中です');}
+ busy=true;
+ let frame;
+ try{
+  frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});
+  if(!frame)throw new Error('カメラの画像を取得できませんでした');
+  return encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
+ }finally{
+  try{frame?.close?.();}finally{try{robot.camera.stop();}finally{busy=false;if(paused)resumeDirectChat();}}
+ }
 }
 async function photo(robot,args={},fromConversation=false) {
  const wasBusy=busy;if(busy&&!fromConversation)throw new Error('Camera busy');busy=true;
@@ -154,15 +175,17 @@ async function recordAudio(robot) {
   }finally{microphoneIndicator(false);busy=false;}
 }
 export function startArchive(robot) {
+  let monitor,monitorVoice;
   startDebugDrain();
   startLocalClock();
-  startOffline(robot,{stopCloud:()=>{if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings,startCloud:()=>setChatMode(true),openAI:()=>robot.ui.application.behavior.launchMiniApp('archive-ai-settings')});
+  startCustomFace(robot);
+  startOffline(robot,{stopCloud:()=>{if(directChatStatus().recognitionMode)setRecognitionMode(false);if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings,startCloud:()=>setChatMode(true),openAI:()=>robot.ui.application.behavior.launchMiniApp('archive-ai-settings')});
   startHistoryUI(robot,{read:args=>{importLegacy();return deviceHistory(args);},people:()=>users({limit:50}).users.filter(p=>p.kind==='person'),current:currentSpeaker});
   startVolume(robot);
   startAISettings(robot,{status:directChatStatus,select:configureChatProvider,mode:setChatMode});
   startWiFiDisplay(robot);
   try{startSettings(robot);}catch(_){trace('[settings] initialization failed; USB remains available\n');}
-  try{startDeviceTools(robot,()=>{if(directChatStatus().busy)pauseDirectChat();if(busy)return false;busy=true;return true;},()=>{busy=false;resumeDirectChat();});}catch(_){trace('[tools] initialization failed; USB remains available\n');}
+  try{startDeviceTools(robot,()=>{if(monitor?.active){monitor.stopCurrent().catch(()=>{});return false;}if(directChatStatus().busy)pauseDirectChat();if(busy)return false;busy=true;return true;},()=>{busy=false;resumeDirectChat();});}catch(_){trace('[tools] initialization failed; USB remains available\n');}
   startTimerUI(robot,{create:args=>callDeviceTool('timer_create',args),status:reminderStatus});
   startAlarmSettings(robot,{create:args=>callDeviceTool('alarm_create',args),list:()=>callDeviceTool('reminder_list'),cancel:id=>callDeviceTool('reminder_cancel',{id}),stop:()=>callDeviceTool('alarm_stop')});
   setAlarmDisplay({show:showRingingAlarm,close:hideRingingAlarm});
@@ -171,12 +194,41 @@ export function startArchive(robot) {
   if(!token)return;
   globalThis.stackchanArchiveTranscript=archiveTranscript;
   globalThis.abort=(reason,exception)=>{try{writeUSB(JSON.stringify({event:'fatal',reason:String(reason),detail:String(exception).slice(0,300)}));}catch(_){};rebootUSB();return true;};
+  monitor=createLANMonitor({robot,now:()=>Date.now(),repeat:(fn,ms)=>Timer.repeat(fn,ms),cancel:id=>Timer.clear(id),token:()=>randomHex(16),
+    claim(){
+      if(offlineStatus().playing||reminderStatus().ringing||(busy&&!directChatStatus().busy))throw new Error('本体で処理中です');
+      const paused=pauseDirectChat();
+      if(busy){if(paused)resumeDirectChat();throw new Error('本体で処理中です');}
+      closeOffline();busy=true;trace('[monitor] started\n');
+    },
+    release(){busy=false;resumeDirectChat();trace('[monitor] stopped\n');},
+    log:message=>trace('[head-jog] '+message+'\n'),
+    readHeadRotation:()=>new Promise((resolve,reject)=>{const driver=getM5StackChanDriver();if(!driver){reject(new Error('Motor unavailable'));return}driver.getRotation(result=>result.success?resolve({...result.value}):reject(new Error('Position unavailable')))}),
+    createInput:options=>new AudioIn(options),
+    convertPCM:(raw,channels)=>prepareRecognitionPCM(raw,0,raw.byteLength,channels),jpeg:encodeJPEG,
+    cancelSpeech:()=>monitorVoice?.cancel(),
+    async speak(text){
+      let unlock;
+      try{
+        unlock=robot.audio.acquireExclusive();if(globalThis.amp)globalThis.amp.sampleRate=24000;
+        monitorVoice??=new MonitorTTS({volume:robot.audio.volume,speed:80,onPlayed:power=>robot.face?.setMouthOpen(Math.min(1,power/2000)),onDone:()=>robot.face?.setMouthOpen(0)});
+        await new Promise((resolve,reject)=>monitorVoice.stream(text,robot.audio.volume,error=>error?reject(error):resolve()));
+      }finally{unlock?.();}
+    }
+  });
   async function execute(request){
-    const capture=['/alarm-sound/preview','/motor/test','/image/finish','/photo','/record','/audio','/chat-record'].includes(request.op);
+    if(monitor.active&&!request.op.startsWith('/monitor/')&&!['/status','/volume','/chat/status','/files','/files/page','/network/status','/speaker/list','/settings/status','/reminders','/debug/status','/motor-status','/media/trash'].includes(request.op))throw new Error('動作確認を終了してから操作してください');
+    const capture=['/face/save','/face/restore','/alarm-sound/preview','/motor/test','/motor/recover','/image/finish','/photo','/record','/audio','/chat-record'].includes(request.op);
     const paused=capture?pauseDirectChat():false;
     try{
       let result;
-      if(request.op.startsWith('/image/')){
+      if(request.op==='/monitor/start')result=monitor.start();
+      else if(request.op==='/monitor/stop')result=await monitor.stop(request.args?.id);
+      else if(request.op==='/monitor/status')result=monitor.status(request.args?.id);
+      else if(request.op==='/monitor/audio')result=monitor.audio(request.args?.id,request.args?.enabled);
+      else if(request.op==='/monitor/command')result=await monitor.command(request.args?.id,request.args?.action,request.args?.arguments||{});
+      else if(request.op.startsWith('/face/'))result=faceCommand(request.op.slice(6),request.args||{});
+      else if(request.op.startsWith('/image/')){
         if(request.op==='/image/finish'&&busy)throw new Error('本体で記録中です。少し待ってから送信してください');
         const action=request.op.slice(7),part=imageUploadCommand(action,request.args||{},Base64.decode);
         if(action==='finish'){const name='photo-'+id()+'.jpg';save(name,[part.buffer]);result={name,width:part.width,height:part.height,...await describeImage(robot,name,part.buffer,request.args?.question)};}else result=part;
@@ -201,7 +253,7 @@ export function startArchive(robot) {
       else if(request.op==='/alarms/open')result=openAlarmSettings();
       else if(request.op.startsWith('/alarm-sound/')&&request.op!=='/alarm-sound/preview')result=alarmSoundCommand(request.op.slice('/alarm-sound/'.length),request.args);
       else if(request.op==='/alarm-sound/preview'){busy=true;try{result={played:await playAlarmSound(robot,()=>false,Math.max(1,Math.min(5,Number(request.args?.seconds)||2)))};}finally{busy=false;}}
-      else if(request.op==='/volume'){result=request.args?.percent===undefined?getVolume():setVolume(Number(request.args.percent),request.args.preview===true);}
+      else if(request.op==='/volume'){result=request.args?.percent===undefined?getVolume():setVolume(Number(request.args.percent),request.args.preview===true&&!monitor.active);}
       else if(request.op==='/network/open')result=openControl(request.args?.mode);
       else if(request.op==='/vision/status')result=visionStatus();
       else if(request.op==='/network/status')result=controlStatus();
@@ -215,9 +267,10 @@ export function startArchive(robot) {
       else if(request.op==='/chat/status')result=directChatStatus();
       else if(request.op==='/chat/configure')result=configureDirectChat(request.args);
       else if(request.op==='/chat/provision')result=await provisionDirectChat();
-      else if(request.op==='/chat/test')result=await testDirectConnection(request.args?.provider);
+      else if(request.op==='/chat/test')result=await testDirectConnection(request.args?.provider,{playback:request.args?.playback===true});
       else if(request.op==='/chat/start')result=setChatMode(true);
       else if(request.op==='/chat/stop')result=setChatMode(false);
+      else if(request.op==='/recognition/mode')result=setRecognitionMode(request.args?.enabled);
       else if(request.op==='/memory/history')result=history(request.args);
       else if(request.op==='/memory/users')result=users(request.args);
       else if(request.op==='/memory/save-user')result=saveUser(request.args);
@@ -238,16 +291,17 @@ export function startArchive(robot) {
       else if(request.op==='/settings/http-test')result=await settingsHttpSelfTest();
       else if(request.op==='/settings/scan-test')result={count:(await scanNearby()).length};
       else if(request.op==='/tools/list')result={tools:listDeviceTools()};
-      else if(request.op==='/tools/call')result=callDeviceTool(request.args?.name,request.args?.arguments??{});
+      else if(request.op==='/tools/call')result=await callDeviceTool(request.args?.name,request.args?.arguments??{});
       else if(request.op==='/reminders')result=reminderStatus();
       else if(request.op==='/motor/test'){
         const driver=getM5StackChanDriver();if(!driver)throw new Error('Motor driver unavailable');
         const diagnostics=()=>new Promise(resolve=>driver.getDiagnostics(resolve));
         const before=await diagnostics(),base={...(driver.lastKnownRotation||robot.pose.body.rotation)},pose=robot.pose.body;
-        const targets=request.args?.large===true?[{...base,y:base.y+.3},{...base,y:base.y-.3},{...base,p:base.p+.14},{...base,p:base.p-.14}]:[{...base,p:base.p+(base.p>0?-.08:.08)}];
+        const targets=request.args?.large===true?[{...base,y:base.y+.3},{...base,y:base.y-.3},{...base,p:base.p+.14},{...base,p:base.p-.14}]:[{...base,y:base.y+(base.y>0?-.12:.12)}];
         const samples=[];try{await robot.setTorque(true);for(const rotation of targets){await robot.setPose({...pose,rotation},.3);await new Promise(resolve=>Timer.set(resolve,450));samples.push(await diagnostics());}result={before,samples,moved:samples.some(d=>(before.pan?.success&&d.pan?.success&&Math.abs(before.pan.value.position-d.pan.value.position)>2)||(before.tilt?.success&&d.tilt?.success&&Math.abs(before.tilt.value.position-d.tilt.value.position)>2))};}
         finally{await robot.setPose({...pose,rotation:base},.4);await new Promise(resolve=>Timer.set(resolve,550));await robot.setTorque(false);}
       }
+      else if(request.op==='/motor/recover'){const driver=getM5StackChanDriver();if(!driver)throw new Error('Motor driver unavailable');await robot.setTorque(false);result=await new Promise(resolve=>driver.recoverPower(resolve));}
       else if(request.op==='/motor-status'){const driver=getM5StackChanDriver();result=driver?await new Promise(resolve=>driver.getDiagnostics(resolve)):{error:'M5StackChan driver unavailable'};}
       else if(request.op==='/transcript'){
         result=archiveTranscript(request.args?.role,String(request.args?.text??'').slice(0,4096),request.args?.eventId);
@@ -275,6 +329,11 @@ export function startArchive(robot) {
       else if(request.op==='/status'){
         let sd=false;try{files(()=>{});sd=true;}catch(e){lastError=String(e);}
         result={sd,camera:robot.camera.available!==false,busy:busy&&!directChatStatus().busy,chat:directChatStatus(),lastError,headTouch:!!robot.touchPanel,headSample:Array.from(robot.touchPanel?.sample??[]),transport:'usb+wifi',petting:'m5stack/StackChan',wifi:getSettingsStatus(),wifiDisplay:wifiDisplayStatus(),firmware:'stack-chan + M5Stack petting + USB archive'};
+      }else if(['/media/delete','/media/restore','/media/trash'].includes(request.op)){
+        if(busy&&!directChatStatus().busy&&request.op!=='/media/trash')throw new Error('撮影・録音が終わってから操作してください');
+        result=files(root=>mediaTrash(root,request.op==='/media/trash'?'list':request.op.slice(7),request.args||{}));
+      }else if(request.op==='/files/page'){
+        result=files(root=>mediaFilePage(root,folder,safe,request.args||{}));
       }else if(request.op==='/files'){
         if(busy&&!directChatStatus().busy)throw new Error('Camera busy');
         result=files(root=>{
@@ -371,11 +430,13 @@ export function startArchive(robot) {
     bootSpeech(value){if(typeof value==='boolean')changeSettings(s=>{s.bootSpeak=value});return bootSpeechEnabled(getSettings());},
     diagnostics:()=>({wifi:getSettingsStatus(),signal:wifiDisplayStatus(),ai:directChatStatus(),volume:getVolume(),connection:autoOffline(),local:offlineStatus(),clock:localClockStatus()}),
     execute,
+    preview:id=>id?monitor.frame(id):cameraPreview(robot),
+    monitorAudio:id=>monitor.readAudio(id),
     read(name,offset,length,whole=false){
       if(!safe(name)||busy&&!directChatStatus().busy)throw new Error('Media unavailable');
       return files(root=>{const f=root.openFile({path:folder+'/'+name,mode:'r'});try{const size=f.status().size;if(whole&&size>length)throw new Error('Media file too large');return f.read(Math.min(length,Math.max(0,size-offset)),offset);}finally{f.close();}});
     },
-    messages(){importLegacy();return history({limit:10}).items;}
+    messages(){importLegacy();const rows=history({limit:10}).items;return files(root=>rows.map(row=>{if(!row.image)return row;try{if(root.status(folder+'/'+row.image).isFile())return row;}catch(_){}return {...row,image:undefined,mediaDeleted:true};}));}
   },token);
   trace('[archive] USB and standalone network control ready\n');
 }

@@ -23,7 +23,7 @@ export function startAISettings(robot, actions) {
       }
       function render() {
         const s = actions.status(),
-          next = s.provider + ':' + s.geminiConfigured + ':' + s.ollamaConfigured + ':' + s.enabled + ':' + s.configured
+          next = s.provider + ':' + s.recognition + ':' + s.geminiConfigured + ':' + s.ollamaConfigured + ':' + s.enabled + ':' + s.configured
         if (next === signature) return
         signature = next
         root.empty()
@@ -56,10 +56,11 @@ export function startAISettings(robot, actions) {
                 args: { provider },
               },
               methods,
-              { left: 10, right: 10, top: 48 + index * 36, height: 32 },
+              { left: 10, right: 10, top: 48 + index * 30, height: 28 },
               fail,
             ),
           )
+        root.add(createUIButton({text:'認識: '+(s.recognition==='xiaozhi'?'XiaoZhi':'自動'),background:'#596375',textColor:'#ffffff',method:'selectAI',args:{provider:s.provider,recognition:s.recognition==='xiaozhi'?'auto':'xiaozhi'}},methods,{left:10,right:10,top:140,height:28},fail))
         root.add(
           createUIButton(
             {
@@ -69,7 +70,7 @@ export function startAISettings(robot, actions) {
               method: 'toggle',
             },
             methods,
-            { left: 10, right: 10, top: 156, height: 36 },
+            { left: 10, right: 10, top: 172, height: 28 },
             fail,
           ),
         )

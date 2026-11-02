@@ -7,8 +7,10 @@ vm.runInContext("String.prototype.normalize=function(){throw new RangeError('not
 assert.equal(memory.nameReading('ｹﾝﾄ'),'けんと');assert.equal(memory.nameReading('ﾍﾞﾝﾄ'),'べんと');assert.equal(memory.nameReading('ヘ\u3099ント'),'べんと');assert.equal(memory.nameReading('ﾊﾟﾝ'),'ぱん');
 const alice=memory.saveUser({name:'Alice',likes:['りんご'],about:'明示されたプロフィール'}).users[0],bob=memory.saveUser({name:'Bob'}).users[0];let now=Date.now();for(const person of [alice,bob]){memory.identifySpeaker({id:person.id,name:person.name});for(let n=0;n<5;n++)memory.recordMemory({id:person.id+'-'+n,role:n%2?'assistant':'user',text:person.name+'専用履歴'+n,created:now++});}assert.equal(memory.history({user_id:alice.id,limit:3}).items.length,3);assert.ok(memory.history({user_id:alice.id,limit:10}).items.every(m=>m.text.startsWith('Alice')));memory.beginConversation();
 let opened=0,connections=[];class Chat{constructor(o){this.options=o;connections.push(o);}setVolume(){}start(){}close(){}sendFunctionResult(){}}
-const c={getSettings:()=>data,changeSettings:fn=>fn(data),...Object.fromEntries(['currentSpeaker','identifySpeaker','users','saveUser','history','beginConversation'].map(k=>[k,memory[k]])),setXiaoZhiVision(){},setVisionProvisioner(){},openSpeakerChooser(){opened++;},startSpeakerChooser(){},getSettingsStatus:()=>({connected:true}),DEFAULT_GEMINI_MODEL:'gemini-test',ChatService:Chat,ChatState:{FAILED:0,DISCONNECTED:1,CONNECTED:4,SPEAKING:5,LISTENING:6,WAITING:7},ArchiveChatAudioIO:class{},createXiaozhiV1Connection:opts=>opts,Timer:{set:()=>1,clear(){},repeat:()=>1},trace(){},listDeviceTools:()=>[],memoryTools:[{name:'conversation_identify'}],visionTools:[],callMemory(){},URL,robotStub:{showBalloon(){},ui:{showFace(){},application:{behavior:{},distribute(){}}},drawer:{setDrawerButtonState(){}},audio:{volume:.1,acquireExclusive:()=>()=>{}}}};
-const schema=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-button-schema.js')).toString('base64'));const registration=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-speaker-registration.js')).toString('base64'));c.VoiceRegistration=registration.VoiceRegistration;c.enrollmentInstructions=registration.enrollmentInstructions;c.registrationName=registration.registrationName;c.explicitSpeakerName=registration.explicitSpeakerName;c.ollamaChat=async()=> 'Ollama回答';c.ollamaModel=()=>data.ollamaModel||'gemma4:31b';c.validOllamaModel=v=>/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,99}$/.test(v);c.OLLAMA_SPEECH_INSTRUCTIONS='音声だけ。ollama_replyを呼ぶ';c.ollamaSpeechTool={name:'ollama_reply'};c.speakerButtons=schema.speakerButtons;vm.createContext(c);vm.runInContext(fs.readFileSync(root+'archive-direct-chat.js','utf8').replace(/^import [\s\S]*? from '[^']+';?\s*$/gm,'').replace(/export /g,''),c);vm.runInContext('robot=robotStub;claim=()=>true;release=()=>{};',c);
+const c={DEFAULT_GEMINI_TEXT_MODEL:'gemini-test-text',geminiTextChat:async()=> 'Gemini文字回答',XiaoZhiRecognitionIO:class{},RecognitionTTS:class{stream(text,volume,done){done()}cancel(){}},getSettings:()=>data,changeSettings:fn=>fn(data),...Object.fromEntries(['currentSpeaker','identifySpeaker','users','saveUser','history','beginConversation'].map(k=>[k,memory[k]])),setXiaoZhiVision(){},setVisionProvisioner(){},openSpeakerChooser(){opened++;},startSpeakerChooser(){},getSettingsStatus:()=>({connected:true}),DEFAULT_GEMINI_MODEL:'gemini-test',ChatService:Chat,ChatState:{FAILED:0,DISCONNECTED:1,CONNECTED:4,SPEAKING:5,LISTENING:6,WAITING:7},ArchiveChatAudioIO:class{},createXiaozhiV1Connection:opts=>opts,Timer:{set:()=>1,clear(){},repeat:()=>1},trace(){},listDeviceTools:()=>[],memoryTools:[{name:'conversation_identify'}],visionTools:[],callMemory(){},URL,robotStub:{showBalloon(){},ui:{showFace(){},application:{behavior:{},distribute(){}}},drawer:{setDrawerButtonState(){}},audio:{volume:.1,acquireExclusive:()=>()=>{}}}};
+const schema=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-button-schema.js')).toString('base64'));const registration=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-speaker-registration.js')).toString('base64'));c.VoiceRegistration=registration.VoiceRegistration;c.enrollmentInstructions=registration.enrollmentInstructions;c.registrationName=registration.registrationName;c.explicitSpeakerName=registration.explicitSpeakerName;c.ollamaChat=async()=> 'Ollama回答';c.ollamaModel=()=>data.ollamaModel||'gemma4:31b';c.validOllamaModel=v=>/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,99}$/.test(v);c.OLLAMA_SPEECH_INSTRUCTIONS='音声だけ。ollama_replyを呼ぶ';c.ollamaSpeechTool={name:'ollama_reply'};c.speakerButtons=schema.speakerButtons;const headTestURL='data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-head-motion.js','utf8').replace("import Timer from 'timer'","const Timer={set:fn=>fn()}" )).toString('base64');c.headDirectionFromText=(await import(headTestURL)).headDirectionFromText;
+c.collectMemory=()=>{};c.heapStatus=()=>({});Object.assign(c,await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-memory-policy.js','utf8')).toString('base64')));
+vm.createContext(c);vm.runInContext(fs.readFileSync(root+'archive-direct-chat.js','utf8').replace(/^import [\s\S]*? from '[^']+';?\s*$/gm,'').replace(/export /g,''),c);vm.runInContext('robot=robotStub;claim=()=>true;release=()=>{};',c);
 vm.runInContext('setChatMode(true)',c);assert.equal(vm.runInContext('directChatStatus().requiresSpeaker',c),true);assert.equal(opened,0);await vm.runInContext('connect()',c);assert.equal(connections.length,1);assert.ok(connections[0].config.instructions.includes('conversation_identify'));
 const selected=vm.runInContext('selectSpeaker({id:'+JSON.stringify(alice.id)+',name:"Alice"})',c);assert.equal(selected.historyRead,3);await vm.runInContext('connect()',c);assert.equal(connections.length,2);assert.ok(connections[1].config.instructions.includes('Alice'));assert.ok(!connections[1].config.instructions.includes('Bob専用'));assert.ok(Object.keys(connections[1].tools).includes('conversation_identify'));
 vm.runInContext("configureChatProvider({provider:'xiaozhi'})",c);await vm.runInContext('connect()',c);assert.equal(memory.currentSpeaker().id,alice.id);vm.runInContext('setChatMode(false)',c);assert.equal(memory.currentSpeaker(),null);vm.runInContext('setChatMode(true)',c);assert.equal(vm.runInContext('directChatStatus().requiresSpeaker',c),true);assert.equal(vm.runInContext('selectSpeaker({guest:true}).historyRead',c),0);
@@ -188,12 +190,12 @@ vm.runInContext('setChatMode(false)',c);
 console.log('Greeting transport: XiaoZhi uses supported detect notification, Gemini uses text: PASS');
 
 // Real adapter forwards the microphone's channel count, including the default mono build.
-class AdapterBase{constructor(){}ensureInput(){}}
+class AdapterBase{constructor(){this.onStateChanged=()=>{}}ensureInput(){}}
 let forwarded;
 class AdapterWorker{postMessage(message){forwarded=message}terminate(){}}
 const resumeTimers=[];
 const adapterContext=vm.createContext({Timer:{set:fn=>{resumeTimers.push(fn);return resumeTimers.length}},ChatAudioIOBase:AdapterBase,Worker:AdapterWorker,SharedArrayBuffer,trace(){},writePcmRing(){},globalThis:{}});
-vm.runInContext(fs.readFileSync(root+'archive-chat-audioio.js','utf8').replace(/^import .*$/gm,'').replace('export default class ChatAudioIO','class ChatAudioIO'),adapterContext);
+vm.runInContext(fs.readFileSync(root+'archive-chat-audioio.js','utf8').replace(/^import .*$/gm,'').replace('export default class ChatAudioIO','class ChatAudioIO').replace(/^export class /gm,'class '),adapterContext);
 for(const channels of [1,2]){
  adapterContext.channelCount=channels;
  vm.runInContext("var adapter=new ChatAudioIO();adapter.input={channels:channelCount};adapter.createWorker('archiveGeminiLive');adapter.worker.postMessage({id:'sendAudio',offset:0,size:960})",adapterContext);
@@ -224,17 +226,37 @@ for(const text of ['はい','いいえ','元気です','こんにちは','タイ
 console.log('Explicit self-introduction parser accepts names and leaves confirmations/commands to AI: PASS');
 
 const playbackModule=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-playback-buffer.js')).toString('base64'));
-adapterContext.PlaybackBuffer=playbackModule.PlaybackBuffer;
-let writableCallback,closedOutput=false,playbackClock=0;
+adapterContext.QueuedPlayback=playbackModule.QueuedPlayback;
+let closedOutput=false,playbackClock=0,pumpPlayback,completeNative;
 adapterContext.Date={now:()=>playbackClock};
-adapterContext.AudioOut=class{constructor(options){writableCallback=options.onWritable}write(){}start(){}close(){closedOutput=true}};
+adapterContext.Timer.repeat=fn=>{pumpPlayback=fn;return 7};adapterContext.Timer.clear=()=>{};
+adapterContext.AudioOut={Async:class{write(bytes,done){completeNative=done}start(){}close(){closedOutput=true}}};
 AdapterBase.WAITING=6;AdapterBase.LISTENING=5;
 vm.runInContext("adapter=new ChatAudioIO();adapter.outputBufferSize=64;adapter.outputSampleRate=1000;adapter.outputBuffer=new SharedArrayBuffer(64);adapter.outputBufferHead=40;adapter.outputBufferTail=0;adapter.barrier=new Int32Array(new SharedArrayBuffer(4));adapter.state=5;adapter.onOutputLevelChanged=()=>{};adapter.onStateChanged=()=>{};adapter.worker={postMessage:frame};adapter.ensureOutput()",adapterContext);
-for(let i=0;i<5;i++)writableCallback(8);
-vm.runInContext('adapter.state=6',adapterContext);writableCallback(8);
-assert.equal(closedOutput,false);playbackClock=83;writableCallback(8);assert.equal(closedOutput,false);
-playbackClock=85;writableCallback(8);assert.equal(closedOutput,false);assert.equal(resumeTimers.length,1);writableCallback(8);assert.equal(resumeTimers.length,1);resumeTimers.shift()();assert.equal(closedOutput,true);
-console.log('Playback drain: final queued audio is not closed immediately, microphone resumes after drain allowance: PASS');
+assert.equal(typeof completeNative,'function');assert.equal(vm.runInContext('adapter.outputBufferTail',adapterContext),40);
+vm.runInContext('adapter.state=6',adapterContext);pumpPlayback();assert.equal(closedOutput,false);
+completeNative(null);pumpPlayback();const drainAt=vm.runInContext('adapter.playback.drainUntil',adapterContext);
+playbackClock=drainAt-1;pumpPlayback();assert.equal(closedOutput,false);assert.equal(resumeTimers.length,0);
+playbackClock=drainAt+1;pumpPlayback();assert.equal(resumeTimers.length,1);pumpPlayback();assert.equal(resumeTimers.length,1);resumeTimers.shift()();assert.equal(closedOutput,true);
+console.log('Native playback drain: queued completion and DMA allowance precede microphone restart; only one deferred transition: PASS');
+
+AdapterBase.FAILED=-1;adapterContext.stateChanges=[];
+for(const terminal of ['failed','disconnected']){
+ closedOutput=false;adapterContext.stateChanges=[];
+ vm.runInContext("adapter=new ChatAudioIO();adapter.outputBufferSize=64;adapter.outputSampleRate=1000;adapter.outputBuffer=new SharedArrayBuffer(64);adapter.outputBufferHead=40;adapter.outputBufferTail=0;adapter.barrier=new Int32Array(new SharedArrayBuffer(4));adapter.state=5;adapter.onOutputLevelChanged=()=>{};adapter.onStateChanged=state=>stateChanges.push(state);adapter.worker={postMessage:frame};adapter.ensureOutput()",adapterContext);
+ vm.runInContext(terminal==='failed'?"adapter.failed({string:'connection closed'})":"adapter.disconnected()",adapterContext);
+ assert.equal(closedOutput,false);assert.equal(adapterContext.stateChanges.length,0);completeNative(null);pumpPlayback();
+ playbackClock=vm.runInContext('adapter.playback.drainUntil',adapterContext)+1;pumpPlayback();assert.equal(closedOutput,false);resumeTimers.shift()();assert.equal(closedOutput,true);
+ assert.equal(adapterContext.stateChanges.at(-1),terminal==='failed'?-1:0);assert.equal(adapterContext.globalThis.stackchanPlaybackHealth.drained,true);
+}
+console.log('Server close/error drains queued speech and DMA before notifying disconnect; tail is not cut: PASS');
+
+let failedOutputStarted=false;
+adapterContext.AudioOut={Async:class{write(){throw Error('native output allocation failed')}start(){failedOutputStarted=true}close(){}}};
+AdapterBase.prototype.failed=function(message){this.error=message.string;this.ensureInput()};
+vm.runInContext("adapter=new ChatAudioIO();adapter.outputBufferSize=64;adapter.outputSampleRate=1000;adapter.outputBuffer=new SharedArrayBuffer(64);adapter.outputBufferHead=40;adapter.outputBufferTail=0;adapter.barrier=new Int32Array(new SharedArrayBuffer(4));adapter.state=6;adapter.onOutputLevelChanged=()=>{};adapter.ensureOutput()",adapterContext);
+assert.equal(failedOutputStarted,false);assert.equal(vm.runInContext('adapter.output',adapterContext),null);assert.equal(vm.runInContext('adapter.outputBufferTail',adapterContext),0);
+console.log('Native initial enqueue failure closes output without starting the closed driver or acknowledging lost PCM: PASS');
 
 const tieTime=Date.now()+100000;
 for(let i=0;i<25;i++)memory.recordMemory({id:'cursor-tie-'+String(i).padStart(2,'0'),role:'user',text:'同時刻の発言'+i,created:tieTime,speakerId:i%2?bob.id:alice.id});
@@ -293,3 +315,73 @@ memory.recordMemory({id:'first-greeting-reply',role:'assistant',text:'よろし�
 const duplicateHello=memory.identifySpeaker({id:firstHello.person.id,name:firstHello.person.name});assert.equal(duplicateHello.greeting,previousGreeting);assert.equal(duplicateHello.previousConversationAt,null);
 memory.beginConversation();const returning=memory.identifySpeaker({name:'りょうへい'});assert.equal(returning.firstMeeting,false);assert.ok(returning.previousConversationAt);assert.ok(returning.greeting.includes('お話ししたね'));assert.equal(returning.person.id,firstHello.person.id);
 console.log('PASS: identification then greeting then profile conversation; repeated identification preserves initial context; next session greets using recorded prior date');
+// Boot must preserve OFF even with credentials and after a delayed announcement.
+vm.runInContext('setChatMode(false)',c);await vm.runInContext('restoreConversationOnBoot()',c);assert.equal(data.chatMode,false);
+vm.runInContext('setChatMode(true)',c);let finishBoot;c.bootSpeech=()=>new Promise(resolve=>{finishBoot=resolve;});
+const pendingBoot=vm.runInContext('restoreConversationOnBoot(bootSpeech)',c);vm.runInContext('setChatMode(false)',c);finishBoot();await pendingBoot;assert.equal(data.chatMode,false);
+await vm.runInContext('restoreConversationOnBoot()',c);assert.equal(data.chatMode,false);
+vm.runInContext('setChatMode(true)',c);await vm.runInContext('restoreConversationOnBoot()',c);assert.equal(data.chatMode,true);vm.runInContext('setChatMode(false)',c);
+console.log('Boot respects saved OFF and OFF during boot speech; saved ON still resumes: PASS');
+// XiaoZhi recognition is independent of the answer model and Gemini audio key.
+vm.runInContext('setChatMode(false)',c);const speechGeminiKey=data.api.gemini;delete data.api.gemini;data.api.ollama='dummy-ollama';
+vm.runInContext("configureChatProvider({provider:'ollama',recognition:'xiaozhi'});setChatMode(true);greetingPending=false",c);
+assert.equal(vm.runInContext('directChatStatus().recognitionProvider',c),'xiaozhi');assert.equal(vm.runInContext('directChatStatus().configured',c),true);
+let voiceToolCalls=0,localSpeech=[];c.listDeviceTools=()=>[{name:'timer_create'}];c.callDeviceTool=(name,args)=>{assert.equal(name,'timer_create');voiceToolCalls++;return {id:'test-timer',seconds:args.seconds}};
+c.ollamaChat=async(messages,tools,runTool,current)=>{assert.ok(current());assert.equal(messages.at(-1).content,'一分のタイマーをセットして');assert.ok(tools.some(t=>t.name==='timer_create'));await runTool('timer_create',{seconds:60});return '一分のタイマーを設定しました。'};
+c.RecognitionTTS=class{stream(text,volume,done){localSpeech.push(text);done()}cancel(){}};
+c.Timer.set=(fn)=>{queueMicrotask(fn);return 1};
+await vm.runInContext('connect()',c);const recognitionConnection=connections.at(-1);assert.equal(recognitionConnection.chatAudioIOCtor,c.XiaoZhiRecognitionIO);assert.equal(recognitionConnection.connection.endpoint,data.directChat.endpoint);assert.equal(Object.keys(recognitionConnection.tools).length,0);
+recognitionConnection.callbacks.onInputTranscript('一分のタイマーをセットして',false);await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+assert.equal(voiceToolCalls,1);assert.deepEqual(localSpeech,['一分のタイマーを設定しました。']);assert.equal(vm.runInContext('directChatStatus().state',c),'waiting');
+vm.runInContext('setChatMode(false)',c);data.api.gemini=speechGeminiKey;
+assert.throws(()=>vm.runInContext("configureChatProvider({provider:'gemini',recognition:'unknown'})",c));
+console.log('XiaoZhi recognition -> selected Ollama text model -> device timer -> local speech; no Gemini key required: PASS');
+// OFF during text inference discards the delayed answer and never resumes audio.
+let releaseRecognitionAnswer;localSpeech=[];c.ollamaChat=()=>new Promise(resolve=>{releaseRecognitionAnswer=resolve});
+vm.runInContext("setChatMode(true);greetingPending=false",c);await vm.runInContext('connect()',c);connections.at(-1).callbacks.onInputTranscript('こんにちは',false);
+await new Promise(resolve=>setImmediate(resolve));assert.equal(typeof releaseRecognitionAnswer,'function');vm.runInContext('setChatMode(false)',c);releaseRecognitionAnswer('遅れて届いた返答');await new Promise(resolve=>setImmediate(resolve));assert.equal(localSpeech.length,0);assert.equal(vm.runInContext('directChatStatus().state',c),'off');
+console.log('XiaoZhi recognition OFF cancels a pending model answer and cannot resume speech: PASS');
+vm.runInContext("var asrAdapter=new XiaoZhiRecognitionIO();asrAdapter.ensureInput=()=>{};asrAdapter.createWorker('xiaozhiV1',undefined,undefined,undefined,undefined,undefined,undefined)",adapterContext);assert.equal(forwarded.recognitionOnly,true);
+console.log('Recognition adapter forwards local-only suppression flag to the XiaoZhi worker: PASS');
+// Transcription-only mode neither requires an AI key nor generates an answer.
+vm.runInContext('setChatMode(false);setRecognitionMode(false)',c);const previousKeys=data.api;data.api={};
+let forbiddenAI=0;c.geminiTextChat=c.ollamaChat=()=>{forbiddenAI++;throw Error('AI must not run')};c.RecognitionTTS=class{constructor(){throw Error('Speech must not run')}};
+c.transcriptionArchive=(role,text)=>{const event={id:'standalone-'+(++sequence),role:role==='input'?'user':'assistant',text,created:Date.now()};c.archiveRecords.push(event);memory.recordMemory(event);return event};vm.runInContext('archive=transcriptionArchive',c);
+const priorUsers=memory.users({limit:100}).users.length,priorRecords=c.archiveRecords.length;
+vm.runInContext('setRecognitionMode(true)',c);assert.equal(data.chatMode,false);assert.equal(data.transcriptionMode,true);assert.equal(vm.runInContext('directChatStatus().recognitionProvider',c),'xiaozhi');
+await vm.runInContext('connect()',c);const transcriptionSession=connections.at(-1);assert.equal(transcriptionSession.chatAudioIOCtor,c.XiaoZhiRecognitionIO);assert.equal(Object.keys(transcriptionSession.tools).length,0);
+transcriptionSession.callbacks.onInputTranscript('新しい名前です。タイマーをセットして',false);await new Promise(resolve=>setImmediate(resolve));
+assert.equal(forbiddenAI,0);assert.equal(memory.users({limit:100}).users.length,priorUsers);assert.equal(c.archiveRecords.length,priorRecords+1);assert.equal(c.archiveRecords.at(-1).role,'user');assert.equal(c.archiveRecords.at(-1).text,'新しい名前です。タイマーをセットして');assert.equal(vm.runInContext('directChatStatus().enabled',c),false);assert.equal(vm.runInContext('directChatStatus().recognitionMode',c),true);assert.equal(vm.runInContext('directChatStatus().state',c),'waiting');
+vm.runInContext('setRecognitionMode(false)',c);transcriptionSession.callbacks.onInputTranscript('遅れた認識結果',false);assert.equal(c.archiveRecords.length,priorRecords+1);assert.equal(vm.runInContext('directChatStatus().state',c),'off');
+data.api=previousKeys;vm.runInContext('setRecognitionMode(true);setChatMode(true)',c);assert.equal(data.transcriptionMode,false);vm.runInContext('setChatMode(false)',c);
+console.log('Standalone transcription: AI OFF, no AI keys/answers/tools/profile mutation, one DB transcript, stop ignores stale text, modes are exclusive: PASS');
+// Sound-only diagnostic excludes normal conversation tools and waits for DMA drain.
+c.Timer.set=(fn,ms)=>{if(!ms)queueMicrotask(fn);return 1};c.Timer.repeat=()=>2;c.Timer.clear=()=>{};
+const previousStart=Chat.prototype.start;Chat.prototype.start=function(){queueMicrotask(()=>{const cb=this.options.callbacks;cb.onStateChanged(c.ChatState.CONNECTED);cb.onInputTranscript('短い返事をして',false);cb.onStateChanged(c.ChatState.LISTENING);cb.onOutputTranscript('おはよう。',false);cb.onOutputLevelChanged(2000);cb.onStateChanged(c.ChatState.WAITING);cb.onStateChanged(c.ChatState.SPEAKING);})};
+const beforeAudioDiagnostic=c.archiveRecords.length;
+const soundOnly=await vm.runInContext("testDirectConnection('xiaozhi',{playback:true})",c);
+assert.equal(soundOnly.connected,true);assert.equal(soundOnly.outputEvents,1);assert.equal(soundOnly.outputPeak,2000);assert.equal(soundOnly.outputText,'おはよう。');assert.equal(soundOnly.microphoneTransmission,true);assert.equal(connections.at(-1).tools,undefined);assert.equal(c.archiveRecords.length,beforeAudioDiagnostic);assert.equal(data.chatMode,false);Chat.prototype.start=previousStart;
+console.log('Sound-only diagnostic: no tools/profile writes, returns after playback drain, preserves AI OFF: PASS');
+
+// Failure to persist OFF must not leave a live microphone/session behind.
+data.conversationProvider='xiaozhi';data.transcriptionMode=false;
+vm.runInContext('setChatMode(true)',c);await vm.runInContext('connect()',c);
+const persistedChange=c.changeSettings;let stopped=0;
+Chat.prototype.close=function(){stopped++};
+c.changeSettings=()=>{throw Error('Settings encryption failed')};
+vm.runInContext('setChatMode(false)',c);
+assert.ok(stopped>0);assert.equal(vm.runInContext('directChatStatus().enabled',c),false);
+assert.equal(vm.runInContext('directChatStatus().state',c),'off');
+assert.match(vm.runInContext('directChatStatus().error',c),/保存/);
+c.changeSettings=persistedChange;vm.runInContext('setChatMode(false)',c);
+// Failed/disconnected audio releases devices without re-opening AudioIn.
+adapterContext.closeCounts={input:0,output:0,worker:0};
+for(const action of ['failed','disconnected']){
+ vm.runInContext(`adapter=new ChatAudioIO();adapter.input={close(){closeCounts.input++}};adapter.output={close(){closeCounts.output++}};adapter.worker={terminate(){closeCounts.worker++}};adapter.ensureInput=()=>{throw Error('must not reopen microphone')};adapter.${action}({string:'encoder allocation failed'});adapter.close();adapter.close()`,adapterContext);
+}
+assert.equal(adapterContext.closeCounts.input,2);assert.equal(adapterContext.closeCounts.output,2);assert.equal(adapterContext.closeCounts.worker,2);
+let terminated=0;adapterContext.Worker=class{postMessage(){}terminate(){terminated++}};
+adapterContext.SharedArrayBuffer=class{constructor(){throw Error('allocation failed')}};
+assert.throws(()=>vm.runInContext("adapter=new ChatAudioIO();adapter.createWorker('xiaozhiV1')",adapterContext),/allocation failed/);
+assert.equal(terminated,1);
+console.log('Memory recovery: OFF survives save failure; terminal audio closes once; partial constructor terminates Worker: PASS');

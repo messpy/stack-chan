@@ -65,6 +65,10 @@ export class TTS {
     this.#stream(text, false, volume, callback)
   }
 
+  cancel(): void {
+    this.#lifecycle?.fail(new Error('playback cancelled'))
+  }
+
   streamKoe(koe: string, volume?: number, callback?: TTSCompletion): void {
     this.#stream(koe, true, volume, callback)
   }

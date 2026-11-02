@@ -1,3 +1,4 @@
+import {headMoveTool,moveHead} from 'archive-head-motion';
 import Time from 'time';
 import {nextDailyDue,japaneseClock,finishReminder} from 'archive-reminder-time';
 import {playAlarmSound,stopAlarmSound} from 'archive-alarm-sound';
@@ -10,7 +11,7 @@ const elapsedTimer=t=>Math.min(t.duration,(Time.ticks-t.started)>>>0);
 let alarmDisplay,alarmMotion;
 export function setAlarmMotion(factory){alarmMotion=factory;}
 export function setAlarmDisplay(display){alarmDisplay=display;}
-const toolDefinitions=()=>definitions??(definitions=JSON.parse(String.fromArrayBuffer(new Resource('reminder-tools.txt'))));
+const toolDefinitions=()=>definitions??(definitions=JSON.parse(String.fromArrayBuffer(new Resource('reminder-tools.txt'))).concat(headMoveTool));
 let robot,claim,release,ringing=false,stopped=false;
 const ready=()=>Date.now()>1700000000000;
 const localTime=()=>new Date(Date.now()+9*3600000).toISOString().slice(0,19)+'+09:00';
@@ -20,6 +21,7 @@ export function listDeviceTools(){return toolDefinitions();}
 export function reminderStatus(){return {clockReady:ready(),timezone:'Asia/Tokyo',now:Date.now(),localTime:ready()?localTime():null,ringing,items:getSettings().reminders.map(row=>liveTimers.has(row.id)?{...row,remainingMs:liveTimers.get(row.id).duration-elapsedTimer(liveTimers.get(row.id))}:row)};}
 export function callDeviceTool(name,args={}){
   if(!toolDefinitions().some(tool=>tool.name===name))throw new Error('Unknown device tool');
+  if(name==='head_move')return moveHead(robot,args);
   if(name==='clock_now')return {clockReady:ready(),timezone:'Asia/Tokyo',localTime:ready()?localTime():null,utc:ready()?new Date().toISOString():null};
   if(name==='reminder_list')return {...reminderStatus(),items:reminderStatus().items.filter(row=>args.include_completed||row.status==='scheduled'||row.status==='pending')};
   if(name==='alarm_stop'){stopped=true;stopAlarmSound();return {stopping:ringing};}
@@ -56,6 +58,8 @@ async function notify(item){
   let dance,motionDone;
   ringing=true;stopped=false;trace('[tools] '+item.kind+' notification begin id='+item.id+'\n');
   try{
+    // Persist before touching audio: a reset must never replay this occurrence forever.
+    changeSettings(data=>{data.reminders=data.reminders.map(row=>row.id===item.id&&row.status==='pending'?{...row,notificationStarted:Date.now()}:row);});
     try{robot.lightRainbow?.('head');}catch(_){trace('[tools] rainbow LED unavailable\n');}
     let visible=false;try{visible=alarmDisplay?.show(item)===true;}catch(_){trace('[tools] alarm screen unavailable\n');}if(!visible)robot.showBalloon(item.title);
     try{dance=alarmMotion?.(()=>stopped);motionDone=dance?.finished.catch(()=>trace('[tools] alarm motion failed\n'));}catch(_){trace('[tools] alarm motion unavailable\n');}
@@ -64,13 +68,24 @@ async function notify(item){
       await robot.audio.tone(i%2?660:880,180,Math.min(robot.audio.volume,0.45));
       await wait(180);
     }
-    changeSettings(data=>{data.reminders=data.reminders.map(row=>row.id===item.id&&row.status==='pending'?finishReminder(row,Date.now()):row);});
+    changeSettings(data=>{data.reminders=data.reminders.map(row=>row.id===item.id&&row.status==='pending'?{...finishReminder(row,Date.now()),notificationStarted:undefined}:row);});
     trace('[tools] '+item.kind+' notification completed id='+item.id+'\n');
-  }catch(_){trace('[tools] reminder notification failed; kept pending\n');}
+  }catch(error){
+    trace('[tools] reminder notification failed: '+String(error)+'\n');
+    changeSettings(data=>{data.reminders=data.reminders.map(row=>row.id===item.id&&row.status==='pending'?interruptedReminder(row):row);});
+  }
   finally{dance?.stop();try{await motionDone;}catch(_){}try{robot.lightOff?.('head');}catch(_){}try{alarmDisplay?.close();}catch(_){}robot.hideBalloon();ringing=false;release();}
+}
+function interruptedReminder(row){
+  const next=row.repeat==='daily'?{...row,status:'scheduled',due:ready()?nextDailyDue(Date.now(),row.hour,row.minute):row.due+86400000}:{...row,status:'cancelled'};
+  return {...next,notificationStarted:undefined,reason:'通知中に再起動または再生エラーが発生したため、この回の通知を停止しました'};
 }
 export function startDeviceTools(context,acquire,unlock){
   robot=context;claim=acquire;release=unlock;
+  if(getSettings().reminders.some(row=>row.status==='pending'&&row.notificationStarted!==undefined)){
+    changeSettings(data=>{data.reminders=data.reminders.map(row=>row.status==='pending'&&row.notificationStarted!==undefined?interruptedReminder(row):row);});
+    trace('[tools] interrupted notification recovered; replay suppressed\n');
+  }
   Timer.repeat(()=>{
     try{
       let changed=false;const now=Date.now();

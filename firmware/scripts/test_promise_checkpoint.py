@@ -37,7 +37,7 @@ class PromiseCheckpointTests(unittest.TestCase):
 #define portBASE_TYPE int
 #define pdMS_TO_TICKS(x) (x)
 #define XS_REFERENCE_KIND 1
-typedef struct {void *msgQueue;} xsMachine;
+typedef struct {void *msgQueue;void *selfQueueHead;uint32_t messageReadCount;} xsMachine;
 typedef xsMachine txMachine;
 typedef void (*modMessageDeliver)(void*,void*,uint8_t*,uint16_t);
 typedef struct {char *message;modMessageDeliver callback;void *refcon;uint16_t length;uint8_t embeddedMessage;} modMessageRecord;
@@ -50,6 +50,7 @@ static uint32_t clockTick;
 uint32_t modMilliseconds(void){return clockTick++;}
 unsigned uxQueueMessagesWaiting(void *q){return queued;}
 void modWatchDogReset(void){}
+void scDeliverSelfMessages(xsMachine *the){}
 void c_free(void *p){}
 void callback(void *m,void *r,uint8_t *d,uint16_t n){events++;}
 int xQueueReceive(void *q,modMessageRecord *m,int delay){lastWait=delay;if(!queued)return 0;queued--;*m=(modMessageRecord){.callback=callback};return 1;}

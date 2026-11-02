@@ -121,7 +121,7 @@ export function startHistoryUI(robot, actions) {
         render()
       }
       const toggle = button(
-        '',
+        '話す人: 全員',
         () => {
           filter = (filter + 1) % people.length
           load()

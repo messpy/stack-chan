@@ -1,5 +1,7 @@
-import {heapStatus} from 'archive-usb'
-import { ollamaChat, ollamaModel, validOllamaModel, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
+import {headDirectionFromText} from 'archive-head-motion'
+import {heapStatus,collectMemory} from 'archive-usb'
+import {checkVoiceMemory,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
+import { ollamaChat, ollamaModel, validOllamaModel, geminiTextChat, DEFAULT_GEMINI_TEXT_MODEL, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
 import { VoiceRegistration, enrollmentInstructions, explicitSpeakerName, registrationName } from 'archive-speaker-registration'
 import { speakerButtons } from 'archive-button-schema'
 import { startSpeakerChooser, openSpeakerChooser } from 'archive-speaker-ui'
@@ -9,7 +11,8 @@ import Timer from 'timer'
 import { URL } from 'url'
 import { ChatService, createXiaozhiV1Connection, ChatState } from 'chat'
 import { DEFAULT_GEMINI_MODEL } from 'archive-gemini-protocol'
-import ArchiveChatAudioIO from 'archive-chat-audioio'
+import ArchiveChatAudioIO, {XiaoZhiRecognitionIO} from 'archive-chat-audioio'
+import {TTS as RecognitionTTS} from 'archive-offline-tts'
 import { Container, Label, Text, Skin, Style } from 'piu/MC'
 import { ActionButton } from 'ui-controls'
 import { uiFont } from 'ui-theme'
@@ -217,9 +220,10 @@ const labels = {
   retrying: '再接続を待っています',
   unconfigured: '会話の初期登録が必要です',
 }
+let chatSaveFailedOff=false,recognitionSaveFailedOff=false
 function enabled() {
   try {
-    return getSettings().chatMode === true
+    return !chatSaveFailedOff && getSettings().chatMode === true
   } catch (_) {
     return false
   }
@@ -236,10 +240,16 @@ export function chatProvider() {
     ? getSettings().conversationProvider
     : 'xiaozhi'
 }
+let refreshRecognition
+const recognitionMode=()=>!recognitionSaveFailedOff&&getSettings().transcriptionMode===true
+const running=()=>enabled()||recognitionMode()
+let recognitionSpeech
+const recognitionSetting=()=>getSettings().speechRecognition==='xiaozhi'?'xiaozhi':'auto'
+const usesXiaoZhiRecognition=(provider=chatProvider())=>provider!=='xiaozhi'&&recognitionSetting()==='xiaozhi'
 function signature() {
   const data = getSettings()
   return (
-    chatProvider() +
+    chatProvider() + ':' + recognitionMode() + ':' + recognitionSetting() + ':' + (data.geminiTextModel||DEFAULT_GEMINI_TEXT_MODEL) +
     ':' +
     (chatProvider() !== 'xiaozhi'
       ? data.api?.gemini +
@@ -264,14 +274,18 @@ export function configureChatProvider(value) {
         : /^gemini-[a-zA-Z0-9._-]{1,90}$/.test(value.model)))
   )
     throw new Error('Geminiモデル名が正しくありません')
+  if(value.recognition!==undefined&&!['auto','xiaozhi'].includes(value.recognition))throw new Error('音声認識を選択してください')
+  if(value.textModel!==undefined&&(typeof value.textModel!=='string'||!/^gemini-[a-zA-Z0-9._-]{1,90}$/.test(value.textModel)))throw new Error('Geminiテキストモデル名を確認してください')
   changeSettings((data) => {
+    if(value.recognition!==undefined)data.speechRecognition=value.recognition
+    if(value.textModel)data.geminiTextModel=value.textModel
     if (value.apiKey) data.api[value.provider === 'ollama' ? 'ollama' : 'gemini'] = value.apiKey.trim()
     if (value.model) data[value.provider === 'ollama' ? 'ollamaModel' : 'geminiModel'] = value.model
     data.conversationProvider = value.provider
   })
   if (chat || connecting) {
     closeChat()
-    state = enabled() ? 'waiting' : 'off'
+    state = running() ? 'waiting' : 'off'
     retryAt = 0
   }
   if (providerButton) providerButton.content('label').string = 'AIを選ぶ: ' + providerLabel()
@@ -282,6 +296,7 @@ function providerLabel() {
   return chatProvider() === 'ollama' ? 'Ollama Cloud' : chatProvider() === 'gemini' ? 'Gemini' : 'XiaoZhi'
 }
 function providerNotice() {
+  if(usesXiaoZhiRecognition())return '音声認識はXiaoZhi、返答は'+providerLabel()+'、読み上げは本体内蔵音声です。'
   if (chatProvider() === 'ollama') return 'Ollama Cloudで返答生成。音声はGemini / Googleへ送信します。'
   return (chatProvider() === 'gemini' ? 'Gemini / Google' : 'XiaoZhi') + 'へON中はマイク音声を送信します。OFFで停止。'
 }
@@ -289,20 +304,24 @@ export function directChatStatus() {
   const provider = chatProvider()
   return {
     enabled: enabled(),
+    recognitionMode:recognitionMode(),
     provider,
+    recognition:recognitionSetting(),
+    recognitionProvider:recognitionMode()||provider==='xiaozhi'||usesXiaoZhiRecognition(provider)?'xiaozhi':'gemini',
+    textModel:getSettings().geminiTextModel||DEFAULT_GEMINI_TEXT_MODEL,
     model:
       provider === 'ollama'
         ? ollamaModel()
         : provider === 'gemini'
-          ? getSettings().geminiModel || DEFAULT_GEMINI_MODEL
+          ? (usesXiaoZhiRecognition(provider)?getSettings().geminiTextModel||DEFAULT_GEMINI_TEXT_MODEL:getSettings().geminiModel || DEFAULT_GEMINI_MODEL)
           : undefined,
     ollamaConfigured: !!getSettings().api?.ollama,
     geminiConfigured: !!getSettings().api?.gemini,
     configured:
       provider === 'ollama'
-        ? !!getSettings().api?.ollama && !!getSettings().api?.gemini
+        ? !!getSettings().api?.ollama && (usesXiaoZhiRecognition(provider)?!!cloudConfig()?.cloudConsent:!!getSettings().api?.gemini)
         : provider === 'gemini'
-          ? !!getSettings().api?.gemini
+          ? !!getSettings().api?.gemini && (!usesXiaoZhiRecognition(provider)||!!cloudConfig()?.cloudConsent)
           : !!cloudConfig()?.deviceId,
     cloudConsent: provider !== 'xiaozhi' ? true : cloudConfig()?.cloudConsent === true,
     requiresSpeaker: enabled() && !currentSpeaker(),
@@ -310,7 +329,7 @@ export function directChatStatus() {
       ? { id: currentSpeaker().id, name: currentSpeaker().name, guest: currentSpeaker().guest }
       : null,
     state,
-    label: state === 'connecting' ? providerLabel() + 'へ接続中' : labels[state] || state,
+    label: recognitionMode()?'文字起こしのみ: '+(state==='listening'?'聞き取り中':labels[state]||state):state === 'connecting' ? providerLabel() + 'へ接続中' : labels[state] || state,
     error,
     detail,
     conversationStage,
@@ -362,22 +381,31 @@ export function configureDirectChat(value) {
   return { configured: true }
 }
 export function setChatMode(on) {
-  if (on && chatProvider() === 'ollama' && (!getSettings().api?.ollama || !getSettings().api?.gemini))
+  if(on&&chatProvider()==='gemini'&&!getSettings().api?.gemini)throw new Error('Gemini APIキーを保存してください')
+  if (on && chatProvider() === 'ollama' && (!getSettings().api?.ollama || (!usesXiaoZhiRecognition()&&!getSettings().api?.gemini)))
     throw new Error('Ollama Cloudと音声用GeminiのAPIキーを保存してください')
   if (typeof on !== 'boolean') throw new Error('Invalid conversation mode')
-  if (on && (chatProvider() !== 'xiaozhi' ? !getSettings().api?.gemini : !cloudConfig()?.cloudConsent))
+  if (on && (chatProvider() !== 'xiaozhi'&&!usesXiaoZhiRecognition() ? !getSettings().api?.gemini : !cloudConfig()?.cloudConsent))
     throw new Error(
       chatProvider() === 'gemini' ? '設定ページでGemini APIキーを保存してください' : '会話の初期登録が必要です',
     )
   modeChanged?.(on)
   if (on && !enabled()) {
+    if(recognitionMode())closeChat()
     beginConversation()
     greetingPending = true
     resetTranscripts()
   }
-  changeSettings((data) => {
-    data.chatMode = on
-  })
+  if(!on){chatSaveFailedOff=true;closeChat();collectMemory()}
+  let saveError
+  try {
+    changeSettings((data) => { data.chatMode=on; if(on)data.transcriptionMode=false })
+    chatSaveFailedOff=false
+    if(on)recognitionSaveFailedOff=false
+  } catch(e) {
+    if(on)throw e
+    saveError='会話は停止しましたが、OFF設定を保存できませんでした。再起動後の設定を確認してください'
+  }
   retryAt = 0
   retryDelay = 3000
   error = ''
@@ -387,15 +415,35 @@ export function setChatMode(on) {
     enrollment.reset()
     closeChat()
     beginConversation()
-    state = 'off'
+    state = recognitionMode()?'waiting':'off'
   } else state = 'waiting'
   modeLabel && (modeLabel.string = on ? 'ON' : 'OFF')
   robot.drawer.setDrawerButtonState('directChatMode', on)
   refreshAITalk?.()
+  refreshRecognition?.()
+  if(saveError){error=saveError;detail='Settings save failed'}
   trace('[direct-chat] mode ' + (on ? 'on' : 'off') + '\n')
   return directChatStatus()
 }
+export function setRecognitionMode(on){
+  if(typeof on!=='boolean')throw new Error('文字起こしのON/OFFを指定してください')
+  if(on&&!cloudConfig()?.cloudConsent)throw new Error('XiaoZhiの初期登録が必要です')
+  if(on){modeChanged?.(true);if(enabled())setChatMode(false)}
+  if(!on){recognitionSaveFailedOff=true;closeChat();collectMemory()}
+  let saveError
+  try{changeSettings(data=>{data.transcriptionMode=on;if(on)data.chatMode=false});recognitionSaveFailedOff=false;if(on)chatSaveFailedOff=false}
+  catch(e){if(on)throw e;saveError='文字起こしは停止しましたが、OFF設定を保存できませんでした'}
+  enrollment.reset();closeChat();resetTranscripts();greetingPending=false;
+  retryAt=0;retryDelay=3000;error='';detail='';state=running()?'waiting':'off';
+  refreshRecognition?.();refreshAITalk?.();
+  if(saveError){error=saveError;detail='Settings save failed'}
+  trace('[recognition] standalone '+(on?'on':'off')+'\n');
+  return directChatStatus();
+}
+let memoryCleanupTimer
+function scheduleMemoryCleanup(){if(memoryCleanupTimer!==undefined)return;memoryCleanupTimer=Timer.set(()=>{memoryCleanupTimer=undefined;collectMemory()},0)}
 function closeChat() {
+  const speech=recognitionSpeech;recognitionSpeech=undefined;try{speech?.cancel()}catch(_){}
   identityNotice=''
   microphoneIndicator(false)
   conversationIndicator('off')
@@ -416,11 +464,12 @@ function closeChat() {
     owned = false
     release()
   }
+  scheduleMemoryCleanup()
 }
 function failed(reason) {
   if (state === 'retrying') return
   failures++
-  if (failures >= 2) forceProvision = true
+  if (failures >= 2 && shouldRenewCloudIdentity(reason)) forceProvision = true
   const failedChat = chat,
     failedGeneration = generation
   error =
@@ -434,7 +483,7 @@ function failed(reason) {
   microphoneIndicator(false)
   conversationIndicator('off')
   state = 'retrying'
-  retryAt = Date.now() + retryDelay
+  retryAt = Date.now() + Math.max(retryDelay,isMemoryPressure(reason)?10000:0)
   retryDelay = Math.min(60000, retryDelay * 2)
   Timer.set(() => {
     if (generation === failedGeneration && chat === failedChat) {
@@ -550,7 +599,7 @@ async function provision() {
   trace('[direct-chat] cloud configuration renewed\n')
 }
 async function connect() {
-  if (connecting || chat || !enabled()) return
+  if (connecting || chat || !running()) return
   if (enrollment.phase === 'confirming') return
   if (!getSettingsStatus().connected) {
     state = 'waiting'
@@ -564,18 +613,20 @@ async function connect() {
   state = 'connecting'
   error = ''
   try {
-    const provider = chatProvider()
+    const provider = chatProvider(),standalone=recognitionMode(),recognitionOnly=standalone||usesXiaoZhiRecognition(provider),xiaozhiTransport=provider==='xiaozhi'||recognitionOnly
+    collectMemory()
+    checkVoiceMemory(heapStatus(),xiaozhiTransport)
     if (conversationProviderSeen !== provider) {
       greetingPending = true
       conversationProviderSeen = provider
     }
     let cfg = cloudConfig()
-    if (provider === 'xiaozhi' && !cfg?.cloudConsent) {
+    if (xiaozhiTransport && !cfg?.cloudConsent) {
       state = 'unconfigured'
       throw new Error('Cloud configuration required')
     }
     if (
-      provider === 'xiaozhi' &&
+      xiaozhiTransport &&
       (!cfg.endpoint ||
         Date.now() - cfg.provisionedAt > 6 * 3600000 ||
         (forceProvision && Date.now() - lastProvisionAttempt > 60000))
@@ -592,13 +643,13 @@ async function connect() {
       retryAt = 0
       return
     }
-    if (!enabled()) {
+    if (!running()) {
       closeChat()
       return
     }
-    if (provider !== 'xiaozhi' && !getSettings().api?.gemini)
+    if (!standalone&&(provider==='gemini'||(provider==='ollama'&&!recognitionOnly)) && !getSettings().api?.gemini)
       throw new Error('設定ページでGemini APIキーを保存してください')
-    if (provider === 'ollama' && !getSettings().api?.ollama) throw new Error('Ollama Cloud APIキーを保存してください')
+    if (!standalone&&provider === 'ollama' && !getSettings().api?.ollama) throw new Error('Ollama Cloud APIキーを保存してください')
     connectionSignature = signature()
     unlock = robot.audio.acquireExclusive()
     const tools = {}
@@ -608,7 +659,7 @@ async function connect() {
       tools[tool.name] = tool
     const sessionTools = provider === 'ollama' && !enrollment.active ? { ollama_reply: ollamaSpeechTool } : tools
     const serviceOptions =
-      provider !== 'xiaozhi'
+      !xiaozhiTransport
         ? {
             config: {
               type: 'googleGeminiLive',
@@ -626,13 +677,13 @@ async function connect() {
               deviceId: cfg.deviceId,
               clientId: cfg.clientId,
               listeningMode: 'auto',
-              features: { mcp: true, aec: false },
+              features: { mcp: !recognitionOnly, aec: false },
               mcp: { serverInfo: { name: 'stackchan-standalone', version: '1.0.0' } },
             }),
           }
-    let ollamaBusy = false
+    let ollamaBusy = false,recognitionTurnCurrent=()=>false
     async function executeTool(name, args) {
-      if (chat !== instance) throw new Error('会話が切り替わりました')
+      if (chat !== instance&&!recognitionTurnCurrent()) throw new Error('会話が切り替わりました')
       if (name === 'camera_describe') {
         if (!photoHandler) throw new Error('Camera unavailable')
         const result = await photoHandler(args)
@@ -671,15 +722,40 @@ async function connect() {
       }
       return callDeviceTool(name, args)
     }
+    async function recognitionTurn(text){
+      if(chat!==instance||!running())return
+      if(standalone){closeChat();state=recognitionMode()?'waiting':'off';retryAt=Date.now()+1000;return}
+      // Transfer the audio lease to this turn, then fully tear down XiaoZhi before
+      // invoking another AI or opening local TTS. No concurrent speech workers.
+      const lease=unlock,held=owned;unlock=undefined;owned=false;closeChat();unlock=lease;owned=held;
+      const turn=generation,isCurrent=()=>enabled()&&generation===turn;
+      recognitionTurnCurrent=isCurrent;connecting=true;state='thinking';conversationIndicator('thinking');
+      try{
+        const answer=text===null?(currentSpeaker()?'こんにちは。またお話ししよう。':'あなたは誰？お名前を教えて。'):
+          await (provider==='ollama'?ollamaChat:geminiTextChat)([{role:'system',content:conversationInstructions()},{role:'user',content:text}],Object.values(tools),executeTool,isCurrent);
+        if(!isCurrent())return
+        archive('output',answer);if(conversationStage==='greeting')advanceConversation('conversation');
+        lastSubtitle=answer;robot.showBalloon(answer,{bottom:40,height:24,paddingY:4,holdMs:60000});state='speaking';conversationIndicator('off');
+        const speech=new RecognitionTTS({volume:robot.audio.volume});recognitionSpeech=speech;
+        await new Promise((resolve,reject)=>speech.stream(answer,robot.audio.volume,e=>e?reject(e):resolve()));
+        if(recognitionSpeech===speech)recognitionSpeech=undefined;
+      }catch(e){if(isCurrent()){error='返答処理に失敗しました';detail=String(e.message||e).slice(0,160);for(const key of [getSettings().api?.gemini,getSettings().api?.ollama])if(key)detail=detail.split(key).join('[redacted]');robot.showBalloon(error);trace('[recognition] response failed\n')}}
+      finally{recognitionTurnCurrent=()=>false;if(generation===turn){closeChat();state=enabled()?'waiting':'off';retryAt=Date.now()+1000}}
+    }
     const instance = new ChatService({
       ...serviceOptions,
-      chatAudioIOCtor: ArchiveChatAudioIO,
-      tools: sessionTools,
+      chatAudioIOCtor: recognitionOnly?XiaoZhiRecognitionIO:ArchiveChatAudioIO,
+      tools: recognitionOnly?{}:sessionTools,
       callbacks: {
         onStateChanged(value, reason) {
           if (chat !== instance) return
           if (value === ChatState.FAILED || value === ChatState.DISCONNECTED) {
             failed(reason)
+            return
+          }
+          if(recognitionOnly&&value===ChatState.CONNECTED){
+            state='listening';microphoneAt=Date.now();error='';retryDelay=3000;failures=0
+            if(!standalone&&greetingPending&&!enrollment.active){greetingPending=false;Timer.set(()=>recognitionTurn(null),0)}
             return
           }
           // Registration listens immediately; a generated greeting would talk over the name.
@@ -701,7 +777,7 @@ async function connect() {
             }, 0)
           }
           if (value === ChatState.CONNECTED || value === ChatState.SPEAKING) {
-            if(lastSubtitle){robot.showBalloon(lastSubtitle,{bottom:40,height:32,holdMs:15000});lastSubtitle=''}
+            if(lastSubtitle){robot.showBalloon(lastSubtitle,{bottom:40,height:24,paddingY:4,holdMs:15000});lastSubtitle=''}
             const becameReady = state !== 'listening'
             state = 'listening'
             microphoneAt=Date.now()
@@ -722,12 +798,14 @@ async function connect() {
             setXiaoZhiVision(payload.params)
         },
         onInputLevelChanged(level) {
+          if (chat !== instance || !running()) return
           audioStats.inputEvents++
           audioStats.inputPeak = Math.max(audioStats.inputPeak, level || 0)
           audioStats.lastInputAt = Date.now()
         },
-        onEmotionChanged(emotion){robot.face?.setEmotion?.(({neutral:0,angry:1,sad:2,happy:3,laughing:3,funny:3,sleepy:4})[String(emotion).toLowerCase()]??0)},
+        onEmotionChanged(emotion){if(chat!==instance||!running())return;robot.face?.setEmotion?.(({neutral:0,angry:1,sad:2,happy:3,laughing:3,funny:3,sleepy:4})[String(emotion).toLowerCase()]??0)},
         onOutputLevelChanged(level) {
+          if (chat !== instance || !running()) return
           robot.face?.setMouthOpen?.(Math.min(1,Math.max(0,level||0)/8000))
           audioStats.outputEvents++
           audioStats.outputPeak = Math.max(audioStats.outputPeak, level || 0)
@@ -740,7 +818,7 @@ async function connect() {
           input = (input + (text || '')).slice(-4096)
           if (!more && input) {
             audioStats.recognizedEvents++;audioStats.lastTranscriptAt=Date.now()
-            if (input === introText) {
+            if (!standalone&&input === introText) {
               input = ''
               return
             }
@@ -752,7 +830,9 @@ async function connect() {
             }
             const event = archive('input', input)
             lastInputId = event?.id || ''
-            if(!currentSpeaker()){
+            if(standalone){
+              robot.showBalloon(input,{bottom:40,height:24,paddingY:4,holdMs:15000});
+            }else if(!currentSpeaker()){
               const candidate=explicitSpeakerName(input)
               if(candidate&&lastInputId)try{
                 const result=identifySpeaker({name:candidate,source_message_id:lastInputId})
@@ -763,7 +843,14 @@ async function connect() {
                 showSpeakerStrip()
               }catch(_){trace('[speaker] introduction needs clarification\n')}
             }
-            input = ''
+            const recognized=input;input = ''
+            // A short, explicit physical command should not depend on whether
+            // the cloud chooses a function call or only speaks an acknowledgement.
+            if (!standalone && !recognitionOnly) {
+              const direction=headDirectionFromText(recognized)
+              if(direction) Promise.resolve(callDeviceTool('head_move',{direction})).catch(()=>trace('[head-motion] voice command failed\n'))
+            }
+            if(recognitionOnly)Timer.set(()=>recognitionTurn(recognized),0)
           }
         },
         onOutputTranscript(text, more) {
@@ -773,7 +860,7 @@ async function connect() {
           else output = (output + (text || '')).slice(-4096)
           if (text && !enrollment.active && (Date.now()-subtitleAt>=250 || !more)) {
             lastSubtitle=output
-            robot.showBalloon(output,{bottom:40,height:32,holdMs:60000})
+            robot.showBalloon(output,{bottom:40,height:24,paddingY:4,holdMs:60000})
             subtitleAt=Date.now()
           }
           if (!more && output) {
@@ -781,7 +868,7 @@ async function connect() {
               archive('output', output)
               if(conversationStage==='greeting')advanceConversation('conversation')
               lastSubtitle=output
-              robot.showBalloon(output,{bottom:40,height:32,holdMs:60000})
+              robot.showBalloon(output,{bottom:40,height:24,paddingY:4,holdMs:60000})
             }
             output = ''
           }
@@ -816,7 +903,7 @@ async function connect() {
               return executeTool(name, args)
             })
             .then((result) => {
-              if(name==='conversation_identify'&&result?.message)try{robot.showBalloon(result.message,{bottom:40,height:32,holdMs:10000})}catch(_){trace('[speaker] result display unavailable\n')}
+              if(name==='conversation_identify'&&result?.message)try{robot.showBalloon(result.message,{bottom:40,height:24,paddingY:4,holdMs:10000})}catch(_){trace('[speaker] result display unavailable\n')}
               return chat === instance ? instance.sendFunctionResult(call, name, result) : undefined
             })
             .catch((e) => {
@@ -860,7 +947,7 @@ export function pauseDirectChat() {
   return false
 }
 export function resumeDirectChat() {
-  if (enabled()) retryAt = 0
+  if (running()) retryAt = 0
 }
 export async function provisionDirectChat() {
   await provision()
@@ -883,7 +970,7 @@ export function requestListening(){
     greetingPending=false
     state='waiting'
     retryAt=0
-    robot.showBalloon('聞き取りを準備しています。緑になったら話してください',{bottom:40,height:32})
+    robot.showBalloon('聞き取りを準備しています。緑になったら話してください',{bottom:40,height:24,paddingY:4})
     void connect()
   }
   trace('[direct-chat] manual listening requested\n')
@@ -906,7 +993,7 @@ export function registerAITalk(robot, actions) {
   const refresh = () => {
     unregister?.()
     unregister = robot.ui.miniApps.register({
-      id: 'archive-ai-talk', title: 'AIトーク: ' + (actions.enabled() ? 'ON' : 'OFF'),
+      id: actions.id||'archive-ai-talk', title: (actions.title||'AIトーク')+': ' + (actions.enabled() ? 'ON' : 'OFF'),
       create(context) {
         const content = new Container(null, {left:0,right:0,top:0,bottom:0})
         context.close()
@@ -922,6 +1009,13 @@ export function registerAITalk(robot, actions) {
   refresh()
   return refresh
 }
+async function restoreConversationOnBoot(onBoot) {
+  try { await onBoot?.() } catch (_) { trace('[boot] speech failed\n') }
+  // Credentials alone never override an explicit OFF, including during boot speech.
+  if(recognitionMode()){setRecognitionMode(true);return}
+  if (!enabled()) return
+  try { setChatMode(true) } catch (_) { trace('[speaker] boot conversation unavailable\n') }
+}
 export function startDirectChat(context, saveTranscript, acquire, done, capturePhoto, onModeChanged, onBoot) {
   modeChanged = onModeChanged
   photoHandler = capturePhoto
@@ -930,11 +1024,12 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
   archive = saveTranscript
   claim = acquire
   release = done
-  globalThis.stackchanMicrophoneActivity=()=>{if(chat&&enabled()){microphoneAt=Date.now();microphoneIndicator(true)}}
+  globalThis.stackchanMicrophoneActivity=()=>{if(chat&&running()){microphoneAt=Date.now();microphoneIndicator(true)}}
   const controller=robot.ui.application.behavior, faceTouch=controller.onFaceTouch, launch=controller.launchMiniApp
   controller.launchMiniApp=function(...args){if(speakerStrip){robot.ui.removeEffect(speakerStrip);speakerStrip=undefined}return launch.apply(this,args)}
   controller.onFaceTouch=function(){faceTouch?.call(this);if(enabled())showSpeakerStrip()}
   refreshAITalk = registerAITalk(robot, {enabled, toggle: () => setChatMode(!enabled())})
+  refreshRecognition=registerAITalk(robot,{id:'archive-transcription',title:'文字起こし',enabled:recognitionMode,toggle:()=>setRecognitionMode(!recognitionMode())})
   startSpeakerChooser(robot, {
     list: speakerList,
     select: (args) => selectSpeaker(args),
@@ -1009,10 +1104,10 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
     },
   })
   robot.drawer.setDrawerButtonState('directChatMode', enabled())
-  // Start on boot when the selected service has saved credentials.
-  Timer.set(async()=>{try{await onBoot?.()}catch(_){trace('[boot] speech failed\n')}try{if(chatProvider()==='xiaozhi'?cloudConfig()?.cloudConsent:!!getSettings().api?.gemini)setChatMode(true)}catch(_){trace('[speaker] boot conversation unavailable\n')}},1000)
+  // Restore saved conversation mode; credentials must not turn an explicit OFF on.
+  Timer.set(()=>restoreConversationOnBoot(onBoot),1000)
   Timer.repeat(() => {
-    if (!enabled()) return
+    if (!running()) return
     if (chat) {
       if (signature() !== connectionSignature) {
         closeChat()
@@ -1037,20 +1132,21 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
 
 export async function testDirectConnection(provider = chatProvider(), options = {}) {
   if (!['gemini', 'xiaozhi', 'ollama'].includes(provider)) throw new Error('会話サービスを選択してください')
-  if (enabled() || chat || connecting) throw new Error('会話モードをOFFにしてテストしてください')
+  if (running() || chat || connecting) throw new Error('会話モードをOFFにしてテストしてください')
+  const recognitionOnly=usesXiaoZhiRecognition(provider),transportProvider=recognitionOnly?'xiaozhi':provider
   const cfg = cloudConfig()
-  if (provider === 'xiaozhi' && (!cfg?.endpoint || !cfg?.cloudConsent)) throw new Error('Cloud configuration and consent required')
-  if (provider !== 'xiaozhi' && !getSettings().api?.gemini) throw new Error('Gemini APIキーを設定してください')
+  if (transportProvider === 'xiaozhi' && (!cfg?.endpoint || !cfg?.cloudConsent)) throw new Error('Cloud configuration and consent required')
+  if (transportProvider !== 'xiaozhi' && !getSettings().api?.gemini) throw new Error('Gemini APIキーを設定してください')
   if (!claim()) throw new Error('Device busy')
   let instance, unlockTest
   try {
     unlockTest = robot.audio.acquireExclusive()
     return await new Promise((resolve, reject) => {
-      let finished = false, transcript = '', listeningStarted = false
+      let finished = false, transcript = '', listeningStarted = false,receivedOutput=false,outputEvents=0,outputPeak=0,outputText=''
       const done = (error) => {
         if (finished) return
         finished = true
-        if(options.recognition)try{instance?.setMicrophoneEnabled(false);}catch(_){}
+        if(options.recognition||options.playback)try{instance?.setMicrophoneEnabled(false);}catch(_){}
         microphoneIndicator(false)
         conversationIndicator('off')
         Timer.clear(timeout)
@@ -1059,14 +1155,14 @@ export async function testDirectConnection(provider = chatProvider(), options = 
           try {
             instance?.close()
           } catch (_) {}
-          error ? reject(error) : resolve({ connected: true, provider, microphoneTransmission: !!options.recognition, transcript })
+          error ? reject(error) : resolve({ connected: true, provider, recognitionProvider:transportProvider==='xiaozhi'?'xiaozhi':'gemini', microphoneTransmission: !!(options.recognition||options.playback), transcript,outputEvents,outputPeak,outputText,playback:options.playback?{...globalThis.stackchanPlaybackHealth}:undefined })
         }, 0)
       }
-      const timeout = Timer.set(() => done(new Error('Native connection timed out')), 20000)
+      const timeout = Timer.set(() => done(new Error('Native connection timed out')), options.playback?28000:20000)
       const cancelTimer = Timer.repeat(() => {if(options.cancelled?.())done(new Error('Stopped'));},100)
       try {
         const transport =
-          provider === 'xiaozhi'
+          transportProvider === 'xiaozhi'
             ? {
                 connection: createXiaozhiV1Connection({
                   endpoint: cfg.endpoint,
@@ -1074,7 +1170,7 @@ export async function testDirectConnection(provider = chatProvider(), options = 
                   deviceId: cfg.deviceId,
                   clientId: cfg.clientId,
                   listeningMode: 'auto',
-                  features: { mcp: false, aec: false },
+                  features: { mcp: true, aec: false },
                 }),
               }
             : {
@@ -1083,23 +1179,37 @@ export async function testDirectConnection(provider = chatProvider(), options = 
                   specifier: 'archiveGeminiLive',
                   apiKey: getSettings().api.gemini.trim(),
                   modelID: getSettings().geminiModel || DEFAULT_GEMINI_MODEL,
-                  instructions: options.recognition ? '音声認識の動作確認です。聞こえた言葉を文字起こししてください。応答や道具の実行は不要です。' : '接続確認です。音声やテキストを生成せず待機してください。',
+                  instructions: options.playback?'音声再生の確認です。道具は使わず日本語で短く返事してください。':options.recognition ? '音声認識の動作確認です。聞こえた言葉を文字起こししてください。応答や道具の実行は不要です。' : '接続確認です。音声やテキストを生成せず待機してください。',
                 },
               }
+        const PlaybackTestIO=class extends ArchiveChatAudioIO {
+          ensureInput(){const drained=!!this.output&&this.state===ArchiveChatAudioIO.SPEAKING;super.ensureInput();if(drained)Timer.set(()=>done(null),0)}
+        }
         instance = new ChatService({
           ...transport,
-          chatAudioIOCtor: ArchiveChatAudioIO,
+          chatAudioIOCtor: options.playback?PlaybackTestIO:recognitionOnly?XiaoZhiRecognitionIO:ArchiveChatAudioIO,
           callbacks: {
-            onInputTranscript(text,more){if(!options.recognition||finished)return;transcript=(transcript+(text||'')).slice(-160);if(!more&&transcript)done(null);},
+            onInputTranscript(text,more){if((!options.recognition&&!options.playback)||finished)return;transcript=(transcript+(text||'')).slice(-160);if(!more&&transcript&&!options.playback)done(null);},
+            onOutputTranscript(text){if(!finished)outputText=(outputText+(text||'')).slice(-400)},
+            onOutputLevelChanged(level){if(!finished){outputEvents++;outputPeak=Math.max(outputPeak,level||0)}},
             onStateChanged(value, reason) {
               if(finished)return
-              if (value === ChatState.CONNECTED || value === ChatState.SPEAKING) {if(options.recognition){if(!listeningStarted){listeningStarted=true;instance.setMicrophoneEnabled(true);microphoneIndicator(true);options.progress?.('いま話してください（約15秒）');Timer.schedule(timeout,15000);}}else done(null);}
-              else if (value === ChatState.FAILED || value === ChatState.DISCONNECTED) done(new Error(String(reason || 'Native chat failed')))
+              if(options.playback&&(value===ChatState.LISTENING||value===ChatState.WAITING))receivedOutput=true
+              if(options.playback&&value===ChatState.SPEAKING&&receivedOutput&&outputEvents){done(null);return}
+              if (value === ChatState.CONNECTED || value === ChatState.SPEAKING) {
+                if(options.playback){if(!listeningStarted){listeningStarted=true;instance.setMicrophoneEnabled(true);microphoneIndicator(true);options.progress?.('いま短く話してください')}}
+                else if(options.recognition){if(!listeningStarted){listeningStarted=true;instance.setMicrophoneEnabled(true);microphoneIndicator(true);options.progress?.('いま話してください（約15秒）');Timer.schedule(timeout,15000)}}
+                else done(null);
+              }
+              else if (value === ChatState.FAILED || value === ChatState.DISCONNECTED) {
+                if(options.playback&&outputPeak>0&&globalThis.stackchanPlaybackHealth?.drained)done(null)
+                else done(new Error(String(reason || 'Native chat failed')))
+              }
             },
           },
         })
         instance.setMicrophoneEnabled(false)
-        instance.setVolume(options.recognition ? 0 : robot.audio.volume)
+        instance.setVolume(options.recognition&&!options.playback ? 0 : robot.audio.volume)
         instance.start()
       } catch (error) {
         done(error)

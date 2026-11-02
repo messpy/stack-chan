@@ -17,6 +17,10 @@ class UpdateStatusTests(unittest.TestCase):
             for name in ('update-archive.sh', 'update-status.py'):
                 shutil.copyfile(Path(__file__).with_name(name), root / 'scripts' / name)
             (root / 'scripts/patch-promise-checkpoint.py').write_text('print("SDK patch fixture")\n')
+            (root / 'scripts/patch-self-message-queue.py').write_text('print("SDK self queue fixture")\n')
+            (root / 'scripts/patch-audio-input-ring.py').write_text('print("SDK audio ring fixture")\n')
+            (root / 'scripts/patch-worker-task-start.py').write_text('print("SDK worker allocation fixture")\n')
+            (root / 'scripts/patch-audioout-callback-lifetime.py').write_text('print("SDK audio callback fixture")\n')
             binary = root / 'bin'
             binary.mkdir()
             npm = binary / 'npm'

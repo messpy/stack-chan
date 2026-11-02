@@ -5,6 +5,7 @@ import { PayloadBuffer } from 'payload-buffer'
 import { CommandTimeoutError } from 'servo-command-error'
 import SingleWaitSlot from 'single-wait-slot'
 import Timer from 'timer'
+import ServoBusQueue from 'servo-bus-queue'
 
 type Maybe<T> =
   | {
@@ -68,6 +69,8 @@ function assertNeverRxState(state: never): never {
   throw new Error(`Unknown RX state: ${state}`)
 }
 
+const busDiagnostics = { txPackets: 0, txBytes: 0, rxBytes: 0, rxPackets: 0, validReplies: 0, echoes: 0, invalidPackets: 0 }
+
 class PacketHandler extends Serial {
   #callbacks: Map<number, (buffer: Uint8Array, length: number) => void>
   #rxBuffer: Uint8Array
@@ -75,12 +78,20 @@ class PacketHandler extends Serial {
   #idx: number
   #state: RxState
   #count: number
+  #bus = new ServoBusQueue(Timer.set)
   constructor(option) {
     const onReadable = function (this: PacketHandler, byte: number) {
+      busDiagnostics.rxBytes += byte
       const rxBuf = this.#rxBuffer
       for (let b = 0; b < byte; b++) {
         // NOTE: We can safely read a number
-        rxBuf[this.#idx++] = this.read() as number
+        const value = this.read() as number
+        if (this.#idx >= rxBuf.length) {
+          this.#idx = 0
+          this.#state = RX_STATE.SEEK
+          busDiagnostics.invalidPackets++
+        }
+        rxBuf[this.#idx++] = value
         switch (this.#state) {
           case RX_STATE.SEEK:
             if (this.#idx >= 2) {
@@ -91,33 +102,51 @@ class PacketHandler extends Serial {
               } else {
                 // reset seek
                 // trace('seeking failed. reset\n')
-                this.#idx = 0
+                if (rxBuf[1] === 0xff) { rxBuf[0] = 0xff; this.#idx = 1 }
+                else this.#idx = 0
               }
             }
             break
           case RX_STATE.HEAD:
+            // Servo IDs cannot be 0xff. Keep the newest header when noise
+            // leaves extra 0xff bytes before a real status packet.
+            if (this.#idx === 3 && rxBuf[2] === 0xff) { this.#idx = 2; break }
             if (this.#idx >= 4) {
               this.#count = rxBuf[3]
-              this.#state = RX_STATE.BODY
+              // Noise during servo power-up must not keep the parser waiting
+              // for an impossible frame or overrun its fixed receive buffer.
+              if (this.#count < 2 || this.#count > rxBuf.length - 4) {
+                busDiagnostics.invalidPackets++
+                const repeatedHeader = rxBuf[2] === 0xff && rxBuf[3] === 0xff
+                const trailingHeader = rxBuf[3] === 0xff
+                this.#idx = repeatedHeader ? 2 : trailingHeader ? 1 : 0
+                if (this.#idx) rxBuf[0] = 0xff
+                if (this.#idx === 2) rxBuf[1] = 0xff
+                this.#state = repeatedHeader ? RX_STATE.HEAD : RX_STATE.SEEK
+              } else this.#state = RX_STATE.BODY
             }
             break
           case RX_STATE.BODY:
             this.#count -= 1
             if (this.#count === 0) {
               // trace('received packet!\n')
+              busDiagnostics.rxPackets++
               const cs = checksum(rxBuf, this.#idx - 1) & 0xff
               const id = rxBuf[2]
               const command = rxBuf[4] as Command
               if (command === COMMAND.READ || command === COMMAND.WRITE) {
+                busDiagnostics.echoes++
                 // trace(`got echo.  ... ${rxBuf.subarray(0, this.#idx)} ignoring\n`)
               } else if (cs === rxBuf[this.#idx - 1] && this.#callbacks.has(id)) {
                 // trace(`got response for ${id}. triggering callback \n`)
+                busDiagnostics.validReplies++
                 const payloadLength = this.#idx - 6
                 const payloadView = this.#payloadBuffer.copyFrom(rxBuf, payloadLength, 5)
                 const payload = new Uint8Array(payloadLength)
                 payload.set(payloadView.subarray(0, payloadLength))
                 this.#callbacks.get(id)(payload, payloadLength)
               } else {
+                busDiagnostics.invalidPackets++
                 trace(`unknown packet for ${id} ... ${rxBuf.subarray(0, this.#idx)}. ignoring\n`)
               }
               this.#idx = 0
@@ -142,6 +171,8 @@ class PacketHandler extends Serial {
     this.#idx = 0
     this.#state = RX_STATE.SEEK
   }
+  transact(run: (done: () => void) => void, failed: (error: unknown) => void) { this.#bus.submit(run, failed) }
+
   hasCallbackOf(id: number): boolean {
     return this.#callbacks.has(id)
   }
@@ -171,6 +202,7 @@ function checksum(buffer: Uint8Array, length: number): number {
 type SCServoConstructorParam = {
   id: number
   awaitWriteResponse?: boolean
+  responseTimeout?: number
   serial?: Partial<{
     receive: number
     transmit: number
@@ -216,7 +248,7 @@ function deferNoResponseResult(onResult: CommandCallback, onError: ErrorCallback
     } catch (error) {
       onError(error)
     }
-  }, 0)
+  }, 5)
 }
 
 let packetHandler: PacketHandler = null
@@ -229,12 +261,14 @@ class SCServo {
   #commandQueue: PendingCommand[] = []
   #offset: number
   #awaitWriteResponse: boolean
+  #responseTimeout: number
   #isWriting = false
-  constructor({ id, awaitWriteResponse = true, serial: serialOverride }: SCServoConstructorParam) {
+  constructor({ id, awaitWriteResponse = true, responseTimeout = COMMAND_TIMEOUT_MS, serial: serialOverride }: SCServoConstructorParam) {
     this.#id = id
     this.#waitSlot = new SingleWaitSlot<Uint8Array>(Timer.set, Timer.clear)
     this.#offset = 0
     this.#awaitWriteResponse = awaitWriteResponse
+    this.#responseTimeout = responseTimeout
     this.#onCommandRead = (values, _length) => {
       this.#waitSlot.resolve(values)
     }
@@ -267,6 +301,8 @@ class SCServo {
   teardown(): void {
     packetHandler.removeCallback(this.#id)
   }
+  getBusDiagnostics() { return { ...busDiagnostics } }
+
   get id(): number {
     return this.#id
   }
@@ -298,30 +334,19 @@ class SCServo {
     this.#txBuf[idx] = checksum(this.#txBuf, idx)
     idx++
     // trace(`writing: ${this.#txBuf.subarray(0, idx)}\n`)
-    this.#writePacket(
-      idx,
-      () => {
-        this.#isWriting = false
-        if (!waitsForResponse) {
-          deferNoResponseResult(onResult, onError)
-          return
-        }
-        const waiting = this.#waitSlot.wait(COMMAND_TIMEOUT_MS, onResult, () => {
+    packetHandler.transact((releaseBus) => {
+      const complete=(values: Uint8Array | undefined)=>{try{onResult(values)}finally{releaseBus()}}
+      const failed=(error: unknown)=>{try{onError(error)}finally{releaseBus()}}
+      this.#writePacket(idx, () => {
+        this.#isWriting=false
+        if(!waitsForResponse){deferNoResponseResult(complete,failed);return}
+        const waiting=this.#waitSlot.wait(this.#responseTimeout,complete,()=>{
           trace(`[scservo] timeout id=${this.#id} command=${command} address=${address}\n`)
-          onError(new CommandTimeoutError('scservo', COMMAND_TIMEOUT_MS))
+          failed(new CommandTimeoutError('scservo',this.#responseTimeout))
         })
-        if (!waiting) {
-          onError(new Error(COMMAND_BUSY_ERROR))
-        } else {
-          Timer.set(this.#drainCommandQueue, 0)
-        }
-      },
-      (error) => {
-        this.#isWriting = false
-        onError(error)
-        Timer.set(this.#drainCommandQueue, 0)
-      },
-    )
+        if(!waiting)failed(new Error(COMMAND_BUSY_ERROR))
+      },error=>{this.#isWriting=false;failed(error);Timer.set(this.#drainCommandQueue,0)})
+    },error=>{this.#isWriting=false;onError(error);Timer.set(this.#drainCommandQueue,0)})
     return true
   }
 
@@ -331,6 +356,8 @@ class SCServo {
     packetHandler.format = 'buffer'
     try {
       packetHandler.write(this.#txBuf.subarray(0, length))
+      busDiagnostics.txPackets++
+      busDiagnostics.txBytes += length
       written = true
     } catch (error) {
       if (attempt >= 1) {
@@ -545,7 +572,7 @@ class SCServo {
 
   setRawPosition(rawPosition: number, callback?: CompletionCallback): void {
     const position = Math.floor(clamp(rawPosition, 0, 0x03ff))
-    this.#sendCommand(COMMAND.WRITE, ADDRESS.GOAL_POSITION, () => callback?.(), callback ?? (() => {}), ...le(position))
+    this.#sendCommand(COMMAND.WRITE, ADDRESS.GOAL_POSITION, () => callback?.(), callback ?? (() => {}), ...le(position), ...le(0), ...le(0))
   }
 
   setRawPositionInTime(
@@ -561,6 +588,7 @@ class SCServo {
       callback ?? (() => {}),
       ...le(position),
       ...le(goalTimeMilliseconds),
+      ...le(0), // Clear a previously configured speed, as manufacturer WritePos does.
     )
   }
 

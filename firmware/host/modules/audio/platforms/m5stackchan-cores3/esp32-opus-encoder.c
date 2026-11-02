@@ -270,6 +270,7 @@ void xs_esp32_opus_encoder_constructor(xsMachine *the)
 	uint32_t internalAfter;
 	uint32_t psramAfter;
 	esp_audio_err_t openResult;
+	const char *initializationStage = "codec open";
 	int inputBytes;
 	int outputBytes;
 
@@ -280,13 +281,17 @@ void xs_esp32_opus_encoder_constructor(xsMachine *the)
 	openResult = esp_opus_enc_open(&config, sizeof(config), &encoder->handle);
 	if (ESP_AUDIO_ERR_OK != openResult)
 		goto failed;
-	if (ESP_AUDIO_ERR_OK != esp_opus_enc_get_frame_size(encoder->handle, &inputBytes, &outputBytes))
+	initializationStage = "frame size";
+	openResult = esp_opus_enc_get_frame_size(encoder->handle, &inputBytes, &outputBytes);
+	if (ESP_AUDIO_ERR_OK != openResult)
 		goto failed;
+	initializationStage = "frame validation";
 	if ((inputBytes <= 0) || (inputBytes > OPUS_MAX_INPUT_BYTES) || (outputBytes <= 0) ||
 		(outputBytes > OPUS_MAX_PACKET_BYTES))
 		goto failed;
 	encoder->inputBytes = (uint32_t)inputBytes;
 	encoder->outputBytes = OPUS_MAX_PACKET_BYTES;
+	initializationStage = "buffers and semaphores";
 	encoder->packets = heap_caps_calloc(PACKET_RING_DEPTH, sizeof(xsESP32OpusPacket),
 		MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 	encoder->packetSpace = xSemaphoreCreateCounting(PACKET_RING_DEPTH, PACKET_RING_DEPTH);
@@ -296,6 +301,7 @@ void xs_esp32_opus_encoder_constructor(xsMachine *the)
 	if (!encoder->packets || !encoder->packetSpace || !encoder->packetAvail || !encoder->pcmGate ||
 		!encoder->stopped)
 		goto failed;
+	initializationStage = "encoder task";
 	if (pdPASS != xTaskCreate(opusEncoderTask, "opus-encoder", OPUS_ENCODER_STACK_BYTES, encoder,
 		tskIDLE_PRIORITY + 5, &encoder->task))
 		goto failed;
@@ -313,9 +319,14 @@ void xs_esp32_opus_encoder_constructor(xsMachine *the)
 	xsmcSet(xsThis, xsID("psramHeapBytes"), xsResult);
 	return;
 
-failed:
+failed: {
+	uint32_t freeInternal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+	uint32_t largestInternal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 	xs_esp32_opus_encoder_destructor(encoder);
-	xsUnknownError("ESP Opus encoder initialization failed");
+	xsUnknownError("ESP Opus encoder initialization failed at %s (code=%d internal_free=%lu largest=%lu)",
+		initializationStage, (int)openResult, (unsigned long)freeInternal, (unsigned long)largestInternal);
+}
+
 }
 
 void xs_esp32_opus_encoder_close(xsMachine *the)

@@ -19,3 +19,10 @@ replies=[{message:{role:'assistant',content:'画像です'}}];const jpeg=Buffer.
 replies=[new Error('Ollama Cloud: HTTP 401')];const check=await api.checkOllama();assert.equal(check.authenticated,false);assert.match(check.error,/401/);
 replies=Array.from({length:5},()=>({message:{role:'assistant',tool_calls:[{function:{name:'timer_create',arguments:{}}}]}}));await assert.rejects(api.ollamaChat([],[{name:'timer_create'}],async()=>({ok:true})),/回数/);
 console.log('PASS: cloud endpoint/auth, missing key, selected model, tool execution/result loop, allowlist, stale-session guard, image bytes, API errors, bounded tool rounds');
+settings.api.gemini='DUMMY_GEMINI_KEY';settings.geminiTextModel='gemini-test-text';
+replies=[{candidates:[{content:{role:'model',parts:[{functionCall:{id:'call-1',name:'timer_create',args:{seconds:60}}}]}}]},{candidates:[{content:{role:'model',parts:[{text:'設定しました。'}]}}]}];
+let geminiCalls=0;
+assert.equal(await api.geminiTextChat([{role:'system',content:'短く答える'},{role:'user',content:'一分のタイマー'}],[{name:'timer_create',inputSchema:{type:'object',properties:{seconds:{type:'integer'}}}}],async(name,args)=>{assert.equal(name,'timer_create');assert.equal(args.seconds,60);geminiCalls++;return {id:'timer-1'}}),'設定しました。');
+assert.equal(geminiCalls,1);assert.equal(requests.at(-1).host,'generativelanguage.googleapis.com');assert.match(requests.at(-1).path,/gemini-test-text:generateContent$/);assert.equal(requests.at(-1).body.contents.at(-1).parts[0].functionResponse.response.id,'timer-1');
+const beforeCancelled=requests.length;await assert.rejects(api.geminiTextChat([],[],undefined,()=>false),/切り替わ/);assert.equal(requests.length,beforeCancelled);
+console.log('PASS: selected Gemini text model, authenticated REST, grounded tool result round-trip and cancellation');

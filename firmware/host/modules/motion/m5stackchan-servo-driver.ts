@@ -71,8 +71,8 @@ export class M5StackChanServoDriver {
       },
     })
     activeDriver = this
-    this.#pan = new SCServo({ id: this.#config.yaw.id, serial: this.#config.serial, awaitWriteResponse: false })
-    this.#tilt = new SCServo({ id: this.#config.pitch.id, serial: this.#config.serial, awaitWriteResponse: false })
+    this.#pan = new SCServo({ id: this.#config.yaw.id, serial: this.#config.serial, awaitWriteResponse: false, responseTimeout: 1500 })
+    this.#tilt = new SCServo({ id: this.#config.pitch.id, serial: this.#config.serial, awaitWriteResponse: false, responseTimeout: 1500 })
     if (param.servoPower?.type !== 'none') {
       this.#servoPower = new PY32ServoPower(param.servoPower?.pin ?? 0, param.servoPower?.address)
     }
@@ -81,8 +81,17 @@ export class M5StackChanServoDriver {
   getDiagnostics(done: (result: unknown) => void) {
     const power = this.#servoPower?.diagnostics()
     this.#pan.readRawPosition((pan) => {
-      this.#tilt.readRawPosition((tilt) => done({ serial: this.#config.serial, power, pan, tilt }))
+      this.#tilt.readRawPosition((tilt) => done({ serial: this.#config.serial, power, pan, tilt, bus: this.#pan.getBusDiagnostics() }))
     })
+  }
+
+  recoverPower(done: (result: unknown) => void) {
+    if (!this.#servoPower) { done({ error: 'Servo power control unavailable' }); return }
+    this.#servoPower.setEnabled(false)
+    Timer.set(() => {
+      this.#servoPower?.setEnabled(true)
+      Timer.set(() => this.getDiagnostics(done), 700)
+    }, 700)
   }
 
   get lastKnownRotation() { return this.#lastKnownRotation }
@@ -182,6 +191,7 @@ class PY32ServoPower {
     this.#expander = expander
     expander.setDirection(this.#pin, true)
     expander.setPullMode(this.#pin, true)
+    expander.setDriveMode(this.#pin, false) // VM_EN must be driven high, not left floating.
     trace(`[m5stackchan-servo] configured PY32 servo power pin ${this.#pin}\n`)
   }
 
@@ -189,13 +199,16 @@ class PY32ServoPower {
     try {
       const expander = this.#expander
       if (!expander) return { available: false }
-      return { available: true, version: expander.readRegister8(2), output: expander.getWriteValue(this.#pin), direction: expander.readRegister8(3) }
+      return { available: true, version: expander.readRegister8(2), output: expander.getWriteValue(this.#pin), direction: expander.readRegister8(3), input: expander.readRegister8(7), pullUp: expander.readRegister8(9), pullDown: expander.readRegister8(11), driveMode: expander.readRegister8(19) }
     } catch (error) { return { error: String(error) } }
   }
 
   setEnabled(enabled: boolean) {
     const expander = this.#expander
     if (!expander) return
+    expander.setDirection(this.#pin, true)
+    expander.setPullMode(this.#pin, true)
+    expander.setDriveMode(this.#pin, false)
     expander.digitalWrite(this.#pin, enabled)
     trace(`[m5stackchan-servo] servo power ${enabled ? 'on' : 'off'} (${expander.getWriteValue(this.#pin)})\n`)
   }

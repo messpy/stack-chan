@@ -5,6 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
+#include "archive-vault-crypto.h"
 
 #define ARCHIVE_USB_PACKET_LIMIT 20000
 static char line[ARCHIVE_USB_PACKET_LIMIT + 5];
@@ -117,9 +118,9 @@ void xs_archive_seal(xsMachine *the) {
     memcpy(output,"SCFGDB01",8);esp_fill_random(output+8,12);
     psa_key_id_t identifier=archive_import_vault_key(the);
     size_t written=0;
-    psa_status_t result=psa_aead_encrypt(identifier,PSA_ALG_GCM,output+8,12,output,8,input,size,output+20,size+16,&written);
+    psa_status_t result=sc_vault_encrypt(identifier,output+8,output,8,input,size,output+20,size+16,&written);
     psa_destroy_key(identifier);
-    if(result!=PSA_SUCCESS||written!=size+16)xsUnknownError("Settings encryption failed");
+    if(result!=PSA_SUCCESS||written!=size+16)xsUnknownError("Settings encryption failed (PSA code=%d)",(int)result);
 }
 
 void xs_archive_open(xsMachine *the) {
@@ -131,7 +132,7 @@ void xs_archive_open(xsMachine *the) {
     unsigned char *source=input,*output=xsmcToArrayBuffer(xsResult);
     psa_key_id_t identifier=archive_import_vault_key(the);
     size_t written=0;
-    psa_status_t result=psa_aead_decrypt(identifier,PSA_ALG_GCM,source+8,12,source,8,source+20,size-20,output,size-36,&written);
+    psa_status_t result=sc_vault_decrypt(identifier,source+8,source,8,source+20,size-20,output,size-36,&written);
     psa_destroy_key(identifier);
     if(result!=PSA_SUCCESS||written!=size-36){memset(output,0,size-36);xsUnknownError("Settings authentication failed");}
 }
@@ -260,3 +261,5 @@ void xs_archive_recognition_pcm(xsMachine *the) {
     SC_PCM_FIELD("rightRms",sqrt((double)stats.right_energy/(stats.frames?stats.frames:1))+0.5);
 #undef SC_PCM_FIELD
 }
+
+void xs_archive_collect_memory(xsMachine *the) { xsCollectGarbage(); }

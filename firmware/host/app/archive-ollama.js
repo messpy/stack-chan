@@ -105,3 +105,33 @@ export async function checkOllama() {
     }
   }
 }
+
+export const DEFAULT_GEMINI_TEXT_MODEL='gemini-3.5-flash-lite'
+export async function geminiTextChat(messages,tools=[],runTool,isCurrent=()=>true){
+ const settings=getSettings(),key=settings.api?.gemini?.trim();
+ if(!key)throw new Error('Gemini APIキーを設定してください');
+ const model=settings.geminiTextModel||DEFAULT_GEMINI_TEXT_MODEL;
+ const system=messages.filter(m=>m.role==='system').map(m=>m.content).join('\n');
+ const contents=messages.filter(m=>m.role==='user'||m.role==='assistant').map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]}));
+ for(let round=0;round<5;round++){
+  if(!isCurrent())throw new Error('会話が切り替わりました');
+  const body={systemInstruction:{parts:[{text:system}]},contents,generationConfig:{maxOutputTokens:1200},...(tools.length?{tools:[{functionDeclarations:tools.map(t=>({name:t.name,description:t.description||'',parametersJsonSchema:t.inputSchema||t.parameters||{type:'object',properties:{}}}))}]}:{})};
+  const response=JSON.parse(await postVision('generativelanguage.googleapis.com','/v1beta/models/'+encodeURIComponent(model)+':generateContent',[['content-type','application/json'],['x-goog-api-key',key]],ArrayBuffer.fromString(JSON.stringify(body)),'POST',60000));
+  if(!isCurrent())throw new Error('会話が切り替わりました');
+  const content=response.candidates?.[0]?.content,parts=content?.parts||[],calls=parts.filter(p=>p.functionCall);
+  if(calls.length){
+   if(calls.length>8)throw new Error('道具の呼び出しが多すぎます');
+   contents.push(content);const results=[];
+   for(const {functionCall:call} of calls){
+    if(!isCurrent())throw new Error('会話が切り替わりました');
+    if(!tools.some(t=>t.name===call.name))throw new Error('未登録の道具です');
+    let result;try{result=await runTool(call.name,call.args||{})}catch(_){result={error:'道具を実行できませんでした'}}
+    results.push({functionResponse:{...(call.id?{id:call.id}:{}),name:call.name,response:result}});
+   }
+   contents.push({role:'user',parts:results});continue;
+  }
+  const text=parts.filter(p=>!p.thought).map(p=>p.text||'').join('').trim();
+  if(!text)throw new Error('Geminiの回答が空でした');return text.slice(0,4096);
+ }
+ throw new Error('道具の呼び出し回数が多すぎます');
+}

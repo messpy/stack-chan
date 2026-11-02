@@ -56,6 +56,10 @@ source "${STACKCHAN_XS_ENV:-$HOME/.local/share/xs-dev-export.sh}"
 source "${STACKCHAN_IDF_ENV:-$HOME/.local/share/esp32/esp-idf/export.sh}"
 set -u
 /usr/bin/python3 scripts/patch-promise-checkpoint.py
+/usr/bin/python3 scripts/patch-self-message-queue.py
+/usr/bin/python3 scripts/patch-audio-input-ring.py
+/usr/bin/python3 scripts/patch-worker-task-start.py
+/usr/bin/python3 scripts/patch-audioout-callback-lifetime.py
 [[ -f host/app/manifest_archive_private.json ]] || { echo 'Run npm run init:archive first.' >&2; exit 1; }
 if [[ $mode != --flash-only ]]; then
   phase building 'ビルド中（詳細はログに保存）'

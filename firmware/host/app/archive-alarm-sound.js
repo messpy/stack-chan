@@ -1,4 +1,5 @@
-import AudioOut from 'pins/audioout';
+import AudioOut from 'embedded:io/audio/out';
+import Timer from 'timer';
 import Base64 from 'base64';
 import {withSDCard} from 'stackchan-sdcard';
 import {getSettings,changeSettings,randomHex} from 'archive-vault';
@@ -35,22 +36,46 @@ export function alarmSoundCommand(op,args={}){
 export function stopAlarmSound(){stopPlayback?.();}
 export async function playAlarmSound(robot,shouldStop=()=>false,seconds=0){
  const sound=getSettings().alarmSound;if(!sound)return false;
- let file,audio;const buffers=new Map(),free=[];let done=false,offset=44,pending=0,sequence=0;
- const stats=lastPlayback={state:'preparing',bytes:0,readMaxMs:0,queueStarvations:0,bufferBytes:32768,bufferCount:0};
+ let file,audio,drainTimer;let done=false,offset=44;
+ const pcm=new Uint8Array(8192);
+ const stats=lastPlayback={state:'preparing',bytes:0,readMaxMs:0,queueStarvations:0,bufferBytes:pcm.byteLength,bufferCount:1};
  try{
   const info=withSDCard(root=>{file=root.openFile({path:folder+sound.file,mode:'r'});return wavInfo(file);});
   const end=44+Math.min(info.bytes,seconds>0?Math.floor(seconds*48000/2)*2:info.bytes);
   if(globalThis.amp)globalThis.amp.sampleRate=24000;
-  audio=new AudioOut({streams:1,sampleRate:24000,numChannels:1,bitsPerSample:16});
-  const capacity=audio.length(0),depth=Math.max(1,Math.min(4,Math.floor((capacity-1)/2)));
-  for(let i=0;i<depth;i++)free.push(new SharedArrayBuffer(32768));stats.bufferCount=depth;
   return await new Promise((resolve,reject)=>{
-   const finish=(error,stopped=false)=>{if(done)return;done=true;stats.state=error?'error':stopped?'stopped':'completed';stopPlayback=undefined;try{audio.close();}catch(_){}trace('[alarm-audio] result='+stats.state+' bytes='+stats.bytes+' read_max_ms='+stats.readMaxMs+' queue_empty='+stats.queueStarvations+'\n');error?reject(error):resolve(true);};
+   const finish=(error,stopped=false)=>{
+    if(done)return;done=true;stats.state=error?'error':stopped?'stopped':'completed';stopPlayback=undefined;
+    if(drainTimer!==undefined){Timer.clear(drainTimer);drainTimer=undefined;}
+    // Leave the native writable callback before releasing I2S or resuming chat.
+    Timer.set(()=>{
+     try{audio?.stop();}catch(_){}try{audio?.close();}catch(_){}audio=undefined;
+     trace('[alarm-audio] result='+stats.state+' bytes='+stats.bytes+' read_max_ms='+stats.readMaxMs+(error?' error='+String(error):'')+'\n');
+     error?reject(error):resolve(true);
+    },0);
+   };
    stopPlayback=()=>finish(undefined,true);
-   const enqueue=()=>{if(done)return;if(shouldStop()){finish(undefined,true);return;}if(offset>=end){if(!pending)finish();return;}const length=Math.min(32768,end-offset),pcm=free.pop();if(!pcm)throw new Error('Alarm PCM buffer unavailable');const start=Date.now();const count=withSDCard(()=>file.read(new Uint8Array(pcm,0,length),offset));stats.readMaxMs=Math.max(stats.readMaxMs,Date.now()-start);if(count!==length)throw new Error('Alarm SD read incomplete');offset+=length;stats.bytes+=length;const id=++sequence;buffers.set(id,pcm);pending++;audio.enqueue(0,AudioOut.RawSamples,pcm,1,0,length/2);audio.enqueue(0,AudioOut.Callback,id);};
-   audio.callback=id=>{if(done)return;const pcm=buffers.get(id);buffers.delete(id);if(pcm)free.push(pcm);pending--;try{if(offset<end&&audio.length(0)===capacity)stats.queueStarvations++;enqueue();}catch(e){finish(e);}};
-   audio.enqueue(0,AudioOut.Flush);audio.enqueue(0,AudioOut.Volume,Math.round(Math.min(robot.audio.volume,0.45)*256));
-   try{for(let i=0;i<depth&&!done&&offset<end;i++)enqueue();stats.state='playing';audio.start();}catch(e){finish(e);}
+   try{
+    audio=new AudioOut({sampleRate:24000,channels:1,bitsPerSample:16,onWritable(size){
+     if(done||drainTimer!==undefined)return;
+     try{
+      if(shouldStop()){finish(undefined,true);return;}
+      const writable=size&~1;let remaining=writable;
+      while(remaining&&offset<end){
+       const length=Math.min(pcm.byteLength,remaining,end-offset),start=Date.now();
+       const view=pcm.subarray(0,length),count=withSDCard(()=>file.read(view,offset));
+       stats.readMaxMs=Math.max(stats.readMaxMs,Date.now()-start);
+       if(count!==length)throw new Error('Alarm SD read incomplete');
+       audio.write(view);offset+=length;stats.bytes+=length;remaining-=length;
+      }
+      if(offset>=end){
+       // Writable space bounds the queued DMA audio; allow it to drain once.
+       drainTimer=Timer.set(()=>{drainTimer=undefined;finish();},Math.ceil(writable*1000/48000)+80);
+      }
+     }catch(error){finish(error);}
+    }});
+    audio.volume=Math.min(robot.audio.volume,0.45);stats.state='playing';audio.start();
+   }catch(error){finish(error);}
   });
- }finally{stopPlayback=undefined;try{audio?.close();}catch(_){}try{if(file)withSDCard(()=>file.close());}catch(_){}buffers.clear();free.length=0;}
+ }finally{stopPlayback=undefined;try{audio?.close();}catch(_){}try{if(file)withSDCard(()=>file.close());}catch(_){} }
 }

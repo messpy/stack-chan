@@ -50,3 +50,8 @@ node_modules/
 /secrets.*
 /credentials.*
 /CoreS3-backup*/
+
+# Browser assets copied for firmware resources by prebuild:archive
+/host/app/face-editor-page.txt
+/host/app/face-editor-script.txt
+/host/app/face-format-script.txt

@@ -42,3 +42,65 @@ assert.equal(adaptive.plan(287000,95000,4800).count,4800);
 // A short completed answer must never wait for the large streaming threshold.
 const final=adaptive.plan(96000,95000,4800,true);assert.equal(final.count,1000);assert.equal(final.complete,true);
 console.log('PASS: adaptive buffering increases jitter tolerance while completed short replies drain');
+
+const {QueuedPlayback}=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(new URL('../../host/app/archive-playback-buffer.js',import.meta.url))).toString('base64'));
+// Native consumes queued shared copies while JavaScript callbacks are stalled.
+for(const incoming of [28800,96000]){
+ let clock=0,ack=0;const pending=[],callbacks=[],actual=[],memory=new SharedArrayBuffer(131072),source=new Uint8Array(memory);
+ for(let i=0;i<incoming;i++)source[i]=i%251;
+ const model=new QueuedPlayback({ring:memory,slots:8,prebufferMs:600,now:()=>clock,ack:n=>ack=n,write:(bytes,done)=>pending.push({bytes,done,offset:0})});model.drainMs=100;
+ model.pump(incoming,false);assert.ok(model.queuedBytes<=model.chunkBytes*8);assert.equal(ack,Math.min(Math.floor(incoming/8192)*8192,65536));
+ source.fill(255,0,ack); // Producer reuses acknowledged ring space immediately.
+ const consume=amount=>{while(amount&&pending.length){const front=pending[0],n=Math.min(amount,front.bytes.length-front.offset);actual.push(...front.bytes.subarray(front.offset,front.offset+n));front.offset+=n;amount-=n;if(front.offset===front.bytes.length){pending.shift();callbacks.push(()=>front.done(null))}}return amount};
+ clock=500;assert.equal(consume(24000),0,'native queue covers a 500ms JS/UI pause');assert.equal(callbacks.length,2);assert.equal(model.planner.underruns,0);
+ while(callbacks.length)callbacks.shift()();model.pump(incoming,true);
+ for(let i=0;i<30&&(pending.length||model.pending);i++){consume(4096);clock+=85;while(callbacks.length)callbacks.shift()();model.pump(incoming,true)}
+ assert.deepEqual(actual,Array.from({length:incoming},(_,i)=>i%251));assert.equal(model.pump(incoming,true).complete,true);
+ model.close();assert.equal(model.active,false);
+}
+console.log('PASS: native queue continues through a 500ms JS pause, shared PCM survives producer reuse, bounded memory and final drain');
+
+for(let seed=1;seed<=12;seed++){
+ let clock=0,head=0,tail=0,produced=0,played=0,randomState=seed;const capacity=2048,memory=new SharedArrayBuffer(capacity),bytes=new Uint8Array(memory),native=[];
+ const random=()=>{randomState=(Math.imul(randomState,1664525)+1013904223)>>>0;return randomState/4294967296};
+ const model=new QueuedPlayback({ring:memory,rate:1000,prebufferMs:100,chunkBytes:128,slots:4,now:()=>clock,ack:n=>tail=n,write:(data,done)=>native.push({data,done,offset:0})});model.drainMs=50;
+ for(let step=0;step<20000&&(produced<20000||played<20000);step++){
+  const available=head>=tail?head-tail:capacity-tail+head,free=capacity-available-2;
+  const amount=Math.min(20000-produced,free,Math.floor(random()*100)*2);
+  for(let i=0;i<amount;i++){if(head===capacity)head=0;bytes[head++]=produced++%251;}
+  if(random()<0.7)model.pump(head,produced===20000);
+  let remaining=2+Math.floor(random()*60)*2;
+  while(remaining&&native.length){const entry=native[0],n=Math.min(remaining,entry.data.length-entry.offset);for(let i=0;i<n;i++)assert.equal(entry.data[entry.offset+i],played++%251);entry.offset+=n;remaining-=n;if(entry.offset===entry.data.length){native.shift();entry.done(null)}}
+  clock+=20;assert.ok(model.pending<=4);assert.ok(model.queuedBytes<=512);
+ }
+ assert.equal(played,20000);assert.equal(model.pump(head,true).complete,true);
+}
+console.log('PASS: asynchronous playback preserves PCM through jitter, queue backpressure and repeated wraps across 12 streams');
+
+{
+ const memory=new SharedArrayBuffer(1024);let acked=0,completion;
+ const fail=new QueuedPlayback({ring:memory,prebufferMs:1,ack:()=>acked++,write:()=>{throw Error('native queue unavailable')}});
+ assert.throws(()=>fail.pump(100,true),/unavailable/);assert.equal(acked,0);assert.equal(fail.pending,0);
+ const stopped=new QueuedPlayback({ring:memory,prebufferMs:1,ack:()=>{},write:(_bytes,done)=>completion=done});stopped.pump(100,true);stopped.close();assert.doesNotThrow(()=>completion(Error('closed')));assert.equal(stopped.error,undefined);
+}
+console.log('PASS: native enqueue failure does not acknowledge lost PCM; callbacks after close are ignored');
+
+// A new spoken turn continues at the ring cursor left by the previous turn.
+{
+ const memory=new SharedArrayBuffer(256),bytes=new Uint8Array(memory),sent=[];
+ bytes.fill(255);bytes.set(Array.from({length:32},(_,i)=>i),100);
+ const second=new QueuedPlayback({ring:memory,tail:100,prebufferMs:1,write:(pcm,done)=>{sent.push(...pcm);done(null)},ack:()=>{}});
+ assert.equal(second.pump(132,true).complete,true);assert.deepEqual(sent,Array.from({length:32},(_,i)=>i));
+}
+console.log('PASS: next spoken turn starts at the previous cursor without replaying earlier audio');
+
+{
+ const ring=new SharedArrayBuffer(131072),queued=[];let clock=0;
+ const model=new QueuedPlayback({ring,prebufferMs:1500,now:()=>clock,write:(bytes,done)=>queued.push({bytes,done}),ack(){}});
+ model.pump(120000,false);
+ let budget=67200; // 1.4 seconds at 24 kHz mono PCM, no JavaScript callbacks.
+ for(const item of queued){const used=Math.min(budget,item.bytes.length);budget-=used;if(!budget)break}
+ assert.equal(budget,0,'default native queue must cover the observed 1.36s JS stall');
+ assert.equal(model.planner.underruns,0);model.close();
+}
+console.log('PASS: native queue covers a 1.4-second JS stall without relying on main-thread callbacks');

@@ -21,3 +21,5 @@ export const writeDebugUSB = native('xs_archive_debug_write');
 
 export const heapStatus = native('xs_archive_heap_status');
 export const prepareRecognitionPCM = native('xs_archive_recognition_pcm');
+
+export const collectMemory = native('xs_archive_collect_memory');

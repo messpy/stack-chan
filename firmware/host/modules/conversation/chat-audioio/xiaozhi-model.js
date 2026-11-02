@@ -52,8 +52,12 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
   }
 
   configure(message) {
+    this.recognitionOnly=message.recognitionOnly===true
     this.closeCodecs()
     this.configurationError = ''
+    this.replyRequested = false
+    this.suppressReply = false
+    this.replyActive = false
     this.pcmRing = message.pcmRing
     this.pcmRingState = message.pcmRingState
     try {
@@ -226,7 +230,8 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
       this.encoder.attachPcmRing(this.pcmRing, this.pcmRingState)
       this.encoderPacket = new SharedArrayBuffer(this.encoder.outputBytes)
       this.encoderTimer = Timer.repeat(() => this.flushEncodedAudio(), 20)
-      this.silence = new ArrayBuffer(this.decoder.outputBytes)
+      // Flush the ESP32 output staging block after the last voice frame.
+      this.silence = new ArrayBuffer(Math.max(this.decoder.outputBytes,4096))
       this.outputSampleRate = sampleRate
       this.sessionID = message.session_id ?? ''
       this.decoderPacket = undefined
@@ -272,6 +277,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
   }
 
   detectWakeWord(message = {}) {
+    if (typeof message.text === 'string' && message.text.trim()) { this.replyRequested = true; this.replyDeadline = Date.now() + 15000 }
     this.sendProtocolEvent(
       this.withSession({
         type: 'listen',
@@ -319,6 +325,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
 
   read(data, options) {
     if (!options.binary) return super.read(data, options)
+    if (this.recognitionOnly) return
     if (!this.decoder) {
       this.fail('received Opus audio before XiaoZhi hello')
       return
@@ -377,6 +384,8 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
   }
 
   stt(message) {
+    if (typeof message.text === 'string' && message.text.trim()) { this.replyRequested = true; this.replyDeadline = Date.now() + 30000 }
+    if(this.recognitionOnly){this.abort({reason:'recognition_only'});this.postPresentation({id:'receiveInputText',text:message.text});return}
     if (message.glyph_push) {
       this.postPresentation({
         id: 'receiveGlyphPush',
@@ -389,6 +398,8 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
   }
 
   llm(message) {
+    if(this.recognitionOnly)return
+    if (!this.replyRequested && !this.replyActive) return
     if (message.emotion || message.text) {
       this.postPresentation({
         id: 'receiveEmotion',
@@ -399,6 +410,23 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
   }
 
   tts(message) {
+    if(this.recognitionOnly){if(message.state==='start')this.abort({reason:'recognition_only'});return}
+    // The cloud can emit a farewell after ~60 seconds of silence. Only play
+    // replies to recognized speech or an explicit wake/greeting request.
+    if (message.state === 'start') {
+      this.suppressReply = !this.replyRequested || Date.now() > this.replyDeadline
+      // Keep the recognized turn valid for tool-result continuations. The
+      // deadline still rejects the cloud farewell after a minute of silence.
+      if (this.suppressReply) this.replyRequested = false
+      this.replyActive = !this.suppressReply
+      if (this.suppressReply) {
+        trace('[xiaozhi] unsolicited speech suppressed; listening resumed\n')
+        this.abort({ reason: 'unsolicited_speech' })
+        this.startListening({ mode: this.listeningMode })
+        return
+      }
+    }
+    if (this.suppressReply) return
     switch (message.state) {
       case 'start':
         const average = this.encodePackets ? Math.round(this.encodeUs / this.encodePackets) : 0
@@ -444,11 +472,13 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
         this.parser.done()
         this.postPresentation({ id: 'receiveOutputText', text: '' })
         this.post('speak')
+        this.replyActive = false
         break
     }
   }
 
   mcp(message) {
+    if(this.recognitionOnly)return
     let payload
     try {
       payload = parseJsonRpcMessage(message.payload)

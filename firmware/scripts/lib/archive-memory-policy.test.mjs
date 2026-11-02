@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+const policy=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(new URL('../../host/app/archive-memory-policy.js',import.meta.url))).toString('base64'));
+policy.checkVoiceMemory({internalFree:160*1024,internalLargest:40*1024});
+for(const heap of [{internalFree:5000,internalLargest:3000},{internalFree:160*1024,internalLargest:3000}])assert.throws(()=>policy.checkVoiceMemory(heap),/内蔵RAM/);
+assert.equal(policy.isMemoryPressure('ESP Opus encoder initialization failed'),true);
+assert.equal(policy.shouldRenewCloudIdentity('ESP Opus encoder initialization failed'),false);
+assert.equal(policy.shouldRenewCloudIdentity('Network connection closed'),false);
+assert.equal(policy.shouldRenewCloudIdentity('HTTP 401 unauthorized'),true);
+assert.equal(policy.shouldRenewCloudIdentity('token expired'),true);
+console.log('PASS: insufficient or fragmented internal RAM blocks audio; resource/network failures never trigger identity renewal');

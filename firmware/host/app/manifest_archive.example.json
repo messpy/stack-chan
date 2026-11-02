@@ -28,6 +28,9 @@
     "archive-head-touch": "./archive-head-touch",
     "archive-settings": "./archive-settings",
     "archive-vault": "./archive-vault",
+    "archive-head-motion": "./archive-head-motion",
+    "archive-head-jog": "./archive-head-jog",
+    "archive-memory-policy": "./archive-memory-policy",
     "archive-tools": "./archive-tools",
     "archive-alarm-motion": "./archive-alarm-motion",
     "archive-timer-ui": "./archive-timer-ui",
@@ -71,7 +74,12 @@
     "archive-ui-button": "./archive-ui-button",
     "archive-ai-settings": "./archive-ai-settings",
     "archive-playback-buffer": "./archive-playback-buffer",
-    "archive-history-ui": "./archive-history-ui"
+    "archive-history-ui": "./archive-history-ui",
+    "archive-face-format": "./archive-face-format",
+    "archive-custom-face": "./archive-custom-face",
+    "archive-face-editor-assets": "./archive-face-editor-assets",
+    "archive-lan-monitor": "./archive-lan-monitor",
+    "archive-media-trash": "./archive-media-trash"
   },
   "defines": {
     "file": {
@@ -192,7 +200,10 @@
     ],
     "*": [
       "./reminder-tools",
-      "$(MODULES)/crypt/data/ca170.der"
+      "$(MODULES)/crypt/data/ca170.der",
+      "./face-editor-page",
+      "./face-editor-script",
+      "./face-format-script"
     ]
   }
 }
