@@ -181,7 +181,7 @@ export function startArchive(robot) {
   startDebugDrain();
   startLocalClock();
   startCustomFace(robot);
-  startIdleFace(robot,()=>globalThis.stackchanFaceMode==='simple' && globalThis.stackchanCustomFaceEnabled!==true);
+  startIdleFace(robot,()=>(globalThis.stackchanFaceMode||'simple')==='simple' && globalThis.stackchanCustomFaceEnabled!==true);
   startOffline(robot,{stopCloud:()=>{if(directChatStatus().recognitionMode)setRecognitionMode(false);if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings,startCloud:()=>setChatMode(true),openAI:()=>robot.ui.application.behavior.launchMiniApp('archive-ai-settings')});
   startHistoryUI(robot,{read:args=>{importLegacy();return deviceHistory(args);},people:()=>users({limit:50}).users.filter(p=>p.kind==='person'),current:currentSpeaker});
   startVolume(robot);
