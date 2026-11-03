@@ -22,7 +22,7 @@ export function startVoiceControl(actions){
     getVolume:actions.getVolume,
     setVolume:actions.setVolume,
     openQR:()=>later('qr',actions.openQR),
-    stopAI:()=>later('ai-off',actions.stopAI),
+    stopAI:()=>later('ai-off',()=>{trace('[voice-command] ai-off begin\n');const result=actions.stopAI();trace('[voice-command] ai-off returned\n');return result;}),
     moveHead:direction=>later('head',()=>actions.moveHead(direction)),
     setExpression:actions.setExpression,
     setLED:actions.setLED,
@@ -41,11 +41,12 @@ export function handleVoiceTranscript(text){
   transcriptCount++;
   if(!controller)return false;
   const command=parseVoiceText(text);
-  if(!command)return false;
+  if(!command){trace('[voice-command] unmatched transcript count='+transcriptCount+'\n');return false;}
   try{
     const result=controller.handleText(text);
     if(!result.handled)return false;
     matchedCount++; lastCommandType=command.type;
+    trace('[voice-command] matched type='+command.type+' count='+matchedCount+'\n');
     if(result.message)feedback?.(result.message);
     return true;
   }catch(_){trace('[voice-command] transcript execution failed\n');feedback?.('音声操作に失敗しました');return true;}
