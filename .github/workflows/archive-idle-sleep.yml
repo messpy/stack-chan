@@ -39,6 +39,8 @@ jobs:
           node --check host/app/archive-custom-face.js
           node --check host/app/archive-direct-chat.js
           node --check host/app/archive-offline.js
+          node --check scripts/lib/archive-offline.test.mjs
+          node --check scripts/lib/archive-idle-sleep.test.mjs
           node --input-type=module -e "import fs from 'node:fs'; for (const p of ['host/app/manifest.json','host/app/manifest_archive.example.json']) JSON.parse(fs.readFileSync(p,'utf8'));"
       - name: Run two-stage sleep policy/render regression
         working-directory: firmware
