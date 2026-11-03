@@ -3,6 +3,7 @@ import Timer from 'timer';
 
 let controller;
 let feedback;
+let transcriptCount=0, matchedCount=0, lastCommandType='';
 
 function later(label, action){
   Timer.set(()=>{
@@ -16,6 +17,7 @@ function later(label, action){
 
 export function startVoiceControl(actions){
   feedback=actions.feedback;
+  transcriptCount=0; matchedCount=0; lastCommandType='';
   controller=createVoiceCommandController({
     getVolume:actions.getVolume,
     setVolume:actions.setVolume,
@@ -31,14 +33,19 @@ export function startVoiceControl(actions){
 // No native ESP-DL runner or model weights are linked in this firmware yet.
 export function voiceControlStatus(){
   return {routerReady:!!controller,sttTextCommands:!!controller,koeactOfflineReady:false,
-    stage:'adapter-only',reason:'native KoeAct-JP CoreS3 runner not linked'};
+    stage:'adapter-only',reason:'native KoeAct-JP CoreS3 runner not linked',
+    transcriptCount,matchedCount,lastCommandType};
 }
 
 export function handleVoiceTranscript(text){
-  if(!controller || !parseVoiceText(text))return false;
+  transcriptCount++;
+  if(!controller)return false;
+  const command=parseVoiceText(text);
+  if(!command)return false;
   try{
     const result=controller.handleText(text);
     if(!result.handled)return false;
+    matchedCount++; lastCommandType=command.type;
     if(result.message)feedback?.(result.message);
     return true;
   }catch(_){trace('[voice-command] transcript execution failed\n');feedback?.('音声操作に失敗しました');return true;}
