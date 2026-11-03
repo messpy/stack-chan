@@ -5,6 +5,7 @@ import {TTS as MonitorTTS} from 'archive-offline-tts';
 import {prepareRecognitionPCM} from 'archive-usb';
 import {bootSpeechEnabled} from 'archive-offline-speech';
 import {startCustomFace,faceCommand} from 'archive-custom-face';
+import {startIdleFace} from 'archive-idle-face';
 import {startHistoryUI} from 'archive-history-ui';
 import {startTimerUI} from 'archive-timer-ui';
 import {createAlarmDance} from 'archive-alarm-motion';
@@ -65,6 +66,7 @@ function save(name,parts) {
 const id=()=>`${Date.now()}-${sequence++}`;
 export function archiveTranscript(role,text,eventId,image,speakerId) {
   if(!text)return;
+  if(role==='input')globalThis.stackchanIdleActivity?.('input-transcript');
   try {
     const event={id:typeof eventId==='string'&&/^[a-z0-9-]{1,100}$/.test(eventId)?eventId:id(),role:role==='input'?'user':'assistant',text:String(text).slice(-4096),created:Date.now()};
     event.speakerId=speakerId===undefined?(directChatStatus().speaker?.id??null):speakerId;
@@ -179,6 +181,7 @@ export function startArchive(robot) {
   startDebugDrain();
   startLocalClock();
   startCustomFace(robot);
+  const idleFace=startIdleFace(robot,()=>(globalThis.stackchanFaceMode||'simple')==='simple' && globalThis.stackchanCustomFaceEnabled!==true);
   startOffline(robot,{stopCloud:()=>{if(directChatStatus().recognitionMode)setRecognitionMode(false);if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings,startCloud:()=>setChatMode(true),openAI:()=>robot.ui.application.behavior.launchMiniApp('archive-ai-settings')});
   startHistoryUI(robot,{read:args=>{importLegacy();return deviceHistory(args);},people:()=>users({limit:50}).users.filter(p=>p.kind==='person'),current:currentSpeaker});
   startVolume(robot);
@@ -217,7 +220,7 @@ export function startArchive(robot) {
     }
   });
   async function execute(request){
-    if(monitor.active&&!request.op.startsWith('/monitor/')&&!['/status','/volume','/chat/status','/files','/files/page','/network/status','/speaker/list','/settings/status','/reminders','/debug/status','/motor-status','/media/trash'].includes(request.op))throw new Error('動作確認を終了してから操作してください');
+    if(monitor.active&&!request.op.startsWith('/monitor/')&&!['/status','/volume','/chat/status','/idle/status','/files','/files/page','/network/status','/speaker/list','/settings/status','/reminders','/debug/status','/motor-status','/media/trash'].includes(request.op))throw new Error('動作確認を終了してから操作してください');
     const capture=['/face/save','/face/restore','/alarm-sound/preview','/motor/test','/motor/recover','/image/finish','/photo','/record','/audio','/chat-record'].includes(request.op);
     const paused=capture?pauseDirectChat():false;
     try{
@@ -265,6 +268,7 @@ export function startArchive(robot) {
       else if(request.op==='/speaker/register')result=selectSpeaker(request.args||{},true);
       else if(request.op==='/chat/provider')result=configureChatProvider(request.args);
       else if(request.op==='/chat/status')result=directChatStatus();
+      else if(request.op==='/idle/status')result=idleFace.status();
       else if(request.op==='/chat/configure')result=configureDirectChat(request.args);
       else if(request.op==='/chat/provision')result=await provisionDirectChat();
       else if(request.op==='/chat/test')result=await testDirectConnection(request.args?.provider,{playback:request.args?.playback===true});

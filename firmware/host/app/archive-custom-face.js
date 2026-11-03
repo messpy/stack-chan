@@ -114,7 +114,9 @@ export function faceCommand(op, args = {}) {
       s.customFace = face
       s.customFaceEnabled = true
     })
+    globalThis.stackchanIdleActivity?.()
     robot.ui.setFace(view)
+    globalThis.stackchanCustomFaceEnabled = true
     robot.ui.showFace()
     return { saved: true, enabled: true }
   }
@@ -122,7 +124,9 @@ export function faceCommand(op, args = {}) {
     changeSettings((s) => {
       s.customFaceEnabled = false
     })
+    globalThis.stackchanIdleActivity?.()
     robot.ui.setFace(new SimpleFace({}))
+    globalThis.stackchanCustomFaceEnabled = false
     robot.ui.showFace()
     return { enabled: false }
   }
@@ -130,9 +134,11 @@ export function faceCommand(op, args = {}) {
 }
 export function startCustomFace(context) {
   robot = context
+  globalThis.stackchanCustomFaceEnabled = false
   try {
     if (getSettings().customFaceEnabled && getSettings().customFace) {
       robot.ui.setFace(createFace(validateFace(getSettings().customFace)))
+      globalThis.stackchanCustomFaceEnabled = true
     }
   } catch (_) {
     trace('[custom-face] stored face unavailable; default preserved\n')
