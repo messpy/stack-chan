@@ -7,6 +7,12 @@ on:
     paths:
       - 'firmware/host/app/archive-idle-*.js'
       - 'firmware/host/app/lan-archive.js'
+      - 'firmware/host/app/archive-custom-face.js'
+      - 'firmware/host/app/archive-direct-chat.js'
+      - 'firmware/host/app/archive-offline.js'
+      - 'firmware/host/app/manifest.json'
+      - 'firmware/host/app/manifest_archive.example.json'
+      - 'firmware/scripts/lib/archive-offline.test.mjs'
       - 'firmware/scripts/lib/archive-idle-sleep.test.mjs'
       - '.github/workflows/archive-idle-sleep.yml'
   workflow_dispatch:
@@ -30,6 +36,13 @@ jobs:
           node --check host/app/archive-idle-face.js
           node --check host/app/archive-idle-policy.js
           node --check host/app/lan-archive.js
+          node --check host/app/archive-custom-face.js
+          node --check host/app/archive-direct-chat.js
+          node --check host/app/archive-offline.js
+          node --input-type=module -e "import fs from 'node:fs'; for (const p of ['host/app/manifest.json','host/app/manifest_archive.example.json']) JSON.parse(fs.readFileSync(p,'utf8'));"
       - name: Run two-stage sleep policy/render regression
         working-directory: firmware
         run: node --test scripts/lib/archive-idle-sleep.test.mjs
+      - name: Run complete archive UI regression suite
+        working-directory: firmware
+        run: npm run test:archive-ui
