@@ -13,6 +13,7 @@ function createSleepMask() {
     left: 60, top: 60, width: FACE_W, height: FACE_H,
     active: false,
     Behavior: class extends Behavior {
+      onDisplaying(port) { port.invalidate(); },
       onDraw(port) {
         port.fillColor(BLACK, 0, 0, FACE_W, FACE_H);
         // The same narrow, straight eye lines in both sleep stages (#6/#8).
