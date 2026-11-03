@@ -31,3 +31,6 @@ jobs:
       - name: Check KoeAct model and flash preflight
         working-directory: firmware
         run: node --test scripts/lib/koeact-preflight.test.mjs
+      - name: Run complete archive UI regression tests
+        working-directory: firmware
+        run: npm run test:archive-ui
