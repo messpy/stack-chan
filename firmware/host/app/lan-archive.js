@@ -30,6 +30,7 @@ import {startWeb,openControl,controlStatus} from 'archive-web';
 import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat} from 'archive-direct-chat';
 import {recordMemory,history,deviceHistory,currentSpeaker,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
 import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
+import {startVoiceControl} from 'archive-voice-control';
 import {acceptAudioChunk} from 'archive-audio-upload';
 import {startSettings,openSettings,closeSettings,getSettingsStatus,vaultSelfTest,settingsHttpSelfTest,scanNearby} from 'archive-settings';
 import {startDeviceTools,setAlarmDisplay,setAlarmMotion,callDeviceTool,listDeviceTools,reminderStatus} from 'archive-tools';
@@ -182,6 +183,15 @@ export function startArchive(robot) {
   startOffline(robot,{stopCloud:()=>{if(directChatStatus().recognitionMode)setRecognitionMode(false);if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings,startCloud:()=>setChatMode(true),openAI:()=>robot.ui.application.behavior.launchMiniApp('archive-ai-settings')});
   startHistoryUI(robot,{read:args=>{importLegacy();return deviceHistory(args);},people:()=>users({limit:50}).users.filter(p=>p.kind==='person'),current:currentSpeaker});
   startVolume(robot);
+  startVoiceControl({
+    getVolume, setVolume:percent=>setVolume(percent),
+    openQR:()=>openControl('lan'),
+    stopAI:()=>setChatMode(false),
+    moveHead:direction=>callDeviceTool('head_move',{direction}),
+    setExpression:name=>robot.setEmotion(({neutral:Emotion.NEUTRAL,happy:Emotion.HAPPY,sad:Emotion.SAD,angry:Emotion.ANGRY,sleepy:Emotion.SLEEPY})[name]),
+    setLED:rgb=>{if(rgb)robot.lightOn('head',...rgb);else robot.lightOff('head');},
+    feedback:message=>robot.showBalloon(message,{top:8,height:24,holdMs:10000})
+  });
   startAISettings(robot,{status:directChatStatus,select:configureChatProvider,mode:setChatMode});
   startWiFiDisplay(robot);
   try{startSettings(robot);}catch(_){trace('[settings] initialization failed; USB remains available\n');}
