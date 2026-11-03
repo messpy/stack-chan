@@ -70,8 +70,9 @@ export function archiveTranscript(role,text,eventId,image,speakerId) {
     event.speakerId=speakerId===undefined?(directChatStatus().speaker?.id??null):speakerId;
     if(typeof image==='string'&&safe(image)&&image.endsWith('.jpg'))event.image=image;
     save(`chat-${event.id}.json`,[ArrayBuffer.fromString(JSON.stringify(event))]);
-    try{recordMemory(event);}catch(_){trace('[memory] transcript database write failed\n');}
-    return event;
+    let sqliteSaved=false;
+    try{recordMemory(event);sqliteSaved=true;}catch(_){trace('[memory] transcript database write failed\n');}
+    return {...event,sqliteSaved};
   } catch(e) {lastError=String(e);trace('[archive] transcript could not be saved\n');}
 }
 // Preview frames stay in RAM: no SD writes or cloud image recognition.
@@ -97,7 +98,10 @@ async function photo(robot,args={},fromConversation=false) {
   const tag=id(),name='photo-'+tag+'.jpg',image=name;
   jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');save(image,[jpeg]);
   result={name,image,width:frame.width,height:frame.height};
- }finally{frame?.close?.();robot.camera.stop();busy=wasBusy;}
+ }finally{
+  try{frame?.close?.();}
+  finally{try{await robot.camera.stop();}finally{busy=wasBusy;}}
+ }
  if(args.analyze!==false)Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
  return result;
 }
@@ -109,7 +113,7 @@ async function describeImage(robot,name,jpeg,question){
  const analysis=await analyzeJPEG(jpeg,prompt);
  const answer=archiveTranscript('output',analysis.status==='complete'?analysis.text:'画像認識エラー: '+(analysis.error||'回答を取得できませんでした'),undefined,name,speakerId);
  if(analysis.status==='complete')robot.showBalloon(analysis.text);
- return {analysis,historySaved:!!input&&!!answer,messageIds:[input?.id,answer?.id]};
+ return {analysis,historySaved:!!input?.sqliteSaved&&!!answer?.sqliteSaved,messageIds:[input?.id,answer?.id]};
 }
 
 async function record(robot) {

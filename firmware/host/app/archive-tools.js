@@ -12,7 +12,7 @@ let alarmDisplay,alarmMotion;
 export function setAlarmMotion(factory){alarmMotion=factory;}
 export function setAlarmDisplay(display){alarmDisplay=display;}
 const toolDefinitions=()=>definitions??(definitions=JSON.parse(String.fromArrayBuffer(new Resource('reminder-tools.txt'))).concat(headMoveTool));
-let robot,claim,release,ringing=false,stopped=false;
+let robot,claim,release,ringing=false,stopped=false,notificationRetryAt=0;
 const ready=()=>Date.now()>1700000000000;
 const localTime=()=>new Date(Date.now()+9*3600000).toISOString().slice(0,19)+'+09:00';
 const wait=ms=>new Promise(resolve=>Timer.set(resolve,ms));
@@ -69,12 +69,22 @@ async function notify(item){
       await wait(180);
     }
     changeSettings(data=>{data.reminders=data.reminders.map(row=>row.id===item.id&&row.status==='pending'?{...finishReminder(row,Date.now()),notificationStarted:undefined}:row);});
+    notificationRetryAt=0;
     trace('[tools] '+item.kind+' notification completed id='+item.id+'\n');
   }catch(error){
+    notificationRetryAt=Date.now()+30000;
     trace('[tools] reminder notification failed: '+String(error)+'\n');
-    changeSettings(data=>{data.reminders=data.reminders.map(row=>row.id===item.id&&row.status==='pending'?interruptedReminder(row):row);});
+    try{changeSettings(data=>{data.reminders=data.reminders.map(row=>row.id===item.id&&row.status==='pending'?interruptedReminder(row):row);});}
+    catch(_){trace('[tools] reminder failure state could not be saved; retry delayed\n');}
   }
-  finally{dance?.stop();try{await motionDone;}catch(_){}try{robot.lightOff?.('head');}catch(_){}try{alarmDisplay?.close();}catch(_){}robot.hideBalloon();ringing=false;release();}
+  finally{
+    try{dance?.stop();}catch(_){}
+    try{await motionDone;}catch(_){}
+    try{robot.lightOff?.('head');}catch(_){}
+    try{alarmDisplay?.close();}catch(_){}
+    try{robot.hideBalloon();}catch(_){}
+    ringing=false;release();
+  }
 }
 function interruptedReminder(row){
   const next=row.repeat==='daily'?{...row,status:'scheduled',due:ready()?nextDailyDue(Date.now(),row.hour,row.minute):row.due+86400000}:{...row,status:'cancelled'};
@@ -104,7 +114,8 @@ export function startDeviceTools(context,acquire,unlock){
         changeSettings(data=>{data.reminders=data.reminders.map(row=>row.status==='scheduled'&&!liveTimers.has(row.id)&&row.due<=Date.now()?(row.repeat==='daily'&&Date.now()-row.due>300000?{...row,due:nextDailyDue(Date.now(),row.hour,row.minute)}:{...row,status:'pending'}):row);});
       }
       const pending=getSettings().reminders.find(row=>row.status==='pending');
-      if(pending&&!ringing&&claim())void notify(pending);
+      if(pending&&!ringing&&Date.now()>=notificationRetryAt&&claim())
+        void notify(pending).catch(error=>{notificationRetryAt=Date.now()+30000;trace('[tools] reminder notification error: '+String(error)+'\n');});
     }catch(_){trace('[tools] reminder storage unavailable\n');}
   },1000);
   robot.drawer.addDrawerButton({key:'alarmStop',label:'アラーム音を停止',callback:()=>{stopped=true;stopAlarmSound();}});

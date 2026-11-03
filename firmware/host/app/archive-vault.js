@@ -29,6 +29,7 @@ export function loadSettings(){
 export function getSettings(){return loadSettings();}
 export function changeSettings(change){
   loadSettings();
+  if(loadError)throw new Error('暗号化設定を読み取れません。元の設定ファイルを保護するため、上書きを中止しました');
   const next=JSON.parse(JSON.stringify(data));change(next);next.generation=data.generation+1;
   const encrypted=sealVault(ArrayBuffer.fromString(JSON.stringify(next)));
   withSDCard(root=>{
