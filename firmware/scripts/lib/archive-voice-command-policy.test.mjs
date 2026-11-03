@@ -7,6 +7,11 @@ test('safe Japanese transcript parser recognizes device commands exactly', () =>
     ['スタックちゃん、音量を上げて',{type:'volume_delta',value:10}],
     ['音量下げて',{type:'volume_delta',value:-10}],
     ['音量を３７％にして',{type:'volume',value:37}],
+    ['音量を37にして。',{type:'volume',value:37}],
+    ['音量を37パーセントにして、',{type:'volume',value:37}],
+    ['音量を37%',{type:'volume',value:37}],
+    ['音量をあげてください！',{type:'volume_delta',value:10}],
+    ['音量を下げてください。',{type:'volume_delta',value:-10}],
     ['音量を100パーセントにして',{type:'volume',value:100}],
     ['音量を101%にして',{type:'invalid_volume'}],
     ['サイトのQRを出して',{type:'qr'}],
@@ -14,7 +19,7 @@ test('safe Japanese transcript parser recognizes device commands exactly', () =>
     ['シャットダウンして',{type:'shutdown_request'}],
     ['シャットダウン実行',{type:'shutdown_confirm'}],
   ]) assert.deepEqual(parseVoiceText(text),expected,text)
-  for(const text of ['音量を上げないで','AIをオフにできる？','シャットダウンしたら','シャットダウンしないで','さっき音量上げたよ','ただの会話です']) assert.equal(parseVoiceText(text),null,text)
+  for(const text of ['音量を上げないで','音量を37にできる？','音量37','AIをオフにできる？','シャットダウンしたら','シャットダウンしないで','さっき音量上げたよ','ただの会話です']) assert.equal(parseVoiceText(text),null,text)
 })
 
 test('KoeAct actions require >=0.97 pAct and exact bounded schema',()=>{
