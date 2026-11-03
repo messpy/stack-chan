@@ -30,7 +30,7 @@ import {startWeb,openControl,controlStatus} from 'archive-web';
 import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat} from 'archive-direct-chat';
 import {recordMemory,history,deviceHistory,currentSpeaker,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
 import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
-import {startVoiceControl} from 'archive-voice-control';
+import {startVoiceControl,voiceControlStatus} from 'archive-voice-control';
 import {acceptAudioChunk} from 'archive-audio-upload';
 import {startSettings,openSettings,closeSettings,getSettingsStatus,vaultSelfTest,settingsHttpSelfTest,scanNearby} from 'archive-settings';
 import {startDeviceTools,setAlarmDisplay,setAlarmMotion,callDeviceTool,listDeviceTools,reminderStatus} from 'archive-tools';
@@ -275,6 +275,7 @@ export function startArchive(robot) {
       else if(request.op==='/speaker/register')result=selectSpeaker(request.args||{},true);
       else if(request.op==='/chat/provider')result=configureChatProvider(request.args);
       else if(request.op==='/chat/status')result=directChatStatus();
+      else if(request.op==='/voice/status')result=voiceControlStatus();
       else if(request.op==='/chat/configure')result=configureDirectChat(request.args);
       else if(request.op==='/chat/provision')result=await provisionDirectChat();
       else if(request.op==='/chat/test')result=await testDirectConnection(request.args?.provider,{playback:request.args?.playback===true});

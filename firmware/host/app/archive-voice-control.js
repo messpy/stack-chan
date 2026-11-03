@@ -28,6 +28,12 @@ export function startVoiceControl(actions){
   });
 }
 
+// No native ESP-DL runner or model weights are linked in this firmware yet.
+export function voiceControlStatus(){
+  return {routerReady:!!controller,sttTextCommands:!!controller,koeactOfflineReady:false,
+    stage:'adapter-only',reason:'native KoeAct-JP CoreS3 runner not linked'};
+}
+
 export function handleVoiceTranscript(text){
   if(!controller || !parseVoiceText(text))return false;
   try{

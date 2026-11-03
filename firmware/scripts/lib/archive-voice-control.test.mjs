@@ -10,7 +10,7 @@ function mockVoiceRuntime(){
   const ctx=vm.createContext({Timer:fakeTimer,createVoiceCommandController,parseVoiceText,trace() {}})
   const source=readFileSync(new URL('../../host/app/archive-voice-control.js',import.meta.url),'utf8')
     .replace(/^import .+;\s*$/gm,'').replace(/^export /gm,'')
-  vm.runInContext(source+'\n;globalThis.api={startVoiceControl,handleVoiceTranscript,handleKoeActResult};',ctx)
+  vm.runInContext(source+'\n;globalThis.api={startVoiceControl,handleVoiceTranscript,handleKoeActResult,voiceControlStatus};',ctx)
   const actions={getVolume:()=>({percent:volume}),setVolume:value=>volume=value,openQR:()=>qr++,stopAI:()=>stopAI++,moveHead:dir=>moved=dir,feedback:msg=>spoken.push(msg)}
   actions.setExpression=()=>{};actions.setLED=()=>{};
   ctx.api.startVoiceControl(actions)
@@ -36,4 +36,14 @@ test('KoeAct adapter rejects low-confidence input and schedules validated motion
   assert.equal(fixture.moved,'')
   for(const work of fixture.tasks)work()
   assert.equal(fixture.moved,'right')
+})
+
+
+test('status is explicit: STT command bridge is ready but KoeAct native inference is not',()=>{
+  const fixture=mockVoiceRuntime()
+  const status=fixture.ctx.api.voiceControlStatus()
+  assert.equal(status.routerReady,true)
+  assert.equal(status.sttTextCommands,true)
+  assert.equal(status.koeactOfflineReady,false)
+  assert.equal(status.stage,'adapter-only')
 })
