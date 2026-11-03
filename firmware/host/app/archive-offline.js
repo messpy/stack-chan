@@ -1,4 +1,5 @@
 import { localSpeech } from 'archive-offline-speech'
+import { showChatCaption } from 'archive-chat-caption'
 import Timer from 'timer'
 import { Container, Label, Text, Skin, Style } from 'piu/MC'
 import { uiFont } from 'ui-theme'
@@ -53,7 +54,7 @@ export async function offlineAction(action, options = {}) {
     } else text = '本体だけで動いています。アラームとタイマー、声のお返事ができます。画面のボタンを押してね。'
     lastText = text
     error = ''
-    robot.showBalloon(text, { bottom: options.bottom ?? (faceButtons ? 50 : 12) })
+    showChatCaption(robot,text)
     unlock = robot.audio.acquireExclusive()
     if (globalThis.amp) globalThis.amp.sampleRate = 24000
     voice ??= new TTS({
@@ -91,7 +92,7 @@ function closeFaceButtons() {
 function showFaceButtons(mode) {
   closeFaceButtons()
   const strip = new Container(null, { left: 0, right: 0, bottom: 0, height: 44 })
-  const fail = (e) => robot.showBalloon(String(e.message || '操作できませんでした'), { bottom: faceButtons ? 50 : 12 })
+  const fail = (e) => showChatCaption(robot,String(e.message || '操作できませんでした'))
   const add = (text, method, methods, left, width) =>
     strip.add(
       createUIButton(
@@ -177,7 +178,7 @@ export function startOffline(context, callbacks) {
   robot = context
   actions = callbacks
   const style = new Style({ font: uiFont(), color: 'black', horizontal: 'center', vertical: 'middle' })
-  const fail = (e) => robot.showBalloon(String(e.message || '操作できませんでした'), { bottom: faceButtons ? 50 : 12 })
+  const fail = (e) => showChatCaption(robot,String(e.message || '操作できませんでした'))
   const button = (text, method, methods, layout) =>
     createUIButton({ text, method, background: '#236a5a', textColor: '#ffffff' }, methods, layout, fail)
   robot.ui.miniApps.register({
