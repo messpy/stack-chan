@@ -1,6 +1,7 @@
 import {Port} from 'piu/MC';
 import Timer from 'timer';
-import {IdleSleepPolicy} from 'archive-idle-policy';
+import Time from 'time';
+import {IdleSleepPolicy,DEEP_SLEEP_AFTER_MS} from 'archive-idle-policy';
 
 // Keep the real SimpleFace intact underneath. Only the original 200x120 face
 // area is masked; waking removes the overlay without resetting face/emotion.
@@ -17,8 +18,8 @@ function createSleepMask() {
       onDraw(port) {
         port.fillColor(BLACK, 0, 0, FACE_W, FACE_H);
         // The same narrow, straight eye lines in both sleep stages (#6/#8).
-        port.fillColor(WHITE, 23, 31, 14, 4);
-        port.fillColor(WHITE, 163, 34, 14, 4);
+        port.fillColor(WHITE, 23, 33, 14, 4);
+        port.fillColor(WHITE, 163, 33, 14, 4);
         // Original SimpleFace: closed mouth centered at (100, 88).
         port.fillColor(WHITE, 75, 84, 50, 8);
       }
@@ -37,7 +38,8 @@ function drawZ(port, x, y, width, thickness) {
 function createSleepMarks(stage) {
   return new Port(null, {
     name: 'archive-idle-sleep-marks',
-    right: 12, top: 8, width: 76, height: 54,
+    // Keep decorations below the status bar and subtitles (y=8..32).
+    right: 6, top: 63, width: 76, height: 54,
     active: false,
     Behavior: class extends Behavior {
       onCreate(port) { port.interval = 250; },
@@ -65,6 +67,8 @@ function createSleepMarks(stage) {
 export function startIdleFace(robot, canSleep = () => true) {
   const policy = new IdleSleepPolicy();
   let mask, marks, displayed = 'awake';
+  let lastTick = Time.ticks >>> 0, lastActivityTick = lastTick;
+  let resetCount = 0, lastActivityReason = 'startup';
   const remove = () => {
     if (marks) { robot.ui.removeEffect(marks); marks = undefined; }
     if (mask) { robot.ui.removeEffect(mask); mask = undefined; }
@@ -84,32 +88,53 @@ export function startIdleFace(robot, canSleep = () => true) {
     displayed = stage;
     trace('[idle-face] ' + stage + '\n');
   };
-  const activity = () => {
+  const activity = (reason = 'user-input') => {
     policy.activity();
+    lastTick = Time.ticks >>> 0;
+    lastActivityTick = lastTick;
+    lastActivityReason = String(reason).slice(0,40);
+    resetCount++;
     if (displayed !== 'awake') remove();
   };
   globalThis.stackchanIdleActivity = activity;
   const unsubscribe = robot.touchPanel?.subscribe(event => {
     if (event.gesture === 'press' || event.gesture === 'forwardSwipe' || event.gesture === 'backwardSwipe')
-      activity();
+      activity('head-touch');
   });
   const controller = robot.ui.application?.behavior;
   const previousFaceTouch = controller?.onFaceTouch;
   const faceTouch = function(...args) {
-    activity();
+    activity('face-touch');
     return previousFaceTouch?.apply(this, args);
   };
   if (controller) controller.onFaceTouch = faceTouch;
   const tick = Timer.repeat(() => {
-    try { policy.advance(1000); render(); }
-    catch (error) {
-      activity();
+    try {
+      // Callback scheduling can lag behind camera/audio/GC. Time.ticks is
+      // monotonic and wraps at 2^32; unsigned delta handles the wrap.
+      const currentTick = Time.ticks >>> 0;
+      const elapsed = (currentTick - lastTick) >>> 0;
+      lastTick = currentTick;
+      policy.advance(Math.min(elapsed, DEEP_SLEEP_AFTER_MS));
+      render();
+    } catch (error) {
+      activity('timer-error');
       trace('[idle-face] disabled this idle interval: ' + String(error) + '\n');
     }
   }, 1000);
   return {
     activity,
-    status: () => ({idleMs: policy.idleMs, stage: policy.stage}),
+    status: () => ({
+      idleMs: policy.idleMs,
+      stage: policy.stage,
+      displayed,
+      canSleep: !!canSleep(),
+      faceMode: globalThis.stackchanFaceMode || 'simple',
+      customFace: globalThis.stackchanCustomFaceEnabled === true,
+      resetCount,
+      lastActivityReason,
+      sinceLastActivityMs: (Time.ticks - lastActivityTick) >>> 0,
+    }),
     stop() {
       Timer.clear(tick);
       unsubscribe?.();

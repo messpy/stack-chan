@@ -40,12 +40,14 @@ test('sleep overlays preserve the underlying face and respond to petting and voi
     start() { this.started = true; }
     stop() { this.stopped = true; }
   }
-  let repeat, timerCleared = false, touchListener;
+  let repeat, timerCleared = false, touchListener, ticks = 0;
+  const Time = { get ticks() { return ticks; } };
+  const pulse = (delta = 1000) => { ticks = (ticks + delta) >>> 0; repeat(); };
   const timer = {
     repeat(callback, interval) { assert.equal(interval, 1000); repeat = callback; return 1; },
     clear(id) { assert.equal(id, 1); timerCleared = true; },
   };
-  const context = vm.createContext({ Port, Timer: timer, IdleSleepPolicy, Behavior, trace() {} });
+  const context = vm.createContext({ Port, Timer: timer, Time, IdleSleepPolicy, DEEP_SLEEP_AFTER_MS, Behavior, trace() {} });
   const text = readFileSync(new URL('../../host/app/archive-idle-face.js', import.meta.url), 'utf8')
     .replace(/^import .*;\s*$/gm, '').replace(/^export /gm, '');
   vm.runInContext(text + ';globalThis.startIdleFace = startIdleFace;', context);
@@ -60,17 +62,20 @@ test('sleep overlays preserve the underlying face and respond to petting and voi
     touchPanel: { subscribe(listener) { touchListener = listener; return () => { touchListener = undefined; }; } },
   };
   const idle = context.startIdleFace(robot, () => true);
-  for (let n = 0; n < 600; n++) repeat();
+  for (let n = 0; n < 600; n++) pulse();
   assert.equal(idle.status().stage, 'drowsy');
   assert.equal(effects.size, 2);
   const [mask, dots] = [...effects];
   mask.behavior.onDraw(mask);
-  assert.ok(mask.drawn.some(args => args.join(',') === '#ffffff,23,31,14,4'));
-  assert.ok(mask.drawn.some(args => args.join(',') === '#ffffff,163,34,14,4'));
+  assert.ok(mask.drawn.some(args => args.join(',') === '#ffffff,23,33,14,4'));
+  assert.ok(mask.drawn.some(args => args.join(',') === '#ffffff,163,33,14,4'));
+  assert.equal(dots.spec.top, 63, 'Zzz must not obscure top status or captions');
   dots.behavior.onDraw(dots);
   assert.equal(dots.started, undefined);
-  for (let n = 0; n < 1200; n++) repeat();
+  // Real 20 minutes can pass during one overdue Timer callback.
+  pulse(1200 * 1000);
   assert.equal(idle.status().stage, 'deep');
+  assert.equal(idle.status().displayed, 'deep');
   assert.equal(effects.size, 2);
   const [deepMask, marks] = [...effects];
   assert.equal(deepMask, mask, 'eye and mouth geometry must remain identical');
@@ -84,10 +89,19 @@ test('sleep overlays preserve the underlying face and respond to petting and voi
   marks.behavior.onDraw(marks);
   assert.notEqual(JSON.stringify(marks.drawn), before, 'Z marks should move');
   touchListener({ gesture: 'press' });
+  assert.equal(idle.status().lastActivityReason, 'head-touch');
   assert.equal(effects.size, 0);
   assert.equal(idle.status().stage, 'awake');
-  for (let n = 0; n < 600; n++) repeat();
-  context.stackchanIdleActivity();
+  // Moddable monotonic ticks wrap; crossing 0xffffffff must not lose idle time.
+  ticks = 0xffffff00;
+  context.stackchanIdleActivity('pre-wrap');
+  ticks = 744;
+  pulse(0);
+  assert.equal(idle.status().idleMs, 1000);
+  for (let n = 0; n < 600; n++) pulse();
+  context.stackchanIdleActivity('input-transcript');
+  assert.equal(idle.status().lastActivityReason, 'input-transcript');
+  assert.ok(idle.status().resetCount >= 3);
   assert.equal(effects.size, 0, 'speech activity clears the sleepy face');
   assert.equal(idle.status().idleMs, 0);
   idle.stop();
