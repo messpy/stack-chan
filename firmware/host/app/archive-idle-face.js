@@ -14,7 +14,7 @@ function createSleepMask() {
     left: 60, top: 60, width: FACE_W, height: FACE_H,
     active: false,
     Behavior: class extends Behavior {
-      onDisplaying(port) { port.invalidate(); },
+      onDisplaying(port) { port.invalidate(); }
       onDraw(port) {
         port.fillColor(BLACK, 0, 0, FACE_W, FACE_H);
         // The same narrow, straight eye lines in both sleep stages (#6/#8).
@@ -42,10 +42,10 @@ function createSleepMarks(stage) {
     right: 6, top: 63, width: 76, height: 54,
     active: false,
     Behavior: class extends Behavior {
-      onCreate(port) { port.interval = 250; },
-      onDisplaying(port) { if (stage === 'deep') port.start(); port.invalidate(); },
-      onUndisplaying(port) { port.stop(); },
-      onTimeChanged(port) { if (stage === 'deep') port.invalidate(); },
+      onCreate(port) { port.interval = 250; }
+      onDisplaying(port) { if (stage === 'deep') port.start(); port.invalidate(); }
+      onUndisplaying(port) { port.stop(); }
+      onTimeChanged(port) { if (stage === 'deep') port.invalidate(); }
       onDraw(port) {
         port.fillColor(BLACK, 0, 0, 76, 54);
         if (stage === 'drowsy') {
