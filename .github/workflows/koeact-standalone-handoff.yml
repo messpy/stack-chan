@@ -1,0 +1,29 @@
+name: KoeAct Standalone Handoff Checks
+on:
+  pull_request:
+    branches:
+      - feat/koeact-voice-command-bridge-20261103
+      - stackchan-super
+    paths:
+      - 'firmware/scripts/koeact-standalone-build.sh'
+      - 'firmware/scripts/lib/koeact-standalone-build.test.mjs'
+      - 'firmware/package.json'
+      - '.github/workflows/koeact-standalone-handoff.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  no-flash-preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax check
+        run: bash -n firmware/scripts/koeact-standalone-build.sh
+      - name: Read-only script regression tests
+        working-directory: firmware
+        run: node --test scripts/lib/koeact-standalone-build.test.mjs
