@@ -738,7 +738,7 @@ async function connect() {
           await (provider==='ollama'?ollamaChat:geminiTextChat)([{role:'system',content:conversationInstructions()},{role:'user',content:text}],Object.values(tools),executeTool,isCurrent);
         if(!isCurrent())return
         archive('output',answer);if(conversationStage==='greeting')advanceConversation('conversation');
-        lastSubtitle=answer;robot.showBalloon(answer,{bottom:40,height:24,paddingY:4,holdMs:60000});state='speaking';conversationIndicator('off');
+        lastSubtitle=answer;robot.showBalloon(answer,{top:8,height:24,paddingY:4,holdMs:60000});state='speaking';conversationIndicator('off');
         const speech=new RecognitionTTS({volume:robot.audio.volume});recognitionSpeech=speech;
         await new Promise((resolve,reject)=>speech.stream(answer,robot.audio.volume,e=>e?reject(e):resolve()));
         if(recognitionSpeech===speech)recognitionSpeech=undefined;
@@ -780,7 +780,7 @@ async function connect() {
             }, 0)
           }
           if (value === ChatState.CONNECTED || value === ChatState.SPEAKING) {
-            if(lastSubtitle){robot.showBalloon(lastSubtitle,{bottom:40,height:24,paddingY:4,holdMs:15000});lastSubtitle=''}
+            if(lastSubtitle){robot.showBalloon(lastSubtitle,{top:8,height:24,paddingY:4,holdMs:15000});lastSubtitle=''}
             const becameReady = state !== 'listening'
             state = 'listening'
             microphoneAt=Date.now()
@@ -834,7 +834,7 @@ async function connect() {
             const event = archive('input', input)
             lastInputId = event?.id || ''
             if(standalone){
-              robot.showBalloon(input,{bottom:40,height:24,paddingY:4,holdMs:15000});
+              robot.showBalloon(input,{top:8,height:24,paddingY:4,holdMs:15000});
             }else if(!currentSpeaker()){
               const candidate=explicitSpeakerName(input)
               if(candidate&&lastInputId)try{
@@ -866,7 +866,7 @@ async function connect() {
           else output = (output + (text || '')).slice(-4096)
           if (text && !enrollment.active && (Date.now()-subtitleAt>=250 || !more)) {
             lastSubtitle=output
-            robot.showBalloon(output,{bottom:40,height:24,paddingY:4,holdMs:60000})
+            robot.showBalloon(output,{top:8,height:24,paddingY:4,holdMs:60000})
             subtitleAt=Date.now()
           }
           if (!more && output) {
@@ -874,7 +874,7 @@ async function connect() {
               archive('output', output)
               if(conversationStage==='greeting')advanceConversation('conversation')
               lastSubtitle=output
-              robot.showBalloon(output,{bottom:40,height:24,paddingY:4,holdMs:60000})
+              robot.showBalloon(output,{top:8,height:24,paddingY:4,holdMs:60000})
             }
             output = ''
           }
@@ -909,7 +909,7 @@ async function connect() {
               return executeTool(name, args)
             })
             .then((result) => {
-              if(name==='conversation_identify'&&result?.message)try{robot.showBalloon(result.message,{bottom:40,height:24,paddingY:4,holdMs:10000})}catch(_){trace('[speaker] result display unavailable\n')}
+              if(name==='conversation_identify'&&result?.message)try{robot.showBalloon(result.message,{top:8,height:24,paddingY:4,holdMs:10000})}catch(_){trace('[speaker] result display unavailable\n')}
               return chat === instance ? instance.sendFunctionResult(call, name, result) : undefined
             })
             .catch((e) => {
@@ -976,7 +976,7 @@ export function requestListening(){
     greetingPending=false
     state='waiting'
     retryAt=0
-    robot.showBalloon('聞き取りを準備しています。緑になったら話してください',{bottom:40,height:24,paddingY:4})
+    robot.showBalloon('聞き取りを準備しています。緑になったら話してください',{top:8,height:24,paddingY:4})
     void connect()
   }
   trace('[direct-chat] manual listening requested\n')
