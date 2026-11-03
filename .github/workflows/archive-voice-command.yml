@@ -1,0 +1,28 @@
+name: Archive Voice Command Tests
+
+on:
+  pull_request:
+    branches:
+      - stackchan-super
+    paths:
+      - 'firmware/host/app/archive-voice-*.js'
+      - 'firmware/scripts/lib/archive-voice-*.test.mjs'
+      - '.github/workflows/archive-voice-command.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  voice-command-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test KoeAct adapter and STT fallback
+        working-directory: firmware
+        run: node --test scripts/lib/archive-voice-command-policy.test.mjs scripts/lib/archive-voice-control.test.mjs
