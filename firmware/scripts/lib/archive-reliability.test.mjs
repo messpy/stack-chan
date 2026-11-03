@@ -36,8 +36,9 @@ test('abandoned image upload expires without another incoming request', () => {
   const { imageUploadCommand } = loadApp('archive-image-upload.js', context, ['imageUploadCommand']);
   const first = imageUploadCommand('begin', { size: 1024 });
   assert.equal(pending.size, 1);
-  const expiry = [...pending.values()][0];
+  const [expiryId, expiry] = [...pending.entries()][0];
   assert.equal(expiry.delay, 120000);
+  pending.delete(expiryId); // Model the one-shot timer leaving the scheduler before firing.
   expiry.callback();
   const second = imageUploadCommand('begin', { size: 1024 });
   assert.ok(second.id);
