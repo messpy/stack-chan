@@ -382,6 +382,7 @@ export function configureDirectChat(value) {
   return { configured: true }
 }
 export function setChatMode(on) {
+  trace('[chat-mode] request='+String(on)+'\n')
   if(on&&chatProvider()==='gemini'&&!getSettings().api?.gemini)throw new Error('Gemini APIキーを保存してください')
   if (on && chatProvider() === 'ollama' && (!getSettings().api?.ollama || (!usesXiaoZhiRecognition()&&!getSettings().api?.gemini)))
     throw new Error('Ollama Cloudと音声用GeminiのAPIキーを保存してください')
@@ -418,6 +419,7 @@ export function setChatMode(on) {
     beginConversation()
     state = recognitionMode()?'waiting':'off'
   } else state = 'waiting'
+  trace('[chat-mode] applied='+String(on)+' recognition='+String(recognitionMode())+'\n')
   modeLabel && (modeLabel.string = on ? 'ON' : 'OFF')
   robot.drawer.setDrawerButtonState('directChatMode', on)
   refreshAITalk?.()
@@ -846,6 +848,7 @@ async function connect() {
             }
             const recognized=input;input = ''
             // Use strict local commands before cloud tool decisions; do not duplicate actions.
+            trace('[voice-command] STT final received; provider='+provider+'\n')
             if(handleVoiceTranscript(recognized))return
             // A short, explicit physical command should not depend on whether
             // the cloud chooses a function call or only speaks an acknowledgement.
