@@ -24,6 +24,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Parse archive UI sources before running tests
+        working-directory: firmware
+        run: |
+          node --check host/app/archive-idle-face.js
+          node --check host/app/archive-idle-policy.js
+          node --check host/app/lan-archive.js
       - name: Run two-stage sleep policy/render regression
         working-directory: firmware
         run: node --test scripts/lib/archive-idle-sleep.test.mjs
