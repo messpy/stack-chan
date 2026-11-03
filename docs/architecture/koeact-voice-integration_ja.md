@@ -40,3 +40,25 @@ node --test scripts/lib/archive-voice-command-policy.test.mjs scripts/lib/archiv
 ## 注意
 
 公開モデルのベンチマーク（合成音声 EM 93.2%、非依頼発話の誤発火1.57/時）は、**今回のファームウェア上での認識精度を意味しない**。機器操作には信頼度ゲート、確認フロー、物理制約と実測が必要。
+
+
+## Phase 2: モデル導入前の読み取り専用Preflight
+
+本PRには `scripts/koeact-preflight.mjs` を追加した。公開モデルの重みを**既存ファームウェアへ書き込む前**に以下を確認する。コマンド自体はローカルファイルの読み取りのみを行い、ダウンロード、Flash書き込み、ファイル変更はしない。
+
+- ダウンロード済み公式アセット `cores3/ralomi_e13_stream40.espdl` と `cores3/a2_weights.bin` が両方あるか
+- 公式 `SHA256SUMS` の記載と各実ファイルのSHA256が一致するか、想定サイズから著しく外れていないか
+- **実際に採用するパーティションCSV**を与えた場合に限り、16MB Flash内の `model` と `a2` data partition の容量、offset、重複を検証する
+- CSVがなければ容量は**未検証**、`--strict` 指定なら失敗扱いにする
+
+```bash
+clear
+cd firmware
+npm run preflight:koeact -- --model-dir ../koeact-jp --strict --partitions /path/to/actual-partitions.csv
+```
+
+モデルファイルは別途**公式リポジトリから**取得しておく必要がある。ここでのCSVは**実際のStackChanターゲットの生成済みレイアウト**を使うこと。KoeActデモに付属する単体Firmware用レイアウトを渡して成功しても、StackChanへ組み込める証拠にはならない。
+
+成功しても `runtimeLinked:false` と `coreS3InferenceVerified:false` が返る。**モデルの存在検査が成功したことと、音声推論が実装されたことを混同しない。** ESP-DLの統合、CoreS3実機のRAM監視、音声排他、オンデバイスJSON復元はIssue #17の残作業。
+
+開発者の公開実測（単独のCoreS3上で内部RAM空き56KB、PSRAM追加約1.11MB）は現在のStackChanとの併用実測ではない。動作確認前には現在のモデル占有メモリに加えて音声/表示/SD/SQLite/カメラが共存する安全余裕を確認する。

@@ -7,6 +7,8 @@ on:
     paths:
       - 'firmware/host/app/archive-voice-*.js'
       - 'firmware/scripts/lib/archive-voice-*.test.mjs'
+      - 'firmware/scripts/koeact-preflight.mjs'
+      - 'firmware/scripts/lib/koeact-preflight.test.mjs'
       - '.github/workflows/archive-voice-command.yml'
   workflow_dispatch:
 
@@ -26,3 +28,6 @@ jobs:
       - name: Test KoeAct adapter and STT fallback
         working-directory: firmware
         run: node --test scripts/lib/archive-voice-command-policy.test.mjs scripts/lib/archive-voice-control.test.mjs
+      - name: Check KoeAct model and flash preflight
+        working-directory: firmware
+        run: node --test scripts/lib/koeact-preflight.test.mjs
