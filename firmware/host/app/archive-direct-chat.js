@@ -724,6 +724,7 @@ async function connect() {
     }
     async function recognitionTurn(text){
       if(chat!==instance||!running())return
+      if(text)globalThis.stackchanIdleActivity?.()
       if(standalone){closeChat();state=recognitionMode()?'waiting':'off';retryAt=Date.now()+1000;return}
       // Transfer the audio lease to this turn, then fully tear down XiaoZhi before
       // invoking another AI or opening local TTS. No concurrent speech workers.
@@ -813,6 +814,7 @@ async function connect() {
         },
         onInputTranscript(text, more) {
           if (chat !== instance) return
+          if (text) globalThis.stackchanIdleActivity?.()
           if (text) conversationIndicator(more ? 'transcribing' : 'thinking')
           else if (!more && input) conversationIndicator('thinking')
           input = (input + (text || '')).slice(-4096)
@@ -954,6 +956,7 @@ export async function provisionDirectChat() {
   return { configured: true }
 }
 export function requestListening(){
+  globalThis.stackchanIdleActivity?.()
   robot.hideBalloon()
   lastSubtitle=''
   if(!enabled())setChatMode(true)

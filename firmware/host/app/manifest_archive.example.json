@@ -41,6 +41,8 @@
     "archive-checks": "./archive-checks",
     "archive-web-page": "./archive-web-page",
     "archive-direct-chat": "./archive-direct-chat",
+    "archive-idle-face": "./archive-idle-face",
+    "archive-idle-policy": "./archive-idle-policy",
     "archive-offline": "./archive-offline",
     "archive-offline-policy": "./archive-offline-policy",
     "archive-offline-speech": "./archive-offline-speech",

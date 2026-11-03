@@ -178,6 +178,7 @@ export const onContextCreated: NonNullable<StackchanAppBehavior['onContextCreate
   const syncFaceMode = (
     app = robot.ui.application as { distribute?: (event: string, payload: unknown) => void } | undefined,
   ) => {
+    ;(globalThis as { stackchanFaceMode?: string }).stackchanFaceMode = faceMode
     app?.distribute?.('onFaceMode', faceMode)
   }
   const syncHandAnimation = () => robot.ui.setHandAnimation(handAnimation)
