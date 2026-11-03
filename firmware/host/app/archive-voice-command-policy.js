@@ -33,7 +33,7 @@ export function decodeKoeActActions(result) {
 function cleanText(value) {
   if (typeof value !== 'string' || value.length > 160) return ''
   const noWidth = value.replace(/[０-９]/g, char => String(char.charCodeAt(0) - 0xff10))
-  return noWidth.trim().replace(/\s+/g, '').replace(/^(?:ねえ)?(?:スタックちゃん|すたっくちゃん|スタックチャン)[、,]?/, '').replace(/[。！!]+$/, '')
+  return noWidth.trim().replace(/\s+/g, '').replace(/^(?:ねえ)?(?:スタックちゃん|すたっくちゃん|スタックチャン)[、,]?/, '').replace(/[。！!？?、,]+$/, '')
 }
 
 export function parseVoiceText(value) {
@@ -46,10 +46,10 @@ export function parseVoiceText(value) {
   if (/^(?:シャットダウン|電源を?切って|電源オフ)(?:して|してください)?$/.test(text)) return {type:'shutdown_request'}
   if (/^(?:AI|ＡＩ|エーアイ)(?:モード)?を?(?:オフ|OFF|切って|停止)(?:にして|して|してください)?$/i.test(text)) return {type:'ai_off'}
   if (/^(?:(?:サイト|スマホ操作|操作画面|ウェブ|Web)(?:の)?)?(?:QRコード|QR|キューアール)(?:を)?(?:出して|表示して|見せて|開いて)(?:ください)?$/i.test(text)) return {type:'qr'}
-  const fixed = /^音量(?:を)?(\d{1,3})(?:%|％|パーセント)(?:に|にして|に設定して|に変更して|にしてください)?$/.exec(text)
+  const fixed = /^音量(?:を)?(\d{1,3})(?:%|％|パーセント)?(?:に|にして|に設定して|に変更して|にしてください)$/.exec(text)
   if (fixed) return isInteger(Number(fixed[1]),0,100) ? {type:'volume',value:Number(fixed[1])} : {type:'invalid_volume'}
-  if (/^音量(?:を)?(?:上げて|あげて|大きくして|アップして)(?:ください)?$/.test(text)) return {type:'volume_delta',value:10}
-  if (/^音量(?:を)?(?:下げて|さげて|小さくして|ダウンして)(?:ください)?$/.test(text)) return {type:'volume_delta',value:-10}
+  if (/^音量(?:を)?(?:上げて|あげて|大きくして|アップして|上げてください|あげてください|大きくしてください|アップしてください)$/.test(text)) return {type:'volume_delta',value:10}
+  if (/^音量(?:を)?(?:下げて|さげて|小さくして|ダウンして|下げてください|さげてください|小さくしてください|ダウンしてください)$/.test(text)) return {type:'volume_delta',value:-10}
   if (/^(?:ミュートして|消音して|音量を?ゼロにして)$/.test(text)) return {type:'volume',value:0}
   return null
 }
