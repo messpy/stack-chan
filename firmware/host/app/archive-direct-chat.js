@@ -433,11 +433,18 @@ export function setChatMode(on) {
 export function setRecognitionMode(on){
   if(typeof on!=='boolean')throw new Error('文字起こしのON/OFFを指定してください')
   if(on&&!cloudConfig()?.cloudConsent)throw new Error('XiaoZhiの初期登録が必要です')
-  if(on)modeChanged?.(true) // The settings write below atomically disables chat mode.
   if(!on){recognitionSaveFailedOff=true;closeChat();collectMemory()}
   let saveError
-  try{changeSettings(data=>{data.transcriptionMode=on;if(on)data.chatMode=false});recognitionSaveFailedOff=false;if(on)chatSaveFailedOff=false}
+  try{
+    const settings=getSettings()
+    if(settings.transcriptionMode!==on||(on&&settings.chatMode!==false))
+      changeSettings(data=>{data.transcriptionMode=on;if(on)data.chatMode=false})
+    recognitionSaveFailedOff=false
+    if(on)chatSaveFailedOff=false
+  }
   catch(e){if(on)throw e;saveError='文字起こしは停止しましたが、OFF設定を保存できませんでした'}
+  // A failed ON save must not interrupt audio or the current chat session.
+  if(on||!saveError)modeChanged?.(on)
   enrollment.reset();closeChat();resetTranscripts();greetingPending=false;
   retryAt=0;retryDelay=3000;error='';detail='';state=running()?'waiting':'off';
   refreshRecognition?.();refreshAITalk?.();
