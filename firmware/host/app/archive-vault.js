@@ -3,26 +3,30 @@ import {withSDCard} from 'stackchan-sdcard';
 let data={generation:0,wifi:null,api:{},reminders:[]};
 let loaded=false;
 let loadError=false;
+let unreadableSlots=0;
 const path=index=>`stackchan/settings-${index}.bin`;
 export function randomHex(){return Array.from(new Uint8Array(randomBytes()),b=>b.toString(16).padStart(2,'0')).join('');}
 export function loadSettings(){
   if(loaded)return data;
   let found=false;
+  let bad=0;
   withSDCard(root=>{
     try{root.createDirectory('stackchan');}catch(_){}
     for(let index=0;index<2;index++){
-      let file;
+      let file,opened=false;
       try{
-        file=root.openFile({path:path(index),mode:'r'});found=true;
+        file=root.openFile({path:path(index),mode:'r'});found=true;opened=true;
         const size=file.status().size;
         if(size<36||size>65572)throw new Error('size');
         const candidate=JSON.parse(String.fromArrayBuffer(openVault(file.read(size,0))));
         if(!Number.isSafeInteger(candidate.generation)||candidate.generation<1||!Array.isArray(candidate.reminders)||typeof candidate.api!=='object')throw new Error('schema');
         if(candidate.generation>data.generation)data=candidate;
-      }catch(_){}finally{file?.close();}
+      }catch(_){if(opened)bad++;}finally{file?.close();}
     }
   });
+  unreadableSlots=bad;
   loadError=found&&data.generation===0;loaded=true;
+  if(unreadableSlots && !loadError)trace('[settings] recovered older valid snapshot; unreadable slots='+unreadableSlots+'\n');
   if(loadError)trace('[settings] encrypted settings could not be authenticated; originals preserved\n');
   return data;
 }
@@ -40,10 +44,10 @@ export function changeSettings(change){
     try{file.write(encrypted,0);file.flush();persisted=true;}finally{file.close();}
   });
   if(!persisted)throw new Error('SDカードに設定を保存できませんでした');
-  data=next;loadError=false;
+  data=next;loadError=false;unreadableSlots=0;
   return data;
 }
-export function vaultStatus(){return {encrypted:true,generation:data.generation,loadError,chatMode:data.chatMode===true,transcriptionMode:data.transcriptionMode===true,apiNames:Object.keys(data.api),ssid:data.wifi?.ssid??''};}
+export function vaultStatus(){return {encrypted:true,generation:data.generation,loadError,unreadableSlots,chatMode:data.chatMode===true,transcriptionMode:data.transcriptionMode===true,apiNames:Object.keys(data.api),ssid:data.wifi?.ssid??''};}
 export function vaultSelfTest(){
   const plain=ArrayBuffer.fromString('configuration-encryption-self-test');
   const sealed=sealVault(plain);
