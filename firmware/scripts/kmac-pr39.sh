@@ -101,14 +101,16 @@ tests(){
   (cd "$FW" && node --experimental-vm-modules --test \
     scripts/lib/archive-ai-boot-restore.test.mjs scripts/lib/archive-ai-mode-persistence.test.mjs \
     scripts/lib/archive-vault-mode-recovery.test.mjs scripts/lib/archive-vault-slot-read.test.mjs \
-    scripts/lib/archive-head-motion.test.mjs scripts/lib/archive-issues-33-36.test.mjs \
+    scripts/lib/archive-head-motion.test.mjs scripts/lib/archive-head-command-dedupe.test.mjs scripts/lib/archive-issues-33-36.test.mjs \
     scripts/lib/archive-voice-volume.test.mjs scripts/lib/archive-build-preflight.test.mjs) || die "NodeテストFAIL"
   (cd "$FW" && python3 -m unittest discover -s scripts -p 'test_voice_e2e.py' -v) || die "PythonテストFAIL"
 }
 build(){
   STEP=BUILD
   [[ -r "$HOME/.local/share/xs-dev-export.sh" && -r "$HOME/.local/share/esp32/esp-idf/export.sh" ]] || die "Moddable/IDF envがありません"
-  log ACTION "既存の安全なビルド専用フローを実行"
+  log WARN "既存updaterは共有Moddable SDKのpatch-*.pyを適用します。別worktreeでもSDK側には変更が発生し得ます"
+  confirm "共有SDKのパッチ適用とCoreS3ビルドを実行しますか？"
+  log ACTION "既存のビルド専用フローを実行"
   (cd "$FW" && bash scripts/update-archive.sh --build-only) || die "ビルド失敗。dist/update-logs/latest.jsonを確認"
   IMAGE="$FW/dist/bin/esp32/m5stack_cores3/release/stack-chan-host/xs_esp32.bin"
   [[ -f "$IMAGE" ]] || die "生成されたCoreS3バイナリがありません"
