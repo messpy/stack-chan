@@ -65,9 +65,8 @@ def filtered_status(op: str, result: object, token: str) -> dict:
             "recognitionMode": result.get("recognitionMode"),
             "provider": result.get("provider"),
             "state": result.get("state"),
-            "label": str(result.get("label", ""))[:90],
             "busy": result.get("busy"),
-            "error": redacted_detail(result.get("error"), token),
+            "errorPresent": bool(result.get("error")),
             "audio": {k: v for k, v in (audio if isinstance(audio, dict) else {}).items()
                       if k in ("recognizedEvents", "lastTranscriptAt", "inputFrames",
                                "outputFrames", "underruns", "inputBytes", "outputBytes")
