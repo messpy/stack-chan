@@ -10,15 +10,15 @@ const end=source.indexOf('export function setRecognitionMode(on)',start)
 assert.ok(start>=0&&end>start,'setChatMode implementation is present')
 const implementation=source.slice(start,end).replace('export function','function')
 
-function harness(initial,failWrite=false){
+function harness(initial,failWrite=false,failMode=false){
   const settings={chatMode:initial,transcriptionMode:false,directChat:{cloudConsent:true}}
   const events=[]
   const context={
     getSettings:()=>settings,chatProvider:()=> 'xiaozhi',cloudConfig:()=>settings.directChat,
-    enabled:()=>settings.chatMode===true,recognitionMode:()=>settings.transcriptionMode===true,modeChanged:on=>events.push('mode:'+on),
+    enabled:()=>settings.chatMode===true,recognitionMode:()=>settings.transcriptionMode===true,modeChanged:on=>{events.push('mode:'+on);if(failMode)throw Error('audio handoff blocked')},
     changeSettings:change=>{events.push('write');if(failWrite)throw Error('SD unavailable');change(settings)},
     chatSaveFailedOff:false,recognitionSaveFailedOff:false,
-    closeChat:()=>{},collectMemory:()=>{},beginConversation:()=>events.push('begin'),
+    closeChat:()=>events.push('close'),collectMemory:()=>{},beginConversation:()=>events.push('begin'),
     resetTranscripts:()=>{},enrollment:{reset:()=>{}},robot:{drawer:{setDrawerButtonState:()=>{}},ui:{removeEffect:()=>{}}},
     modeLabel:null,speakerStrip:null,refreshAITalk:null,refreshRecognition:null,
     directChatStatus:()=>({enabled:settings.chatMode}),trace:()=>{},state:'off'
@@ -71,12 +71,12 @@ const recognitionEnd=source.indexOf('let memoryCleanupTimer',recognitionStart)
 assert.ok(recognitionStart>=0&&recognitionEnd>recognitionStart,'setRecognitionMode implementation is present')
 const recognitionImplementation=source.slice(recognitionStart,recognitionEnd).replace('export function','function')
 
-function recognitionHarness(initial,failWrite=false){
+function recognitionHarness(initial,failWrite=false,failMode=false){
   const settings={chatMode:false,transcriptionMode:initial,directChat:{cloudConsent:true}}
   const events=[]
   const context={
     getSettings:()=>settings,cloudConfig:()=>settings.directChat,
-    modeChanged:on=>events.push('mode:'+on),
+    modeChanged:on=>{events.push('mode:'+on);if(failMode)throw Error('audio handoff blocked')},
     changeSettings:change=>{events.push('write');if(failWrite)throw Error('SD unavailable');change(settings)},
     recognitionSaveFailedOff:false,chatSaveFailedOff:false,
     closeChat:()=>events.push('close'),collectMemory:()=>{},enrollment:{reset:()=>{}},
@@ -102,4 +102,29 @@ test('failed recognition ON does not change audio ownership',()=>{
   assert.throws(()=>h.setRecognitionMode(true),/SD unavailable/)
   assert.equal(h.settings.transcriptionMode,false)
   assert.deepEqual(h.events,['write'])
+})
+
+test('switching from transcription to conversation closes the old recognition session',()=>{
+  const h=harness(false)
+  h.settings.transcriptionMode=true
+  h.setChatMode(true)
+  assert.equal(h.settings.chatMode,true)
+  assert.equal(h.settings.transcriptionMode,false)
+  assert.deepEqual(h.events.slice(0,4),['write','mode:true','close','begin'])
+})
+test('failed conversation handoff restores prior transcription mode',()=>{
+  const h=harness(false,false,true)
+  h.settings.transcriptionMode=true
+  assert.throws(()=>h.setChatMode(true),/audio handoff blocked/)
+  assert.equal(h.settings.chatMode,false)
+  assert.equal(h.settings.transcriptionMode,true)
+  assert.deepEqual(h.events,['write','mode:true','write'])
+})
+test('failed transcription handoff restores previous conversation mode',()=>{
+  const h=recognitionHarness(false,false,true)
+  h.settings.chatMode=true
+  assert.throws(()=>h.setRecognitionMode(true),/audio handoff blocked/)
+  assert.equal(h.settings.chatMode,true)
+  assert.equal(h.settings.transcriptionMode,false)
+  assert.deepEqual(h.events,['write','mode:true','write'])
 })
