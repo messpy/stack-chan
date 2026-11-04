@@ -971,14 +971,15 @@ async function connect() {
               if (chat !== instance) return
               trace('[chat-tool] failed '+name+'\n')
               let message = '道具を実行できませんでした'
-              if (provider === 'ollama' || memoryTools.some(t=>t.name===name)) {
-                message = String(e.message || message)
-                for (const key of [getSettings().api?.ollama, getSettings().api?.gemini])
+              if (provider === 'ollama' || memoryTools.some(t=>t.name===name) || name==='head_move' || name==='camera_describe') {
+                message = String(e?.message || message)
+                for (const key of [getSettings().api?.ollama, getSettings().api?.gemini, cloudConfig()?.accessToken])
                   if (key) message = message.split(key).join('[redacted]')
                 error = message.slice(0, 200)
-                robot.showBalloon(error)
+                try{robot.showBalloon(error)}catch(_){trace('[chat-tool] error display unavailable\n')}
               }
-              return instance.sendFunctionResult(call, name, { error: message.slice(0, 200) })
+              try{return instance.sendFunctionResult(call, name, { error: message.slice(0, 200) })}
+              catch(_){trace('[chat-tool] result transport unavailable '+name+'\n')}
             })
         },
       },
