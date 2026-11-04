@@ -31,9 +31,10 @@ export async function moveHead(robot, args = {}) {
   try {
     await robot.setPose({ ...robot.pose.body, rotation: { ...HEAD_ROTATIONS[direction] } }, .5)
     await new Promise(resolve => Timer.set(resolve, 650))
-    trace('[head-motion] commanded direction=' + direction + '\n')
+    trace('[head-motion] commanded direction=' + direction + ' verified=false\n')
     return { commanded: true, direction }
   } catch (error) {
+    trace('[head-motion] failed direction=' + direction + ' reason=' + String(error).slice(0,120) + '\n')
     await robot.setTorque(false)
     throw error
   }
