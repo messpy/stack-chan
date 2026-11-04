@@ -429,7 +429,7 @@ export function setChatMode(on) {
 export function setRecognitionMode(on){
   if(typeof on!=='boolean')throw new Error('文字起こしのON/OFFを指定してください')
   if(on&&!cloudConfig()?.cloudConsent)throw new Error('XiaoZhiの初期登録が必要です')
-  if(on){modeChanged?.(true);if(enabled())setChatMode(false)}
+  if(on)modeChanged?.(true) // The settings write below atomically disables chat mode.
   if(!on){recognitionSaveFailedOff=true;closeChat();collectMemory()}
   let saveError
   try{changeSettings(data=>{data.transcriptionMode=on;if(on)data.chatMode=false});recognitionSaveFailedOff=false;if(on)chatSaveFailedOff=false}
