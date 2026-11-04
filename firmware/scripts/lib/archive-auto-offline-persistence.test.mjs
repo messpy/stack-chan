@@ -7,9 +7,9 @@ const lan = readFileSync(new URL('../../host/app/lan-archive.js', import.meta.ur
 const policy = readFileSync(new URL('../../host/app/archive-offline-policy.js', import.meta.url), 'utf8')
 const chat = readFileSync(new URL('../../host/app/archive-direct-chat.js', import.meta.url), 'utf8')
 
-function harness() {
+function harness(options = {}) {
   const events = []
-  const settings = { chatMode: true, transcriptionMode: false, autoOffline: true }
+  const settings = { chatMode: options.chatMode ?? true, transcriptionMode: options.transcriptionMode ?? false, autoOffline: true }
   let usb = false
   let wifi = false
   let tick
@@ -62,6 +62,24 @@ test('automatic offline does not fire if Wi-Fi connection is present', () => {
   h.setWifi(true)
   for (let i = 0; i < 60; i++) h.tick()
   assert.ok(!h.events.some(([kind]) => kind === 'open' || kind === 'suspend'))
+})
+
+test('automatic fallback preserves transcription ON and explicit both-OFF selections', () => {
+  for (const preferences of [
+    {chatMode:false,transcriptionMode:true},
+    {chatMode:false,transcriptionMode:false},
+  ]) {
+    const h = harness(preferences)
+    for(let i=0;i<44;i++) h.tick()
+    assert.equal(h.events.filter(([kind])=>kind==='open').length,1)
+    assert.equal(h.settings.chatMode,preferences.chatMode)
+    assert.equal(h.settings.transcriptionMode,preferences.transcriptionMode)
+    h.setUsb(true)
+    h.tick()
+    assert.equal(h.events.filter(([kind])=>kind==='resume').length,1)
+    assert.equal(h.settings.chatMode,preferences.chatMode)
+    assert.equal(h.settings.transcriptionMode,preferences.transcriptionMode)
+  }
 })
 
 test('native cloud suspends and resumes without ever touching SD settings', () => {
