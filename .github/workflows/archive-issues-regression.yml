@@ -26,14 +26,31 @@ jobs:
         run: |
           node --experimental-vm-modules --test \
             firmware/scripts/lib/archive-ai-mode-persistence.test.mjs \
+            firmware/scripts/lib/archive-speaker-selection.test.mjs \
             firmware/scripts/lib/archive-issues-33-36.test.mjs \
             firmware/scripts/lib/archive-voice-volume.test.mjs \
             firmware/scripts/lib/archive-offline.test.mjs \
             firmware/scripts/lib/archive-build-preflight.test.mjs \
             firmware/scripts/lib/idf-dependencies.test.mjs
-      - name: Full Archive and firmware-script Node regression suite
+      - name: Full portable Archive and firmware-script Node regression suite
         working-directory: ./firmware
-        run: node --experimental-vm-modules --test scripts/lib/*.test.mjs
+        shell: bash
+        run: |
+          # Existing SDK/Hub tests require external checkouts absent from this job.
+          # Their absence is explicitly reported and must not be counted as PASS.
+          files=()
+          for testfile in scripts/lib/*.test.mjs; do
+            case "$testfile" in
+              scripts/lib/archive-gemini-conversation.test.mjs)
+                echo '[WARN] SKIP archive-gemini-conversation: external MODDABLE SDK absent'
+                ;;
+              scripts/lib/archive-media-trash-page.test.mjs)
+                echo '[WARN] SKIP archive-media-trash-page: sibling hub/index.html absent'
+                ;;
+              *) files+=("$testfile") ;;
+            esac
+          done
+          node --experimental-vm-modules --test "${files[@]}"
       - name: E2E evidence evaluator unit tests
         run: python3 -m unittest discover -s firmware/scripts -p 'test_voice_e2e.py' -v
 
