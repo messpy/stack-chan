@@ -233,7 +233,8 @@ acoustic(){
   local extra=()
   [[ -z "${STACKCHAN_DEVICE_LOG:-}" ]] || extra+=(--device-log "$STACKCHAN_DEVICE_LOG")
   [[ -z "${STACKCHAN_STT_COMMAND:-}" ]] || extra+=(--stt-command "$STACKCHAN_STT_COMMAND")
-  log WARN "PCマイク/スピーカーと本体の会話ONを確認してください"
+  log WARN "CoreS3の再起動・Wi-Fi接続完了後に実施。モードはケース毎に指定された条件が必要です"
+  confirm "本体起動・必要なAIモード・PCスピーカー/マイクの準備を確認しましたか？"
   python3 "$FW/scripts/voice-e2e.py" capture --case "$case" \
     --speak-command "python3 $speak {text}" \
     --record-command "arecord -q -D ${STACKCHAN_RECORD_DEVICE:-default} -f S16_LE -r 16000 -c 1 -d 20 -t wav {wav}" \
