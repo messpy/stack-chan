@@ -55,6 +55,17 @@ console.log('PASS: one offline timer per start panel; queued/repeated releases a
 for(let i=0;i<5&&!overlays[0].children.some(b=>b.method==='timer');i++)overlays[0].children.find(b=>b.method==='next').press();overlays[0].children.find(b=>b.method==='timer').press();const failedStart=overlays[0].children.find(b=>b.method==='start'),countBeforeFailure=settings.reminders.filter(r=>r.kind==='timer').length;failSpeech=true;await assert.rejects(()=>failedStart.press(),/設定済み/);await failedStart.press();assert.equal(settings.reminders.filter(r=>r.kind==='timer').length,countBeforeFailure+1);assert.ok(!overlays[0].children.some(b=>b.method==='start'));failSpeech=false;
 console.log('PASS: a successfully saved timer remains one-shot even if acknowledgement speech fails');
 
+// Automatic fallback must be reversible and must not write a user-selected OFF.
+const savedOffCount=stoppedCloud;
+offline.openOffline({automatic:true});
+assert.equal(stoppedCloud,savedOffCount,'automatic offline must never call stopCloud');
+await offline.offlineAction('hello');
+assert.equal(stoppedCloud,savedOffCount,'local speech while automatically offline must not persist OFF');
+offline.closeOffline();
+await offline.offlineAction('time');
+assert.equal(stoppedCloud,savedOffCount+1,'ordinary explicit offline actions keep manual policy');
+console.log('PASS: auto offline preserves user AI preference even after a local speech action');
+
 const bootResult=await offline.offlineAction('boot');
 assert.equal(bootResult.text,'スタックチャン');
 assert.equal(spoken.at(-1).text,'すたっくちゃん。');
