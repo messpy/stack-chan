@@ -444,7 +444,7 @@ export function setRecognitionMode(on){
   }
   catch(e){if(on)throw e;saveError='文字起こしは停止しましたが、OFF設定を保存できませんでした'}
   // A failed ON save must not interrupt audio or the current chat session.
-  if(on||!saveError)modeChanged?.(on)
+  if(on)modeChanged?.(true)
   enrollment.reset();closeChat();resetTranscripts();greetingPending=false;
   retryAt=0;retryDelay=3000;error='';detail='';state=running()?'waiting':'off';
   refreshRecognition?.();refreshAITalk?.();
