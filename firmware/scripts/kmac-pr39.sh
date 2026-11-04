@@ -261,7 +261,7 @@ photo_e2e(){
   device
   python3 -c 'import serial' >/dev/null 2>&1 || die "pyserial がありません（python3 -m pipで準備が必要）。書込済みの本体は変更しません"
   local root="${STACKCHAN_E2E_OUTPUT:-$HOME/stackchan-e2e}"
-  local dir="$root/photo-status-$(date -u +%Y%m%dT%H%M%SZ)-$"
+  local dir="$root/photo-status-$(date -u +%Y%m%dT%H%M%SZ)-$$"
   mkdir -p "$dir" || die "診断結果ディレクトリ作成失敗"
   chmod 700 "$dir" || die "診断結果の権限設定失敗"
   log CHECK "Issue #33: 撮影前の状態を取得"
