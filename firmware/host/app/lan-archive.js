@@ -90,18 +90,39 @@ async function cameraPreview(robot) {
  }
 }
 async function photo(robot,args={},fromConversation=false) {
- const wasBusy=busy;if(busy&&!fromConversation)throw new Error('Camera busy');busy=true;
- let frame,jpeg,result;
- try{
-  frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});if(!frame)throw new Error('No camera frame');
-  const tag=id(),name='photo-'+tag+'.jpg',image=name;
-  jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');save(image,[jpeg]);
-  result={name,image,width:frame.width,height:frame.height};
- }finally{frame?.close?.();robot.camera.stop();busy=wasBusy;}
- if(args.analyze!==false)Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
- return result;
+  const wasBusy=busy;
+  if(busy&&!fromConversation)throw new Error('Camera busy');
+  busy=true;
+  let frame,jpeg,result;
+  const startedAt=Date.now();
+  try{
+    trace('[archive-camera] capture begin conversation='+fromConversation+'\n');
+    frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});
+    if(!frame)throw new Error('No camera frame');
+    trace('[archive-camera] frame received elapsedMs='+(Date.now()-startedAt)+'\n');
+    const tag=id(),name='photo-'+tag+'.jpg',image=name;
+    jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
+    save(image,[jpeg]);
+    result={name,image,width:frame.width,height:frame.height};
+    trace('[archive-camera] saved elapsedMs='+(Date.now()-startedAt)+'\n');
+  }catch(error){
+    trace('[archive-camera] capture failed: '+String(error?.message||error).slice(0,160)+'\n');
+    throw error;
+  }finally{
+    try{frame?.close?.();}catch(error){trace('[archive-camera] frame close failed\n');}
+    try{
+      trace('[archive-camera] stop begin\n');
+      await robot.camera.stop();
+      trace('[archive-camera] stop done\n');
+    }finally{busy=wasBusy;}
+  }
+  if(args.analyze!==false){
+    trace('[archive-camera] analysis begin\n');
+    Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
+    trace('[archive-camera] analysis status='+String(result.analysis?.status||'unknown')+' elapsedMs='+(Date.now()-startedAt)+'\n');
+  }
+  return result;
 }
-
 async function describeImage(robot,name,jpeg,question){
  const prompt=String(question||'この画像には何が写っていますか？').slice(0,1000);
  const speakerId=directChatStatus().speaker?.id??null;
