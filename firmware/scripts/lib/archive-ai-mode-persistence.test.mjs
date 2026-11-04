@@ -45,3 +45,41 @@ test('failed ON persistence does not switch audio ownership',()=>{
   assert.equal(h.settings.chatMode,false)
   assert.deepEqual(h.events,['write'])
 })
+
+const recognitionStart=source.indexOf('export function setRecognitionMode(on)')
+const recognitionEnd=source.indexOf('let memoryCleanupTimer',recognitionStart)
+assert.ok(recognitionStart>=0&&recognitionEnd>recognitionStart,'setRecognitionMode implementation is present')
+const recognitionImplementation=source.slice(recognitionStart,recognitionEnd).replace('export function','function')
+
+function recognitionHarness(initial,failWrite=false){
+  const settings={chatMode:false,transcriptionMode:initial,directChat:{cloudConsent:true}}
+  const events=[]
+  const context={
+    getSettings:()=>settings,cloudConfig:()=>settings.directChat,
+    modeChanged:on=>events.push('mode:'+on),
+    changeSettings:change=>{events.push('write');if(failWrite)throw Error('SD unavailable');change(settings)},
+    recognitionSaveFailedOff:false,chatSaveFailedOff:false,
+    closeChat:()=>events.push('close'),collectMemory:()=>{},enrollment:{reset:()=>{}},
+    resetTranscripts:()=>{},refreshRecognition:null,refreshAITalk:null,
+    running:()=>settings.transcriptionMode,trace:()=>{},directChatStatus:()=>({recognitionMode:settings.transcriptionMode})
+  }
+  const setRecognitionMode=vm.runInNewContext(recognitionImplementation+'\nsetRecognitionMode',context)
+  return {setRecognitionMode,settings,events}
+}
+test('recognition restore does not rewrite persisted ON',()=>{
+  const h=recognitionHarness(true)
+  h.setRecognitionMode(true)
+  assert.equal(h.events.includes('write'),false)
+  assert.equal(h.events[0],'mode:true')
+})
+test('recognition ON persists before taking audio ownership',()=>{
+  const h=recognitionHarness(false)
+  h.setRecognitionMode(true)
+  assert.deepEqual(h.events.slice(0,2),['write','mode:true'])
+})
+test('failed recognition ON does not change audio ownership',()=>{
+  const h=recognitionHarness(false,true)
+  assert.throws(()=>h.setRecognitionMode(true),/SD unavailable/)
+  assert.equal(h.settings.transcriptionMode,false)
+  assert.deepEqual(h.events,['write'])
+})
