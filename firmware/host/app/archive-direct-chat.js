@@ -19,6 +19,7 @@ import { uiFont } from 'ui-theme'
 import { getSettings, changeSettings } from 'archive-vault'
 import { getSettingsStatus } from 'archive-settings'
 import { listDeviceTools, callDeviceTool } from 'archive-tools'
+import {getVolume,setVolume} from 'archive-volume'
 import {
   memoryTools,
   callMemory,
@@ -696,9 +697,14 @@ async function connect() {
             }),
           }
     let ollamaBusy = false,recognitionTurnCurrent=()=>false
+    let visualAllowed=false,headHandled=''
+    const wantsCamera=text=>/(?:カメラ|写真|撮影|画像|映像|写っ|映っ|見えて|見える|見せて|目の前|これ何|これは何|何がある|文字を読)/.test(String(text||''))
     async function executeTool(name, args) {
       if (chat !== instance&&!recognitionTurnCurrent()) throw new Error('会話が切り替わりました')
       if (name === 'camera_describe') {
+        if(!visualAllowed){trace('[vision] rejected unrequested camera\n');return {error:'ユーザーが撮影を依頼していません。カメラを使用しないでください。'}}
+        visualAllowed=false
+        trace('[vision] authorized camera\n')
         if (!photoHandler) throw new Error('Camera unavailable')
         const result = await photoHandler(args)
         return result.analysis?.status === 'complete'
@@ -734,6 +740,9 @@ async function connect() {
           args = { ...args, source_message_ids: lastInputId ? [lastInputId] : [] }
         return callMemory(name, args)
       }
+      if(name==='volume_get')return getVolume()
+      if(name==='volume_set')return setVolume(args.percent)
+      if(name==='head_move'&&headHandled===args?.direction){headHandled='';trace('[head-motion] duplicate skipped\n');return {commanded:true,direction:args.direction,duplicate:true}}
       return callDeviceTool(name, args)
     }
     async function recognitionTurn(text){
@@ -842,7 +851,9 @@ async function connect() {
               receiveRegistrationName(text)
               return
             }
-            trace('[asr] final chars='+input.length+'\n')
+            visualAllowed=wantsCamera(input)
+            headHandled=''
+            trace('[asr] final chars='+input.length+' visual='+visualAllowed+'\n')
             const event = archive('input', input)
             lastInputId = event?.id || ''
             if(standalone){
@@ -863,7 +874,7 @@ async function connect() {
             // the cloud chooses a function call or only speaks an acknowledgement.
             if (!standalone && !recognitionOnly) {
               const direction=headDirectionFromText(recognized)
-              if(direction) Promise.resolve(callDeviceTool('head_move',{direction})).catch(()=>trace('[head-motion] voice command failed\n'))
+              if(direction){headHandled=direction;Promise.resolve(callDeviceTool('head_move',{direction})).catch(()=>trace('[head-motion] voice command failed\n'))}
             }
             if(recognitionOnly)Timer.set(()=>recognitionTurn(recognized),0)
           }
