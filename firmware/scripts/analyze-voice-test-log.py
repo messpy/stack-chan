@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only StackChan UART log analyzer. Exit 1 on FAIL/UNKNOWN."""
+"""Read-only UART log analyzer. Exit 1 for errors or missing required events."""
 import argparse
 import re
 import sys
