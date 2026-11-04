@@ -60,6 +60,7 @@ class EvidenceGateTests(unittest.TestCase):
         result = tool.debug_markers(source)
         self.assertEqual(result["markers"]["asr_final"], 1)
         self.assertEqual(result["markers"]["boot_mode_restored"], 1)
+        self.assertEqual(result["markers"]["mode_session_connected"], 0)
         self.assertEqual(result["markers"]["volume_applied"], 1)
         self.assertEqual(result["bytes"], len(source))
         self.assertEqual(len(result["sha256"]), 64)
