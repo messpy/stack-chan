@@ -44,6 +44,7 @@ import {bgr24,bitmapHeader,aviHeader,frameHeader,aviAudioHeader,audioFrameHeader
 
 let sequence=0;
 let busy=false;
+let photoActive=false;
 let lastError='';
 let audioUpload;
 let server;
@@ -75,31 +76,69 @@ export function archiveTranscript(role,text,eventId,image,speakerId) {
   } catch(e) {lastError=String(e);trace('[archive] transcript could not be saved\n');}
 }
 // Preview frames stay in RAM: no SD writes or cloud image recognition.
+// Preview frames stay in RAM: no SD writes or cloud analysis.
 async function cameraPreview(robot) {
- if(busy)throw new Error('本体で処理中です。会話や録画を停止してからお試しください');
- const paused=pauseDirectChat();
- if(busy){if(paused)resumeDirectChat();throw new Error('本体で処理中です');}
- busy=true;
- let frame;
- try{
-  frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});
-  if(!frame)throw new Error('カメラの画像を取得できませんでした');
-  return encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
- }finally{
-  try{frame?.close?.();}finally{try{robot.camera.stop();}finally{busy=false;if(paused)resumeDirectChat();}}
- }
+  if(busy||photoActive)throw new Error('本体で処理中です。会話や録画を停止してからお試しください');
+  const paused=pauseDirectChat();
+  if(busy||photoActive){if(paused)resumeDirectChat();throw new Error('本体で処理中です');}
+  busy=true;
+  let frame,primaryError;
+  try {
+    const options={width:176,height:144,imageType:'rgb565le'};
+    await robot.camera.start(options);
+    frame=await robot.camera.capture(options);
+    if(!frame)throw new Error('カメラの画像を取得できませんでした');
+    return encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
+  } catch(error){primaryError=error;throw error;}
+  finally {
+    try { frame?.close?.(); } catch(error) { trace('[archive-camera] preview frame close failed\n'); }
+    try { await robot.camera.stop(); } catch(error) {
+      trace('[archive-camera] preview stop failed\n');
+      if(!primaryError)throw error;
+    } finally { busy=false; if(paused)resumeDirectChat(); }
+  }
 }
 async function photo(robot,args={},fromConversation=false) {
- const wasBusy=busy;if(busy&&!fromConversation)throw new Error('Camera busy');busy=true;
- let frame,jpeg,result;
- try{
-  frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});if(!frame)throw new Error('No camera frame');
-  const tag=id(),name='photo-'+tag+'.jpg',image=name;
-  jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');save(image,[jpeg]);
-  result={name,image,width:frame.width,height:frame.height};
- }finally{frame?.close?.();robot.camera.stop();busy=wasBusy;}
- if(args.analyze!==false)Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
- return result;
+  if(photoActive || (busy&&!fromConversation))throw new Error('Camera busy');
+  photoActive=true;
+  // A conversation already owns busy. Never restore an obsolete true after it ends.
+  const ownsBusy=!busy;
+  if(ownsBusy)busy=true;
+  let frame,jpeg,result,primaryError;
+  const startedAt=Date.now();
+  try {
+    trace('[archive-camera] capture begin\n');
+    const options={width:176,height:144,imageType:'rgb565le'};
+    await robot.camera.start(options);
+    trace('[archive-camera] native start done\n');
+    frame=await robot.camera.capture(options);
+    if(!frame)throw new Error('No camera frame');
+    trace('[archive-camera] frame received elapsedMs='+(Date.now()-startedAt)+'\n');
+    const name='photo-'+id()+'.jpg';
+    jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
+    save(name,[jpeg]);
+    result={name,image:name,width:frame.width,height:frame.height};
+    trace('[archive-camera] saved elapsedMs='+(Date.now()-startedAt)+'\n');
+  } catch(error) {
+    primaryError=error;
+    trace('[archive-camera] capture failed\n');
+    throw error;
+  } finally {
+    try { frame?.close?.(); } catch(error) { trace('[archive-camera] frame close failed\n'); }
+    try { await robot.camera.stop(); } catch(error) {
+      trace('[archive-camera] stop failed\n');
+      if(!primaryError)throw error;
+    } finally {
+      if(ownsBusy)busy=false;
+      photoActive=false;
+    }
+  }
+  if(args.analyze!==false) {
+    trace('[archive-camera] analysis begin\n');
+    Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
+    trace('[archive-camera] analysis result='+String(result.analysis?.status||'unknown')+'\n');
+  }
+  return result;
 }
 
 async function describeImage(robot,name,jpeg,question){
@@ -108,7 +147,7 @@ async function describeImage(robot,name,jpeg,question){
  const input=archiveTranscript('input',prompt,undefined,name,speakerId);
  const analysis=await analyzeJPEG(jpeg,prompt);
  const answer=archiveTranscript('output',analysis.status==='complete'?analysis.text:'画像認識エラー: '+(analysis.error||'回答を取得できませんでした'),undefined,name,speakerId);
- if(analysis.status==='complete')robot.showBalloon(analysis.text);
+ if(analysis.status==='complete')robot.showBalloon(analysis.text,{bottom:40,height:24,paddingY:4});
  return {analysis,historySaved:!!input&&!!answer,messageIds:[input?.id,answer?.id]};
 }
 
