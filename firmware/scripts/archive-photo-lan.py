@@ -40,7 +40,7 @@ def filtered_photo(status: dict) -> dict:
     if not isinstance(status, dict) or not isinstance(status.get("photo"), dict):
         raise ValueError("CoreS3 /status did not provide a photo diagnostic object")
     photo = status["photo"]
-    return {key: value for key in SAFE_FIELDS
+    return {key: photo[key] for key in SAFE_FIELDS
             if key in photo and (photo[key] is None or isinstance(photo[key], (str, int, float, bool)))}
 
 
