@@ -14,7 +14,9 @@ const DEFAULT_WIDTH = 176
 const DEFAULT_HEIGHT = 144
 const DEFAULT_IMAGE_TYPE: CameraImageType = 'rgb565le'
 const FORMAT_DISPOSABLE_BUFFER = 'buffer/disposable'
-const INITIAL_FRAME_TIMEOUT_MS = 500
+// Allow CoreS3 to deliver its first frame after native camera startup.
+// Keep the wait finite so a missing camera cannot stall the app indefinitely.
+const INITIAL_FRAME_TIMEOUT_MS = 1800
 const INITIAL_FRAME_POLL_MS = 30
 const DEFAULT_CAPTURE_REQUEST: CameraCaptureRequest = {
   width: DEFAULT_WIDTH,
