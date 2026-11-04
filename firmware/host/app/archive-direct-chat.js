@@ -391,6 +391,8 @@ export function setChatMode(on) {
     throw new Error(
       chatProvider() === 'gemini' ? '設定ページでGemini APIキーを保存してください' : '会話の初期登録が必要です',
     )
+  const previousMode={chatMode:getSettings().chatMode,transcriptionMode:getSettings().transcriptionMode}
+  const wasRecognitionMode=recognitionMode()
   const starting = on && !enabled()
   if(!on){chatSaveFailedOff=true;closeChat();collectMemory()}
   let saveError
@@ -412,7 +414,7 @@ export function setChatMode(on) {
     // A rejected audio handoff must not leave the persisted mode enabled.
     if(on && starting) {
       try {
-        changeSettings((data) => { data.chatMode=false })
+        changeSettings((data) => { data.chatMode=previousMode.chatMode;data.transcriptionMode=previousMode.transcriptionMode })
       } catch(rollbackError) {
         trace('[direct-chat] failed to roll back chat mode: '+rollbackError+'\n')
       }
@@ -420,7 +422,7 @@ export function setChatMode(on) {
     throw e
   }
   if(starting){
-    if(recognitionMode())closeChat()
+    if(wasRecognitionMode)closeChat()
     beginConversation()
     greetingPending=true
     resetTranscripts()
@@ -447,6 +449,7 @@ export function setChatMode(on) {
 export function setRecognitionMode(on){
   trace('[action] recognition_mode requested='+(on?'on':'off')+'\n')
   if(typeof on!=='boolean')throw new Error('文字起こしのON/OFFを指定してください')
+  const previousMode={chatMode:getSettings().chatMode,transcriptionMode:getSettings().transcriptionMode}
   if(on&&!cloudConfig()?.cloudConsent)throw new Error('XiaoZhiの初期登録が必要です')
   if(!on){recognitionSaveFailedOff=true;closeChat();collectMemory()}
   let saveError
@@ -459,7 +462,12 @@ export function setRecognitionMode(on){
   }
   catch(e){if(on)throw e;saveError='文字起こしは停止しましたが、OFF設定を保存できませんでした'}
   // A failed ON save must not interrupt audio or the current chat session.
-  if(on)modeChanged?.(true)
+  if(on)try{modeChanged?.(true)}catch(e){
+    if(previousMode.chatMode!==false||previousMode.transcriptionMode!==true)try{
+      changeSettings(data=>{data.chatMode=previousMode.chatMode;data.transcriptionMode=previousMode.transcriptionMode})
+    }catch(rollbackError){trace('[recognition] failed to roll back mode: '+String(rollbackError).slice(0,120)+'\n')}
+    throw e
+  }
   enrollment.reset();closeChat();resetTranscripts();greetingPending=false;
   retryAt=0;retryDelay=3000;error='';detail='';state=running()?'waiting':'off';
   refreshRecognition?.();refreshAITalk?.();
@@ -709,7 +717,7 @@ async function connect() {
             }),
           }
     let ollamaBusy = false,recognitionTurnCurrent=()=>false
-    let visualAllowed=false,headHandled=''
+    let visualAllowed=false,headHandled
     const wantsCamera=text=>/(?:カメラ|写真|撮影|画像|映像|写っ|映っ|見えて|見える|見せて|目の前|これ何|これは何|何がある|文字を読)/.test(String(text||''))
     async function executeTool(name, args) {
       if (chat !== instance&&!recognitionTurnCurrent()) throw new Error('会話が切り替わりました')
@@ -757,7 +765,13 @@ async function connect() {
       }
       if(name==='volume_get')return getVolume()
       if(name==='volume_set')return setVolume(args.percent)
-      if(name==='head_move'&&headHandled===args?.direction){headHandled='';trace('[head-motion] duplicate skipped\n');return {commanded:true,direction:args.direction,duplicate:true}}
+      if(name==='head_move'&&headHandled?.direction===args?.direction){
+        const pending=headHandled;headHandled=undefined
+        const result=await pending.promise
+        if(result?.commanded!==true)throw new Error('首振り動作が完了していません')
+        trace('[head-motion] duplicate reused completed result\n')
+        return {...result,duplicate:true}
+      }
       return callDeviceTool(name, args)
     }
     async function recognitionTurn(text){
@@ -867,7 +881,7 @@ async function connect() {
               return
             }
             visualAllowed=wantsCamera(input)
-            headHandled=''
+            headHandled=undefined
             trace('[asr] final chars='+input.length+' visual='+visualAllowed+'\n')
             const event = archive('input', input)
             lastInputId = event?.id || ''
@@ -889,7 +903,11 @@ async function connect() {
             // the cloud chooses a function call or only speaks an acknowledgement.
             if (!standalone && !recognitionOnly) {
               const direction=headDirectionFromText(recognized)
-              if(direction){headHandled=direction;Promise.resolve(callDeviceTool('head_move',{direction})).catch(()=>trace('[head-motion] voice command failed\n'))}
+              if(direction){
+                const promise=Promise.resolve().then(()=>callDeviceTool('head_move',{direction}))
+                headHandled={direction,promise}
+                promise.catch(e=>trace('[head-motion] voice command failed: '+String(e?.message||e).slice(0,120)+'\n'))
+              }
             }
             if(recognitionOnly)Timer.set(()=>recognitionTurn(recognized),0)
           }
