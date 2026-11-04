@@ -7,6 +7,7 @@ on:
       - 'firmware/host/app/archive-direct-chat.js'
       - 'firmware/host/app/lan-archive.js'
       - 'firmware/host/app/archive-volume.js'
+      - 'firmware/host/app/archive-tools.js'
       - 'firmware/scripts/**'
       - '.github/workflows/archive-issues-regression.yml'
   workflow_dispatch:
@@ -26,6 +27,8 @@ jobs:
           node --experimental-vm-modules --test \
             firmware/scripts/lib/archive-ai-mode-persistence.test.mjs \
             firmware/scripts/lib/archive-issues-33-36.test.mjs \
+            firmware/scripts/lib/archive-voice-volume.test.mjs \
+            firmware/scripts/lib/archive-offline.test.mjs \
             firmware/scripts/lib/archive-build-preflight.test.mjs \
             firmware/scripts/lib/idf-dependencies.test.mjs
       - name: E2E evidence evaluator unit tests
