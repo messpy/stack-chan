@@ -132,6 +132,7 @@ tests(){
     scripts/lib/archive-head-motion.test.mjs scripts/lib/archive-head-command-dedupe.test.mjs scripts/lib/archive-issues-33-36.test.mjs \
     scripts/lib/archive-voice-volume.test.mjs scripts/lib/archive-build-preflight.test.mjs) || die "NodeテストFAIL"
   (cd "$FW" && python3 -m unittest discover -s scripts -p 'test_voice_e2e.py' -v) || die "PythonテストFAIL"
+  (cd "$FW" && python3 -m unittest discover -s scripts -p 'test_archive_usb_audit.py' -v) || die "USB/photo診断テストFAIL"
 }
 build(){
   STEP=BUILD
@@ -285,6 +286,7 @@ case "$MODE" in
     device # Fail early if the expected device or esptool is missing.
     [[ -f "${STACKCHAN_SPEAK_SCRIPT:-/home/kmac/work/camera-voicevox/speak.py}" ]] || die "VOICEVOX speak.pyがありません。テスト不要ならflashを指定"
     command -v arecord >/dev/null 2>&1 || die "arecordがありません。テスト不要ならflashを指定"
+    python3 -c 'import serial' >/dev/null 2>&1 || die "pyserialがありません。書き込む前にインストールしてください"
     dependencies; tests; build; flash; acoustic test ordinary_chat; photo_e2e ;;
   test)
     dependencies; tests
