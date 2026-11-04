@@ -62,6 +62,7 @@ if [[ "$MODE" == check ]]; then
   log CHECK "READ-ONLY完了"
   exit 0
 fi
+if [[ "$MODE" != restore ]]; then
 STEP=WORKTREE
 [[ "$WORKTREE" != "$REPO" && "$WORKTREE" != /tmp/* ]] || die "専用worktreeパスが危険です"
 free="$(df -Pk "$(dirname "$REPO")" | awk 'NR==2 {print $4}')"
@@ -86,6 +87,8 @@ else
   install -m 600 "$PRIVATE_SOURCE" "$PRIVATE_TARGET" || die "private manifestの引継ぎ失敗"
 fi
 log CHECK "専用worktree=$WORKTREE; 既存認証設定を保持"
+fi
+FW="${FW:-$REPO/firmware}"
 if [[ "$MODE" != restore ]]; then
   command -v node >/dev/null 2>&1 || die "Nodeなし"
   command -v npm >/dev/null 2>&1 || die "npmなし"
