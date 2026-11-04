@@ -85,6 +85,19 @@ function volumeCommandFromText(text) {
   if(/^音量を?(?:下げて|下げてください|小さくして|小さくしてね)$/.test(value))return {kind:'delta',delta:-10};
   return null;
 }
+// Mode commands are exact, device-local requests; OFF cannot listen to a new voice command.
+function modeCommandFromText(text) {
+  const normalized=String(text||'').replace(/[\s、。！？!?]/g,'');
+  if(/^(?:AI|会話)(?:モード)?を?(?:オフ|OFF|停止)(?:にして|して|ください)?$/i.test(normalized))
+    return {kind:'chat',on:false};
+  if(/^(?:AI|会話)(?:モード)?を?(?:オン|ON)(?:にして|して|ください)?$/i.test(normalized))
+    return {kind:'chat',on:true};
+  if(/^文字起こし(?:モード)?を?(?:オン|ON|開始)(?:にして|して|ください)?$/i.test(normalized))
+    return {kind:'recognition',on:true};
+  if(/^文字起こし(?:モード)?を?(?:オフ|OFF|停止)(?:にして|して|ください)?$/i.test(normalized))
+    return {kind:'recognition',on:false};
+  return null;
+}
 let refreshAITalk
 let photoHandler, modeChanged
 // Conversation captions belong below the status bar, including errors and setup prompts.
@@ -929,6 +942,19 @@ async function connect() {
               }catch(_){trace('[speaker] introduction needs clarification\n')}
             }
             const recognized=input;input = ''
+            const modeCommand=modeCommandFromText(recognized)
+            if(modeCommand) {
+              try {
+                const result=modeCommand.kind==='chat'?setChatMode(modeCommand.on):setRecognitionMode(modeCommand.on)
+                trace('[mode-voice] applied kind='+modeCommand.kind+' on='+modeCommand.on+
+                  ' conversation='+result.enabled+' transcription='+result.recognitionMode+'\n')
+                showConversationBalloon(modeCommand.kind==='chat'?'会話モードを'+(modeCommand.on?'ON':'OFF')+'にしました':'文字起こしを'+(modeCommand.on?'ON':'OFF')+'にしました')
+              } catch(_) {
+                trace('[mode-voice] rejected; persisted preference unchanged\n')
+                showConversationBalloon('モードの変更に失敗しました。設定を確認してください。')
+              }
+              return
+            }
             // Authorize at most one camera result for this recognized turn.
             visualAllowedUntil=(!standalone&&!recognitionOnly&&explicitVisualRequest(recognized))
               ? Date.now()+12000 : 0;
@@ -987,7 +1013,7 @@ async function connect() {
           }
         },
         onFunctionCall(call, name, args) {
-          if (chat !== instance || enrollment.active) return
+          if (chat !== instance || enrollment.active || standalone) return
           conversationIndicator('thinking')
           trace('[chat-tool] begin '+name+'\n')
           Promise.resolve()
