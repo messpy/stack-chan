@@ -26,16 +26,24 @@ export async function moveHead(robot, args = {}) {
   const direction = args.direction
   if (!Object.hasOwn(HEAD_ROTATIONS, direction)) throw new Error('首の向きは上下・左右・正面から選んでください')
   trace('[head-motion] start direction='+direction+'\n')
-  robot.lookAway()
-  await robot.setTorque(true)
+  let torqueRequested = false
   try {
+    if (!robot || typeof robot.lookAway !== 'function' || typeof robot.setTorque !== 'function' || typeof robot.setPose !== 'function')
+      throw new Error('Motor control unavailable')
+    robot.lookAway()
+    torqueRequested = true
+    await robot.setTorque(true)
     await robot.setPose({ ...robot.pose.body, rotation: { ...HEAD_ROTATIONS[direction] } }, .5)
     await new Promise(resolve => Timer.set(resolve, 650))
     trace('[head-motion] commanded direction=' + direction + ' verified=false\n')
     return { commanded: true, direction }
   } catch (error) {
-    trace('[head-motion] failed direction=' + direction + ' reason=' + String(error).slice(0,120) + '\n')
-    await robot.setTorque(false)
+    trace('[head-motion] failed direction=' + direction + ' reason=' + String(error?.message || error).slice(0,120) + '\n')
+    if (torqueRequested) try {
+      await robot.setTorque(false)
+    } catch (releaseError) {
+      trace('[head-motion] torque release failed: ' + String(releaseError?.message || releaseError).slice(0,120) + '\n')
+    }
     throw error
   }
 }
