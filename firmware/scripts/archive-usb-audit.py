@@ -16,7 +16,7 @@ import re
 import sys
 import time
 
-SAFE_OPERATIONS = ("/debug/status", "/chat/status", "/settings/status", "/status")
+SAFE_OPERATIONS = ("/debug/status", "/chat/status", "/settings/status", "/status", "/photo/status")
 DIAGNOSTIC_MARKER = re.compile(
     r"\[(?:boot|boot-mode|mode-session|mode-voice|asr|llm|direct-chat|"
     r"recognition|speaker|settings|heap|volume|archive-camera|chat-tool|"
@@ -78,6 +78,12 @@ def filtered_status(op: str, result: object, token: str) -> dict:
                  "transcriptionMode", "connected", "connection", "clockReady")}
     if op == "/debug/status":
         return {k: result.get(k) for k in ("queued", "dropped", "truncated", "usbRetries")}
+    if op == "/photo/status":
+        # Status values only: no media pixels, transcripts, tokens or arbitrary error messages.
+        allowed = ("phase", "startedAt", "finishedAt", "elapsedMs", "active",
+                   "saved", "analysisStatus", "errorStage", "errorType",
+                   "width", "height", "frameBytes", "jpegBytes")
+        return {k: v for k in allowed if (v := result.get(k)) is None or isinstance(v, (str, bool, int, float))}
     if op == "/status":
         return {"sd": result.get("sd"), "busy": result.get("busy"),
                 "camera": result.get("camera"),
@@ -182,7 +188,7 @@ def passive_probe(serial_port: str, seconds: float, output: Path) -> int:
     return 0
 
 
-def run(serial_port, token: str, seconds: float, output: Path) -> int:
+def run(serial_port, token: str, seconds: float, output: Path, operations=SAFE_OPERATIONS, json_out: Path | None = None) -> int:
     import serial
 
     # Open without enabling DTR/RTS; do not deliberately pulse device reset.
@@ -209,7 +215,7 @@ def run(serial_port, token: str, seconds: float, output: Path) -> int:
             start = time.monotonic()
             last_send = start - 0.5
             # Send read-only commands one at a time to minimize native serial backlog.
-            queries = list(SAFE_OPERATIONS)
+            queries = list(operations)
             while time.monotonic() - start < seconds:
                 now = time.monotonic()
                 if queries and not pending and now - last_send >= 0.35:
@@ -276,12 +282,22 @@ def run(serial_port, token: str, seconds: float, output: Path) -> int:
             port.close()
         except Exception:
             pass
-    print(f"[CHECK] requests_answered={response_count}/4 buffered_messages={count} tagged={match_count}")
+    print(f"[CHECK] requests_answered={response_count}/{len(operations)} buffered_messages={count} tagged={match_count}")
+    if json_out:
+        json_out.parent.mkdir(parents=True, exist_ok=True)
+        # Create exclusively with restricted permissions; no secret-bearing raw response.
+        fd = os.open(str(json_out), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump({"statuses": responses, "errors": errors}, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
     if errors:
         for message in errors:
             print("[WARN] " + message)
     if not response_count:
         print("[WARN] 認証済みの応答なし。USBポート/本体受信ループ/アプリ起動/manifest tokenを調査")
+        return 2
+    if "/photo/status" in operations and "/photo/status" not in responses:
+        print("[WARN] /photo/statusの有効な応答がありません")
         return 2
     chat = responses.get("/chat/status", {})
     store = responses.get("/settings/status", {})
@@ -300,16 +316,54 @@ def run(serial_port, token: str, seconds: float, output: Path) -> int:
     return 0
 
 
+def compare_photo_snapshots(before: dict, after: dict) -> tuple[int, str]:
+    """0 = new JPEG saved, 1 = device-side capture failure, 2 = unverified."""
+    prior = before.get("statuses", {}).get("/photo/status", {})
+    current = after.get("statuses", {}).get("/photo/status", {})
+    old_time, new_time = prior.get("startedAt"), current.get("startedAt")
+    if (not isinstance(old_time, (int, float)) or isinstance(old_time, bool)
+            or not isinstance(new_time, (int, float)) or isinstance(new_time, bool)
+            or new_time <= old_time):
+        return 2, "新しい撮影開始が確認できません（音声認識/AIモード/通信を確認）"
+    stage = str(current.get("errorStage") or current.get("phase") or "unknown")[:48]
+    status = str(current.get("analysisStatus") or "unknown")[:48]
+    if current.get("saved") is True and isinstance(current.get("jpegBytes"), (int, float)) and current["jpegBytes"] > 0:
+        return 0, f"新規JPEGのSD保存を本体が報告。phase={current.get('phase')} analysis={status}（画像内容は未検証）"
+    if current.get("phase") == "error":
+        return 1, f"撮影失敗: errorStage={stage} errorType={current.get('errorType')}（USB診断・SD・カメラを確認）"
+    return 2, f"撮影処理中または結果不明: phase={stage}（再度/photo/statusで確認）"
+
+
+def compare_files(before_path: Path, after_path: Path) -> int:
+    before = json.loads(before_path.read_text(encoding="utf-8"))
+    after = json.loads(after_path.read_text(encoding="utf-8"))
+    code, message = compare_photo_snapshots(before, after)
+    print(("[CHECK] " if code == 0 else "[ERROR] " if code == 1 else "[WARN] ") + "#33 " + message)
+    return code
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", help="USB Serial/JTAG port; otherwise auto-select unique port")
     parser.add_argument("--passive", action="store_true",
                         help="read USB only; never send token/commands, useful after write timeout")
     parser.add_argument("--config", help="Local private Archive manifest (read-only)")
+    parser.add_argument("--photo-only", action="store_true", help="read-only /photo/status snapshot only")
+    parser.add_argument("--json-out", type=Path, help="save only filtered statuses as private JSON (no overwrite)")
+    parser.add_argument("--compare-photo", nargs=2, metavar=("BEFORE", "AFTER"),
+                        type=Path, help="compare two photo snapshots (no USB connection)")
     parser.add_argument("--seconds", type=float, default=13,
                         help="USB debug read duration (3..120 s, default 13)")
     parser.add_argument("--output", type=Path, help="Private debug log filename (no overwrite)")
     args = parser.parse_args(argv)
+    if args.compare_photo:
+        try:
+            return compare_files(*args.compare_photo)
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            print("[FATAL] #33: スナップショット検証失敗: " + type(exc).__name__, file=sys.stderr)
+            return 3
+    if args.json_out and not args.photo_only:
+        parser.error("--json-out requires --photo-only")
     if not 3 <= args.seconds <= 120:
         parser.error("--seconds must be between 3 and 120")
     try:
@@ -321,7 +375,9 @@ def main(argv=None) -> int:
             return passive_probe(serial_port, args.seconds, output)
         config = manifest_path(args.config)
         token = load_token(config)
-        return run(serial_port, token, args.seconds, output)
+        return run(serial_port, token, args.seconds, output,
+                   operations=("/photo/status",) if args.photo_only else SAFE_OPERATIONS,
+                   json_out=args.json_out)
     except ModuleNotFoundError as exc:
         print("[FATAL] pyserialがありません: " + str(exc), file=sys.stderr)
         return 3
