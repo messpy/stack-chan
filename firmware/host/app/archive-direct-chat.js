@@ -523,6 +523,7 @@ export function setRecognitionMode(on){
 let memoryCleanupTimer
 function scheduleMemoryCleanup(){if(memoryCleanupTimer!==undefined)return;memoryCleanupTimer=Timer.set(()=>{memoryCleanupTimer=undefined;collectMemory()},0)}
 function closeChat() {
+  if(chat || connecting)trace('[mode-session] closing native session\n')
   const speech=recognitionSpeech;recognitionSpeech=undefined;try{speech?.cancel()}catch(_){}
   identityNotice=''
   microphoneIndicator(false)
@@ -852,6 +853,7 @@ async function connect() {
           }
           if(recognitionOnly&&value===ChatState.CONNECTED){
             state='listening';microphoneAt=Date.now();error='';retryDelay=3000;failures=0
+            trace('[mode-session] connected mode='+(standalone?'transcription':'recognition-transport')+'\n')
             if(!standalone&&greetingPending&&!enrollment.active){greetingPending=false;Timer.set(()=>recognitionTurn(null),0)}
             return
           }
@@ -874,6 +876,7 @@ async function connect() {
             }, 0)
           }
           if (value === ChatState.CONNECTED || value === ChatState.SPEAKING) {
+            if(value===ChatState.CONNECTED)trace('[mode-session] connected mode=conversation\n')
             if(lastSubtitle){showConversationBalloon(lastSubtitle,{bottom:40,height:24,paddingY:4,holdMs:15000});lastSubtitle=''}
             const becameReady = state !== 'listening'
             state = 'listening'
@@ -1184,6 +1187,12 @@ async function restoreConversationOnBoot(onBoot) {
       trace('[boot-mode] restored conversation ON\n')
     } else {
       trace('[boot-mode] restored explicit OFF\n')
+    }
+    if(storage.unreadableSlots>0) {
+      error='SDカードの設定の一部を読み取れず、以前の有効な設定を使いました。モードを確認してください。'
+      detail='One settings snapshot could not be read'
+      showConversationBalloon(error)
+      trace('[boot-mode] partial snapshot recovery unreadableSlots='+storage.unreadableSlots+'\n')
     }
   } catch(_) {
     error='AIモードの起動時復元に失敗しました。設定とUSBログを確認してください。'
