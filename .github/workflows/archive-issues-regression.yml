@@ -33,3 +33,36 @@ jobs:
             firmware/scripts/lib/idf-dependencies.test.mjs
       - name: E2E evidence evaluator unit tests
         run: python3 -m unittest discover -s firmware/scripts -p 'test_voice_e2e.py' -v
+
+  cores3-clean-archive-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Generate throwaway Archive private manifest
+        working-directory: ./firmware
+        run: npm run init:archive
+      - name: Clean CoreS3 Archive build (no flash)
+        working-directory: ./firmware
+        shell: bash
+        run: |
+          source "$HOME/.local/share/xs-dev-export.sh"
+          node scripts/clean.mjs
+          npm run build:archive
+      - name: Verify all Archive IDF components and firmware binary
+        working-directory: ./firmware
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, statSync } from 'node:fs'
+          const manifest = readFileSync('dist/tmp/esp32/m5stack_cores3/release/stack-chan-host/xsProj-esp32s3/main/idf_component.yml', 'utf8')
+          for (const name of ['esp32-camera', 'esp_jpeg', 'esp_audio_codec']) {
+            if (!manifest.includes('espressif/' + name + ':')) throw new Error('Missing dependency: ' + name)
+          }
+          const bin = 'dist/bin/esp32/m5stack_cores3/release/stack-chan-host/xs_esp32.bin'
+          if (statSync(bin).size < 100_000) throw new Error('Firmware binary missing/too small')
+          console.log('[CHECK] CoreS3 Archive clean build completed; manifest and firmware found')
+          NODE
