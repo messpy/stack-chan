@@ -31,6 +31,9 @@ jobs:
             firmware/scripts/lib/archive-offline.test.mjs \
             firmware/scripts/lib/archive-build-preflight.test.mjs \
             firmware/scripts/lib/idf-dependencies.test.mjs
+      - name: Full Archive and firmware-script Node regression suite
+        working-directory: ./firmware
+        run: node --experimental-vm-modules --test scripts/lib/*.test.mjs
       - name: E2E evidence evaluator unit tests
         run: python3 -m unittest discover -s firmware/scripts -p 'test_voice_e2e.py' -v
 
