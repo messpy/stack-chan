@@ -390,12 +390,7 @@ export function setChatMode(on) {
       chatProvider() === 'gemini' ? '設定ページでGemini APIキーを保存してください' : '会話の初期登録が必要です',
     )
   modeChanged?.(on)
-  if (on && !enabled()) {
-    if(recognitionMode())closeChat()
-    beginConversation()
-    greetingPending = true
-    resetTranscripts()
-  }
+  const starting = on && !enabled()
   if(!on){chatSaveFailedOff=true;closeChat();collectMemory()}
   let saveError
   try {
@@ -405,6 +400,12 @@ export function setChatMode(on) {
   } catch(e) {
     if(on)throw e
     saveError='会話は停止しましたが、OFF設定を保存できませんでした。再起動後の設定を確認してください'
+  }
+  if(starting){
+    if(recognitionMode())closeChat()
+    beginConversation()
+    greetingPending=true
+    resetTranscripts()
   }
   retryAt = 0
   retryDelay = 3000
