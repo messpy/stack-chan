@@ -27,7 +27,7 @@ import {analyzeJPEG,visionStatus} from 'archive-vision';
 import {startAlarmSettings,openAlarmSettings,showRingingAlarm,hideRingingAlarm} from 'archive-alarm-ui';
 import {alarmSoundCommand,playAlarmSound} from 'archive-alarm-sound';
 import {startWeb,openControl,controlStatus} from 'archive-web';
-import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat} from 'archive-direct-chat';
+import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat,suspendDirectChatForAutomaticOffline,resumeDirectChatFromAutomaticOffline} from 'archive-direct-chat';
 import {recordMemory,history,deviceHistory,currentSpeaker,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
 import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
 import {acceptAudioChunk} from 'archive-audio-upload';
@@ -44,6 +44,16 @@ import {bgr24,bitmapHeader,aviHeader,frameHeader,aviAudioHeader,audioFrameHeader
 
 let sequence=0;
 let busy=false;
+let photoActive=false;
+// Read-only capture progress; never record image pixels, API keys or transcript text.
+let photoDiagnostics={phase:'idle',saved:false,analysisStatus:'not-started',errorStage:null,errorType:null};
+function photoStatus(){
+  return {...photoDiagnostics,active:photoActive,
+    elapsedMs:photoActive&&photoDiagnostics.startedAt?Date.now()-photoDiagnostics.startedAt:photoDiagnostics.elapsedMs??0};
+}
+function photoStage(phase,details={}){
+  photoDiagnostics={...photoDiagnostics,phase,...details};
+}
 let lastError='';
 let audioUpload;
 let server;
@@ -75,31 +85,92 @@ export function archiveTranscript(role,text,eventId,image,speakerId) {
   } catch(e) {lastError=String(e);trace('[archive] transcript could not be saved\n');}
 }
 // Preview frames stay in RAM: no SD writes or cloud image recognition.
+// Preview frames stay in RAM: no SD writes or cloud analysis.
 async function cameraPreview(robot) {
- if(busy)throw new Error('本体で処理中です。会話や録画を停止してからお試しください');
- const paused=pauseDirectChat();
- if(busy){if(paused)resumeDirectChat();throw new Error('本体で処理中です');}
- busy=true;
- let frame;
- try{
-  frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});
-  if(!frame)throw new Error('カメラの画像を取得できませんでした');
-  return encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
- }finally{
-  try{frame?.close?.();}finally{try{robot.camera.stop();}finally{busy=false;if(paused)resumeDirectChat();}}
- }
+  if(busy||photoActive)throw new Error('本体で処理中です。会話や録画を停止してからお試しください');
+  const paused=pauseDirectChat();
+  if(busy||photoActive){if(paused)resumeDirectChat();throw new Error('本体で処理中です');}
+  busy=true;
+  let frame,primaryError;
+  try {
+    const options={width:176,height:144,imageType:'rgb565le'};
+    await robot.camera.start(options);
+    frame=await robot.camera.capture(options);
+    if(!frame)throw new Error('カメラの画像を取得できませんでした');
+    return encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
+  } catch(error){primaryError=error;throw error;}
+  finally {
+    try { frame?.close?.(); } catch(error) { trace('[archive-camera] preview frame close failed\n'); }
+    try { await robot.camera.stop(); } catch(error) {
+      trace('[archive-camera] preview stop failed\n');
+      if(!primaryError)throw error;
+    } finally { busy=false; if(paused)resumeDirectChat(); }
+  }
 }
 async function photo(robot,args={},fromConversation=false) {
- const wasBusy=busy;if(busy&&!fromConversation)throw new Error('Camera busy');busy=true;
- let frame,jpeg,result;
- try{
-  frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});if(!frame)throw new Error('No camera frame');
-  const tag=id(),name='photo-'+tag+'.jpg',image=name;
-  jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');save(image,[jpeg]);
-  result={name,image,width:frame.width,height:frame.height};
- }finally{frame?.close?.();robot.camera.stop();busy=wasBusy;}
- if(args.analyze!==false)Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
- return result;
+  if(photoActive || (busy&&!fromConversation))throw new Error('Camera busy');
+  photoActive=true;
+  const photoStartedAt=Date.now();
+  photoDiagnostics={phase:'starting',startedAt:photoStartedAt,finishedAt:null,
+    elapsedMs:0,saved:false,analysisStatus:'not-started',errorStage:null,errorType:null};
+  // A conversation already owns busy. Never restore an obsolete true after it ends.
+  const ownsBusy=!busy;
+  if(ownsBusy)busy=true;
+  let frame,jpeg,result,primaryError;
+  const startedAt=photoStartedAt;
+  try {
+    try {
+    photoStage('camera-start');
+    trace('[archive-camera] capture begin\n');
+    const options={width:176,height:144,imageType:'rgb565le'};
+    await robot.camera.start(options);
+    trace('[archive-camera] native start done\n');
+    photoStage('frame-wait');
+    frame=await robot.camera.capture(options);
+    if(!frame)throw new Error('No camera frame');
+    photoStage('frame-received',{width:frame.width,height:frame.height,frameBytes:frame.buffer?.byteLength??0});
+    trace('[archive-camera] frame received elapsedMs='+(Date.now()-startedAt)+'\n');
+    const name='photo-'+id()+'.jpg';
+    photoStage('jpeg-encode');
+    jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
+    if(!jpeg?.byteLength)throw new Error('JPEG encoding returned empty buffer');
+    photoStage('sd-save',{jpegBytes:jpeg.byteLength});
+    save(name,[jpeg]);
+    photoStage('saved',{saved:true});
+    result={name,image:name,width:frame.width,height:frame.height};
+    trace('[archive-camera] saved elapsedMs='+(Date.now()-startedAt)+'\n');
+  } catch(error) {
+    primaryError=error;
+    trace('[archive-camera] capture failed\n');
+    throw error;
+  } finally {
+    try { frame?.close?.(); } catch(error) { trace('[archive-camera] frame close failed\n'); }
+    try { await robot.camera.stop(); } catch(error) {
+      trace('[archive-camera] stop failed\n');
+      if(!primaryError)throw error;
+    } finally {
+      if(ownsBusy)busy=false;
+    }
+  }
+  if(args.analyze!==false) {
+    photoStage('analysis');
+    trace('[archive-camera] analysis begin\n');
+    Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
+    trace('[archive-camera] analysis result='+String(result.analysis?.status||'unknown')+'\n');
+  }
+    photoStage(result.analysis&&result.analysis.status!=='complete'?'analysis-unavailable':'complete',{
+      analysisStatus:result.analysis?.status??'skipped',finishedAt:Date.now(),elapsedMs:Date.now()-startedAt});
+    return result;
+  } catch(error) {
+    const stage=photoDiagnostics.phase;
+    const errorType=String(error?.name||'Error').replace(/[^A-Za-z0-9_]/g,'').slice(0,40)||'Error';
+    photoStage('error',{errorStage:stage,errorType,finishedAt:Date.now(),elapsedMs:Date.now()-startedAt});
+    trace('[archive-camera] failure stage='+stage+' type='+errorType+' elapsedMs='+(Date.now()-startedAt)+'\n');
+    throw error;
+  } finally {
+    // Retain the single-flight lease through JPEG analysis and its failures.
+    photoActive=false;
+  }
 }
 
 async function describeImage(robot,name,jpeg,question){
@@ -108,7 +179,7 @@ async function describeImage(robot,name,jpeg,question){
  const input=archiveTranscript('input',prompt,undefined,name,speakerId);
  const analysis=await analyzeJPEG(jpeg,prompt);
  const answer=archiveTranscript('output',analysis.status==='complete'?analysis.text:'画像認識エラー: '+(analysis.error||'回答を取得できませんでした'),undefined,name,speakerId);
- if(analysis.status==='complete')robot.showBalloon(analysis.text);
+ if(analysis.status==='complete')robot.showBalloon(analysis.text,{bottom:40,height:24,paddingY:4});
  return {analysis,historySaved:!!input&&!!answer,messageIds:[input?.id,answer?.id]};
 }
 
@@ -217,7 +288,7 @@ export function startArchive(robot) {
     }
   });
   async function execute(request){
-    if(monitor.active&&!request.op.startsWith('/monitor/')&&!['/status','/volume','/chat/status','/files','/files/page','/network/status','/speaker/list','/settings/status','/reminders','/debug/status','/motor-status','/media/trash'].includes(request.op))throw new Error('動作確認を終了してから操作してください');
+    if(monitor.active&&!request.op.startsWith('/monitor/')&&!['/status','/volume','/chat/status','/photo/status','/files','/files/page','/network/status','/speaker/list','/settings/status','/reminders','/debug/status','/motor-status','/media/trash'].includes(request.op))throw new Error('動作確認を終了してから操作してください');
     const capture=['/face/save','/face/restore','/alarm-sound/preview','/motor/test','/motor/recover','/image/finish','/photo','/record','/audio','/chat-record'].includes(request.op);
     const paused=capture?pauseDirectChat():false;
     try{
@@ -256,6 +327,7 @@ export function startArchive(robot) {
       else if(request.op==='/volume'){result=request.args?.percent===undefined?getVolume():setVolume(Number(request.args.percent),request.args.preview===true&&!monitor.active);}
       else if(request.op==='/network/open')result=openControl(request.args?.mode);
       else if(request.op==='/vision/status')result=visionStatus();
+      else if(request.op==='/photo/status')result=photoStatus();
       else if(request.op==='/network/status')result=controlStatus();
       else if(request.op==='/wifi/reconnect')result=reconnectSavedWiFi();
       else if(request.op==='/chat/ollama-test')result=await checkOllama();
@@ -328,7 +400,7 @@ export function startArchive(robot) {
       else if(request.op==='/record')result=await record(robot);
       else if(request.op==='/status'){
         let sd=false;try{files(()=>{});sd=true;}catch(e){lastError=String(e);}
-        result={sd,camera:robot.camera.available!==false,busy:busy&&!directChatStatus().busy,chat:directChatStatus(),lastError,headTouch:!!robot.touchPanel,headSample:Array.from(robot.touchPanel?.sample??[]),transport:'usb+wifi',petting:'m5stack/StackChan',wifi:getSettingsStatus(),wifiDisplay:wifiDisplayStatus(),firmware:'stack-chan + M5Stack petting + USB archive'};
+        result={sd,camera:robot.camera.available!==false,photo:photoStatus(),busy:busy&&!directChatStatus().busy,chat:directChatStatus(),lastError,headTouch:!!robot.touchPanel,headSample:Array.from(robot.touchPanel?.sample??[]),transport:'usb+wifi',petting:'m5stack/StackChan',wifi:getSettingsStatus(),wifiDisplay:wifiDisplayStatus(),firmware:'stack-chan + M5Stack petting + USB archive'};
       }else if(['/media/delete','/media/restore','/media/trash'].includes(request.op)){
         if(busy&&!directChatStatus().busy&&request.op!=='/media/trash')throw new Error('撮影・録音が終わってから操作してください');
         result=files(root=>mediaTrash(root,request.op==='/media/trash'?'list':request.op.slice(7),request.args||{}));
@@ -416,6 +488,7 @@ export function startArchive(robot) {
   });
   const offlinePolicy=new OfflinePolicy();
   let hadOnlineConnection=usbConnected()||getSettingsStatus().connected;
+  let automaticOfflineActive=false;
   const autoOffline=value=>{
     if(typeof value==='boolean'){changeSettings(s=>{s.autoOffline=value;});offlinePolicy.reset();}
     return {enabled:getSettings().autoOffline!==false,usb:usbConnected(),wifi:getSettingsStatus().connected,active:offlinePolicy.entered};
@@ -424,10 +497,21 @@ export function startArchive(robot) {
     try{
       const connection=autoOffline(),network=getSettingsStatus();
       const online=connection.usb||connection.wifi;
-      if(online&&!hadOnlineConnection)closeOffline();
+      if(online&&!hadOnlineConnection){
+        if(automaticOfflineActive){
+          automaticOfflineActive=false;
+          resumeDirectChatFromAutomaticOffline();
+          trace('[offline-mode] online again; restoring saved conversation/recognition preference\n');
+        }
+        closeOffline();
+      }
       hadOnlineConnection=online;
       if(!offlinePolicy.observe({...connection,setup:network.setupActive||checkStatus().running,busy:(busy&&!directChatStatus().busy)||offlineStatus().playing}))return;
-      openOffline();offlinePolicy.enteredOffline();trace('[offline] automatic mode: USB and Wi-Fi disconnected\n');
+      suspendDirectChatForAutomaticOffline();
+      automaticOfflineActive=true;
+      openOffline({automatic:true});
+      offlinePolicy.enteredOffline();
+      trace('[offline] automatic mode: USB and Wi-Fi disconnected; user preference preserved\n');
     }catch(_){offlinePolicy.absent=0;}
   },1000);
   startWeb(robot,{

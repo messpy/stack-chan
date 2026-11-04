@@ -17,3 +17,13 @@ const count=calls.length;await assert.rejects(moveHead(robot,{direction:'__proto
 assert.equal(headMoveTool.inputSchema.properties.direction.enum.length,5)
 robot.setPose=async()=>{throw Error('bus failure')};await assert.rejects(moveHead(robot,{direction:'up'}));assert.equal(calls.at(-1)[1],false)
 console.log('PASS: explicit voice commands reach motor actions, safe visible tilt range, invalid commands rejected, failure releases torque')
+
+robot.setPose=async pose=>{calls.push(['pose',pose.rotation]);robot.pose.body=pose}
+robot.setTorque=async value=>{calls.push(['torque',value]);if(value)throw Error('torque enable failed')}
+await assert.rejects(moveHead(robot,{direction:'up'}),/torque enable failed/)
+assert.equal(calls.at(-1)[1],false,'failed torque enable must attempt recovery')
+robot.setTorque=async value=>{calls.push(['torque',value]);if(!value)throw Error('torque release failed')}
+robot.setPose=async()=>{throw Error('servo bus failed')}
+await assert.rejects(moveHead(robot,{direction:'up'}),/servo bus failed/,'cleanup failure must not hide original error')
+await assert.rejects(moveHead(null,{direction:'left'}),/Motor control unavailable/)
+console.log('PASS: missing motor, torque enable error and torque release failure handled')
