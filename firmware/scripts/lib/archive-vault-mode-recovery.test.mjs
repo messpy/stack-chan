@@ -15,6 +15,7 @@ function mock(unreadable) {
   const context={
     data:{generation:8,chatMode:true,transcriptionMode:false,api:{},reminders:[]},
     loadError:unreadable,
+    unreadableSlots:unreadable?2:0,
     loadSettings:()=>undefined,
     sealVault:()=>({length:3}),
     ArrayBuffer:{fromString:()=>({})},
@@ -32,6 +33,7 @@ test('unreadable encrypted mode snapshots cannot be overwritten by a default OFF
   assert.equal(h.getWrites(),0)
   assert.equal(h.context.data.chatMode,true)
   assert.equal(h.status().loadError,true)
+  assert.equal(h.status().unreadableSlots,2)
 })
 
 test('healthy settings persist one generation and report both mode values',()=>{
