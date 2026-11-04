@@ -1,0 +1,32 @@
+name: Archive Issues 33-38 Regression
+
+on:
+  pull_request:
+    branches: [stackchan-super]
+    paths:
+      - 'firmware/host/app/archive-direct-chat.js'
+      - 'firmware/host/app/lan-archive.js'
+      - 'firmware/host/app/archive-volume.js'
+      - 'firmware/scripts/**'
+      - '.github/workflows/archive-issues-regression.yml'
+  workflow_dispatch:
+
+jobs:
+  offline-regression:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Archive Node regression
+        run: |
+          node --experimental-vm-modules --test \
+            firmware/scripts/lib/archive-ai-mode-persistence.test.mjs \
+            firmware/scripts/lib/archive-issues-33-36.test.mjs \
+            firmware/scripts/lib/archive-build-preflight.test.mjs \
+            firmware/scripts/lib/idf-dependencies.test.mjs
+      - name: E2E evidence evaluator unit tests
+        run: python3 -m unittest discover -s firmware/scripts -p 'test_voice_e2e.py' -v
