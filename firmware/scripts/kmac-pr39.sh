@@ -226,8 +226,14 @@ acoustic(){
 }
 case "$MODE" in
   build) tests; build ;;
-  flash) tests; build; flash ;;
-  all) tests; build; flash; acoustic test ordinary_chat ;;
+  flash)
+    device # Read-only USB/esptool preflight before a potentially long build.
+    tests; build; flash ;;
+  all)
+    device # Fail early if the expected device or esptool is missing.
+    [[ -f "${STACKCHAN_SPEAK_SCRIPT:-/home/kmac/work/camera-voicevox/speak.py}" ]] || die "VOICEVOX speak.pyがありません。テスト不要ならflashを指定"
+    command -v arecord >/dev/null 2>&1 || die "arecordがありません。テスト不要ならflashを指定"
+    tests; build; flash; acoustic test ordinary_chat ;;
   test) tests; acoustic "$@" ;;
   restore) restore "$@" ;;
 esac
