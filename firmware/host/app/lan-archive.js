@@ -82,11 +82,13 @@ async function cameraPreview(robot) {
  busy=true;
  let frame;
  try{
-  frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});
+  const options={width:176,height:144,imageType:'rgb565le'};
+  await robot.camera.start(options);
+  frame=await robot.camera.capture(options);
   if(!frame)throw new Error('カメラの画像を取得できませんでした');
   return encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
  }finally{
-  try{frame?.close?.();}finally{try{robot.camera.stop();}finally{busy=false;if(paused)resumeDirectChat();}}
+  try{frame?.close?.();}finally{try{await robot.camera.stop();}finally{busy=false;if(paused)resumeDirectChat();}}
  }
 }
 async function photo(robot,args={},fromConversation=false) {
@@ -97,7 +99,10 @@ async function photo(robot,args={},fromConversation=false) {
   const startedAt=Date.now();
   try{
     trace('[archive-camera] capture begin conversation='+fromConversation+'\n');
-    frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});
+    const options={width:176,height:144,imageType:'rgb565le'};
+    await robot.camera.start(options);
+    trace('[archive-camera] native start done\n');
+    frame=await robot.camera.capture(options);
     if(!frame)throw new Error('No camera frame');
     trace('[archive-camera] frame received elapsedMs='+(Date.now()-startedAt)+'\n');
     const tag=id(),name='photo-'+tag+'.jpg',image=name;
