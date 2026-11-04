@@ -106,6 +106,23 @@ if [[ "$MODE" != restore ]]; then
   major="$(node -p 'Number(process.versions.node.split(".")[0])')" || die "Node取得失敗"
   [[ "$major" =~ ^[0-9]+$ && "$major" -ge 22 ]] || die "Node.js 22以上が必要"
 fi
+dependencies(){
+  STEP=NODE_MODULES
+  [[ -f "$FW/package-lock.json" ]] || die "package-lock.jsonがありません"
+  local expected stamp
+  expected="$(sha256sum "$FW/package-lock.json" | awk '{print $1}')" || die "依存lockのハッシュ取得失敗"
+  stamp="$FW/node_modules/.stackchan-pr39-package-lock.sha256"
+  if [[ -f "$stamp" && -x "$FW/node_modules/.bin/tsc" && "$(cat "$stamp")" == "$expected" ]]; then
+    log CHECK "専用worktreeのNode依存は既に一致しています"
+    return 0
+  fi
+  log ACTION "専用worktreeにnpm ciを実行（既存repoのnode_modulesは変更しません）"
+  log INFO "ローカルnpmキャッシュを優先し、未キャッシュの依存はネットから取得します"
+  (cd "$FW" && npm ci --prefer-offline --no-audit --no-fund) ||
+    die "依存関係のインストールに失敗。npmキャッシュ/ネット接続と容量を確認"
+  [[ -x "$FW/node_modules/.bin/tsc" ]] || die "npm ci後にTypeScriptがありません"
+  printf '%s\n' "$expected" >"$stamp" || die "依存stamp保存失敗"
+}
 tests(){
   STEP=UNIT
   log ACTION "Node/Python回帰試験（書込なし）"
@@ -225,16 +242,16 @@ acoustic(){
   log WARN "PC音響試験の記録完了。review.jsonによる実機証拠の評価は未実施=UNVERIFIED"
 }
 case "$MODE" in
-  build) tests; build ;;
+  build) dependencies; tests; build ;;
   flash)
     device # Read-only USB/esptool preflight before a potentially long build.
-    tests; build; flash ;;
+    dependencies; tests; build; flash ;;
   all)
     device # Fail early if the expected device or esptool is missing.
     [[ -f "${STACKCHAN_SPEAK_SCRIPT:-/home/kmac/work/camera-voicevox/speak.py}" ]] || die "VOICEVOX speak.pyがありません。テスト不要ならflashを指定"
     command -v arecord >/dev/null 2>&1 || die "arecordがありません。テスト不要ならflashを指定"
-    tests; build; flash; acoustic test ordinary_chat ;;
-  test) tests; acoustic "$@" ;;
+    dependencies; tests; build; flash; acoustic test ordinary_chat ;;
+  test) dependencies; tests; acoustic "$@" ;;
   restore) restore "$@" ;;
 esac
 STEP=DONE
