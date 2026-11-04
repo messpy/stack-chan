@@ -17,7 +17,7 @@ spec.loader.exec_module(audit)
 class AuditTests(unittest.TestCase):
     def test_safe_operations_are_read_only(self):
         self.assertEqual(audit.SAFE_OPERATIONS,
-                         ("/debug/status", "/chat/status", "/settings/status", "/status"))
+                         ("/debug/status", "/chat/status", "/settings/status", "/status", "/photo/status"))
 
     def test_protocol_parses_only_prefixed_json(self):
         self.assertIsNone(audit.parse_usb_line(b"boot log\n"))
@@ -30,6 +30,34 @@ class AuditTests(unittest.TestCase):
         result = audit.filtered_status("/chat/status", source, "token-placeholder")
         self.assertTrue(result["enabled"])
         self.assertNotIn("account", result)
+
+    def test_photo_status_has_only_safe_diagnostics(self):
+        details = {"phase": "error", "saved": False, "startedAt": 1000,
+                   "errorStage": "frame-wait", "errorType": "Error",
+                   "privateToken": "very-sensitive", "transcript": "secret",
+                   "jpegBytes": 0}
+        safe = audit.filtered_status("/photo/status", details, "token-placeholder")
+        self.assertEqual(safe["errorStage"], "frame-wait")
+        self.assertNotIn("privateToken", safe)
+        self.assertNotIn("transcript", safe)
+
+    def test_photo_verdict_requires_new_capture_and_actual_save(self):
+        before = {"statuses": {"/photo/status": {"phase": "idle", "saved": False}}}
+        after = {"statuses": {"/photo/status":
+                 {"phase": "complete", "startedAt": 2000,
+                  "saved": True, "jpegBytes": 4156, "analysisStatus": "complete"}}}
+        self.assertEqual(audit.compare_photo_snapshots(before, after)[0], 0)
+        # Re-running the check on the same old saved image cannot pass.
+        self.assertEqual(audit.compare_photo_snapshots(after, after)[0], 2)
+
+    def test_photo_verdict_reports_failure_stage(self):
+        before = {"statuses": {"/photo/status": {"phase": "idle"}}}
+        failed = {"statuses": {"/photo/status": {
+            "startedAt": 3000, "phase": "error", "saved": False,
+            "errorStage": "frame-wait", "errorType": "Error"}}}
+        code, message = audit.compare_photo_snapshots(before, failed)
+        self.assertEqual(code, 1)
+        self.assertIn("frame-wait", message)
 
     def test_passive_probe_never_transmits(self):
         class Port:
