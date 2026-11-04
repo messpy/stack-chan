@@ -1124,10 +1124,47 @@ export function registerAITalk(robot, actions) {
 }
 async function restoreConversationOnBoot(onBoot) {
   try { await onBoot?.() } catch (_) { trace('[boot] speech failed\n') }
-  // Credentials alone never override an explicit OFF, including during boot speech.
-  if(recognitionMode()){setRecognitionMode(true);return}
-  if (!enabled()) return
-  try { setChatMode(true) } catch (_) { trace('[speaker] boot conversation unavailable\n') }
+  // Read persisted preferences after boot speech, without writing on an ordinary restart.
+  // In particular, unreadable encrypted snapshots must not look like a user-selected OFF.
+  try {
+    const saved=getSettings()
+    const storage=getSettingsStatus()
+    trace('[boot-mode] read generation='+storage.generation+' loadError='+!!storage.loadError+
+      ' chat='+!!saved.chatMode+' transcription='+!!saved.transcriptionMode+'\n')
+    if(storage.loadError) {
+      error='保存済みのAI設定を読み取れません。SDカードの設定は保持しました。'
+      detail='Encrypted settings unreadable; do not reset mode'
+      state='unconfigured'
+      showConversationBalloon(error)
+      trace('[boot-mode] restore blocked unreadable settings\n')
+      return
+    }
+    if(saved.chatMode===true&&saved.transcriptionMode===true) {
+      // Never silently select one of two contradictory saved modes.
+      chatSaveFailedOff=true
+      recognitionSaveFailedOff=true
+      error='会話と文字起こしの設定が同時にONです。本体でモードを選び直してください。'
+      detail='Conflicting persisted modes'
+      state='off'
+      showConversationBalloon(error)
+      trace('[boot-mode] restore blocked conflicting settings\n')
+      return
+    }
+    if(saved.transcriptionMode===true) {
+      setRecognitionMode(true)
+      trace('[boot-mode] restored transcription ON\n')
+    } else if(saved.chatMode===true) {
+      setChatMode(true)
+      trace('[boot-mode] restored conversation ON\n')
+    } else {
+      trace('[boot-mode] restored explicit OFF\n')
+    }
+  } catch(_) {
+    error='AIモードの起動時復元に失敗しました。設定とUSBログを確認してください。'
+    detail='Boot mode restoration failed'
+    showConversationBalloon(error)
+    trace('[boot-mode] restore failed\n')
+  }
 }
 export function startDirectChat(context, saveTranscript, acquire, done, capturePhoto, onModeChanged, onBoot) {
   modeChanged = onModeChanged
