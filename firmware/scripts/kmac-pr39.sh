@@ -133,6 +133,8 @@ tests(){
     scripts/lib/archive-voice-volume.test.mjs scripts/lib/archive-build-preflight.test.mjs) || die "NodeテストFAIL"
   (cd "$FW" && python3 -m unittest discover -s scripts -p 'test_voice_e2e.py' -v) || die "PythonテストFAIL"
   (cd "$FW" && python3 -m unittest discover -s scripts -p 'test_archive_usb_audit.py' -v) || die "USB/photo診断テストFAIL"
+  (cd "$FW" && python3 -m unittest discover -s scripts -p 'test_archive_photo_lan.py' -v) || die "LAN/photo診断テストFAIL"
+  (cd "$FW" && python3 -m unittest discover -s scripts -p 'test_voicevox_pc_play.py' -v) || die "PC音声再生テストFAIL"
 }
 build(){
   STEP=BUILD
@@ -236,45 +238,94 @@ acoustic(){
   [[ -z "${STACKCHAN_STT_COMMAND:-}" ]] || extra+=(--stt-command "$STACKCHAN_STT_COMMAND")
   log WARN "CoreS3の再起動・Wi-Fi接続完了後に実施。モードはケース毎に指定された条件が必要です"
   confirm "本体起動・必要なAIモード・PCスピーカー/マイクの準備を確認しましたか？"
+  local player="${STACKCHAN_PC_PLAYER:-auto}"
+  local play_device="${STACKCHAN_PLAY_DEVICE:-}"
+  local player_args=""
+  if [[ "$player" != auto ]]; then player_args=" --player $player"; fi
+  if [[ -n "$play_device" ]]; then
+    [[ "$player" == aplay ]] || die "STACKCHAN_PLAY_DEVICEの指定にはSTACKCHAN_PC_PLAYER=aplayが必要"
+    [[ "$play_device" =~ ^[A-Za-z0-9_.,:-]+$ ]] || die "STACKCHAN_PLAY_DEVICEに不正な文字が含まれます"
+    player_args="$player_args --alsa-device $play_device"
+  fi
+  local evidence_commit="$COMMIT"
+  local flash_record="$FW/dist/update-logs/last-flashed-commit.txt"
+  if [[ -r "$flash_record" ]]; then
+    evidence_commit="$(head -n 1 "$flash_record")"
+    if [[ "$evidence_commit" != "$COMMIT" ]]; then
+      log WARN "テスト用スクリプトcommit=${COMMIT:0:12}、実機へ最後に書いたcommit=${evidence_commit:0:12}。混同しません"
+    fi
+  fi
   python3 "$FW/scripts/voice-e2e.py" capture --case "$case" \
-    --speak-command "python3 $speak {text}" \
+    --speak-command "python3 $FW/scripts/voicevox-pc-play.py --speak-script $speak$player_args {text}" \
     --record-command "arecord -q -D ${STACKCHAN_RECORD_DEVICE:-default} -f S16_LE -r 16000 -c 1 -d 20 -t wav {wav}" \
-    --timeout 60 --provider "${STACKCHAN_PROVIDER:-xiaozhi}" --firmware-sha "$COMMIT" \
+    --timeout 90 --provider "${STACKCHAN_PROVIDER:-xiaozhi}" --firmware-sha "$evidence_commit" \
     --output-dir "$output" "${extra[@]}" || die "音響E2E失敗。録音デバイス/VOICEVOXを確認"
   log WARN "PC音響試験の記録完了。review.jsonによる実機証拠の評価は未実施=UNVERIFIED"
 }
 photo_probe(){
   STEP=PHOTO_STATUS
-  local destination="$1"
-  # Open authenticated read-only USB only after Hub releases the port.
+  local destination="$1" rc=2
+  if [[ -n "$PHOTO_IP" ]]; then
+    log ACTION "指定LAN IPで読み取り専用の写真状態確認"
+    python3 "$FW/scripts/archive-photo-lan.py" --ip "$PHOTO_IP" \
+      --config "$PRIVATE_TARGET" --output "$destination"
+    return $?
+  fi
   stop_hub
-  log ACTION "USB /photo/status を読み取り専用で取得（機密ログはローカル限定）"
+  log ACTION "USB /photo/status を読み取り専用で取得（応答がなければLANへ切替）"
   python3 "$FW/scripts/archive-usb-audit.py" --photo-only --config "$PRIVATE_TARGET" \
-    --port "$PORT" --seconds 8 --json-out "$destination" --output "$destination.usb.log" ||
-    die "撮影診断APIの取得失敗。USB送信タイムアウト/本体接続/トークンを確認: $destination.usb.log"
+    --port "$PORT" --seconds 8 --json-out "$destination" --output "$destination.usb.log"
+  rc=$?
   if [[ "$HUB_STOPPED" == yes ]]; then
     systemctl --user start "$SERVICE" || die "USB管理サービス復帰失敗"
     HUB_STOPPED=no
   fi
+  if [[ "$rc" == 0 ]]; then return 0; fi
+  log WARN "USB診断に応答なし。撮影成功/失敗は未判定。LAN診断を試します"
+  # USB creates a filtered file even on timeout. Preserve it as unverified, never reuse.
+  if [[ -e "$destination" ]]; then
+    mv -- "$destination" "$destination.usb-unverified" || die "未確認のUSBログの退避失敗"
+  fi
+  if [[ -z "$PHOTO_IP" && "$PHOTO_IP_ASKED" == no && -r /dev/tty ]]; then
+    PHOTO_IP_ASKED=yes
+    printf '[ACTION] STEP=PHOTO_STATUS 本体「スマホで操作」に表示されるLAN IP（空Enterでスキップ）: ' >/dev/tty
+    IFS= read -r PHOTO_IP </dev/tty || PHOTO_IP=""
+  fi
+  if [[ -n "$PHOTO_IP" ]]; then
+    log ACTION "LANの読み取り専用 /status を試行"
+    python3 "$FW/scripts/archive-photo-lan.py" --ip "$PHOTO_IP" \
+      --config "$PRIVATE_TARGET" --output "$destination"
+    return $?
+  fi
+  log WARN "本体のLAN IPがないためphoto/statusはUNVERIFIED。撮影音声試験は継続します"
+  return 2
 }
 photo_e2e(){
   STEP=PHOTO_E2E
   device
-  python3 -c 'import serial' >/dev/null 2>&1 || die "pyserial がありません（python3 -m pipで準備が必要）。書込済みの本体は変更しません"
+  local PHOTO_IP="${STACKCHAN_DEVICE_IP:-}" PHOTO_IP_ASKED=no
   local root="${STACKCHAN_E2E_OUTPUT:-$HOME/stackchan-e2e}"
   local dir="$root/photo-status-$(date -u +%Y%m%dT%H%M%SZ)-$$"
   mkdir -p "$dir" || die "診断結果ディレクトリ作成失敗"
   chmod 700 "$dir" || die "診断結果の権限設定失敗"
+  local before_ok=no after_ok=no
   log CHECK "Issue #33: 撮影前の状態を取得"
-  photo_probe "$dir/before.json"
+  if photo_probe "$dir/before.json"; then before_ok=yes
+  else log WARN "撮影前の状態取得失敗。録音・音声テストは実行します"; fi
   log ACTION "音声で「写真撮って」を実行し、PCマイクで収録"
   acoustic test photo_explicit
   log CHECK "Issue #33: 撮影後の状態を取得"
-  photo_probe "$dir/after.json"
+  if photo_probe "$dir/after.json"; then after_ok=yes
+  else log WARN "撮影後の状態取得失敗。音声テストの記録は保存済み"; fi
   STEP=PHOTO_VERDICT
-  python3 "$FW/scripts/archive-usb-audit.py" --compare-photo "$dir/before.json" "$dir/after.json" ||
-    die "Issue #33: 撮影ステータスを確認。診断結果=$dir（書込成功とは別）"
-  log CHECK "Issue #33: 新しい写真のSD保存を本体が報告。画像内容/AI応答の品質は手動検証"
+  if [[ "$before_ok" == yes && "$after_ok" == yes ]]; then
+    python3 "$FW/scripts/archive-usb-audit.py" --compare-photo "$dir/before.json" "$dir/after.json" ||
+      die "Issue #33 撮影ステータスがFAIL/UNVERIFIED。診断結果=$dir"
+    log CHECK "Issue #33: 新しい写真のSD保存を本体が報告。画像内容/AI応答の品質は手動検証"
+  else
+    log WARN "Issue #33: USB/LANから撮影前後を確認できずUNVERIFIED。診断結果=$dir"
+    exit 2
+  fi
   log INFO "診断結果=$dir"
 }
 case "$MODE" in
@@ -286,7 +337,7 @@ case "$MODE" in
     device # Fail early if the expected device or esptool is missing.
     [[ -f "${STACKCHAN_SPEAK_SCRIPT:-/home/kmac/work/camera-voicevox/speak.py}" ]] || die "VOICEVOX speak.pyがありません。テスト不要ならflashを指定"
     command -v arecord >/dev/null 2>&1 || die "arecordがありません。テスト不要ならflashを指定"
-    python3 -c 'import serial' >/dev/null 2>&1 || die "pyserialがありません。書き込む前にインストールしてください"
+    command -v paplay >/dev/null 2>&1 || command -v pw-play >/dev/null 2>&1 || command -v aplay >/dev/null 2>&1 || die "PC音声再生用のpaplay/pw-play/aplayがありません。書込前に停止"
     dependencies; tests; build; flash; acoustic test ordinary_chat; photo_e2e ;;
   test)
     dependencies; tests
