@@ -6,10 +6,10 @@ Base branch: `stackchan-super`. Issue #32 is explicitly out of scope. The user w
 
 | Issue | Confirmed in source | Fix or test in this branch | Device validation still required |
 |---|---|---|---|
-| #33 | Photo handlers skipped explicit `camera.start()`, chat bypassed `busy`; a cloud tool was the only capture trigger | Explicit photo intent; one photo per request; `camera.start()`/`capture()`/`stop()`; touch pauses through runtime; reject negated/unsolicited camera requests; async busy safety | New JPEG versus actual subject; stop/recovery under USB; conversation after capture; native hang |
+| #33 | Photo handlers skipped explicit `camera.start()`, chat bypassed `busy`; a cloud tool was the only capture trigger | Explicit photo intent; one photo/analysis in flight per request; `camera.start()`/`capture()`/`stop()`; touch pauses through runtime; reject negated/unsolicited camera requests; async busy safety | New JPEG versus actual subject; stop/recovery under USB; conversation after capture; native hang |
 | #34 | Old recognition mode was checked *after* saving transcription OFF; boot persistence fix already merged in PR #28 | Snapshot previous mode; close old session; rollback failed handoffs; preserve ON on boot | Reboot ON/OFF with SD; recognition→chat; chat→recognition; audio hardware ownership |
 | #35 | Current `stackchan-super` uses `bottom:40` in transcript paths; unpositioned errors used UI defaults. PR #25 (unmerged) changes to top | Single bottom-caption wrapper in direct chat, camera explanation bottom, regression check | CoreS3 LCD screenshot: ASR, AI, errors, long multi-line text and official face |
-| #36 | Archive volume UI used an unbounded promise preview chain; TS bounded `VolumePreviewQueue` existed but was unused there | Reuse bounded queue; numeric applied-volume diagnostic; actual audio must be checked | 20↔30 ten times; reset reason, panic, brownout, actual speaker amplitude |
+| #36 | Archive volume UI used an unbounded promise preview chain; TS bounded `VolumePreviewQueue` existed but was unused there | Reuse bounded queue; strict Japanese voice command parsing and authorized, deduplicated volume tools; numeric applied-volume diagnostic; actual audio must be checked | 20↔30 ten times; reset reason, panic, brownout, actual speaker amplitude |
 | #37 | A local PC test candidate was not in GitHub; no evidence-gated portable tool existed on target branch | 11 case catalog, PC playback/recording and review gate, Python tests | Physical recordings, ID-correlated device logs, new photos, position/video evidence |
 | #38 | SDK-generated concurrent `idf.py add-dependency` calls can overwrite one shared manifest | Pre-seed camera/JPEG/audio codec from tracked manifests for Archive; independent targets unchanged; replay tests | Clean CoreS3 build on kmac with actual Moddable/IDF |
 
@@ -70,3 +70,7 @@ Status codes: `PASS=0` (explicit human evidence), `FAIL=1` (an observed failure)
 Existing PR #31 is Draft and includes overlapping #33/#34 camera/session work, as well as unrelated #32 motion fixes. **Do not blindly merge both**. Rebase or cherry-pick only the validated nonduplicate hunks; keep #32 untouched. PR #25 conflicts with the required bottom caption. PR #28's boot preference fix is already merged.
 
 Do not flash from CI. Before device deploy save the previous flash image and commit SHA, review SD config continuity, and keep the earlier known-good firmware ready for restore. A firmware upload is outside this PR and requires user approval.
+
+## CI evidence
+
+`Archive Issues 33-38 Regression` runs the offline Node/Python tests on each PR change and attempts a clean ESP32 build from a disposable (untracked) Archive manifest. The CI build never writes firmware to USB. The live run and job conclusion must be checked separately before recording a build PASS; a pending run is **not** success.
