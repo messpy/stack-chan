@@ -21,7 +21,10 @@ export function loadSettings(){
         const candidate=JSON.parse(String.fromArrayBuffer(openVault(file.read(size,0))));
         if(!Number.isSafeInteger(candidate.generation)||candidate.generation<1||!Array.isArray(candidate.reminders)||typeof candidate.api!=='object')throw new Error('schema');
         if(candidate.generation>data.generation)data=candidate;
-      }catch(_){if(opened)bad++;}finally{file?.close();}
+      }catch(_){
+        if(opened)bad++;
+        else try { if(root.status(path(index))) {found=true;bad++;} } catch(_) {}
+      }finally{file?.close();}
     }
   });
   unreadableSlots=bad;
