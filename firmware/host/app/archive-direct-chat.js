@@ -19,6 +19,7 @@ import { uiFont } from 'ui-theme'
 import { getSettings, changeSettings } from 'archive-vault'
 import { getSettingsStatus } from 'archive-settings'
 import { listDeviceTools, callDeviceTool } from 'archive-tools'
+import { getVolume, setVolume } from 'archive-volume'
 import {
   memoryTools,
   callMemory,
@@ -65,6 +66,24 @@ function explicitVisualRequest(text) {
 function directPhotoRequest(text) {
   const normalized=String(text||'').replace(/[\s、。！？!?]/g,'');
   return /^(?:写真|カメラ)(?:を|で)?(?:撮って|とって|撮影して)(?:ください|お願い|ね|よ)?$/.test(normalized);
+}
+// Only imperative user requests can authorize a cloud-driven volume change.
+function volumeRequest(text) {
+  const value=String(text||'').replace(/[\s、。！？!?]/g,'');
+  if(/(?:上げない|下げない|変えない|設定しない|しないで|やめて)/.test(value))return false;
+  return /音量/.test(value)&&/(?:上げ|下げ|大きく|小さく|設定|変えて|にして|\d+(?:%|％|パーセント)?)/.test(value);
+}
+function volumeCommandFromText(text) {
+  const value=String(text||'').replace(/[\s、。！？!?]/g,'');
+  if(!volumeRequest(value))return null;
+  const amount=/^音量を?([0-9]{1,3})(?:%|％|パーセント)?(?:に)?(?:して|設定して|変えて)?(?:ください|お願い)?$/.exec(value);
+  if(amount){
+    const percent=Number(amount[1]);
+    return percent<=100?{kind:'set',percent}:null;
+  }
+  if(/^音量を?(?:上げて|上げてください|大きくして|大きくしてね)$/.test(value))return {kind:'delta',delta:10};
+  if(/^音量を?(?:下げて|下げてください|小さくして|小さくしてね)$/.test(value))return {kind:'delta',delta:-10};
+  return null;
 }
 let refreshAITalk
 let photoHandler, modeChanged
@@ -730,7 +749,7 @@ async function connect() {
             }),
           }
     let ollamaBusy = false,recognitionTurnCurrent=()=>false
-    let visualAllowedUntil=0,photoTurn
+    let visualAllowedUntil=0,photoTurn,volumeAllowedUntil=0,volumeTurn
     async function executeTool(name, args) {
       if (chat !== instance&&!recognitionTurnCurrent()) throw new Error('会話が切り替わりました')
       if (name === 'camera_describe') {
@@ -745,6 +764,16 @@ async function connect() {
         return result.analysis?.status === 'complete'
           ? { photo: result.image, description: result.analysis.text }
           : { photo: result.image, error: result.analysis?.error || '画像認識できませんでした' }
+      }
+      if (name === 'volume_get') return getVolume();
+      if (name === 'volume_set') {
+        if(Date.now()>volumeAllowedUntil)throw new Error('音量変更の依頼がありません');
+        if(volumeTurn && Date.now()-volumeTurn.at<12000) {
+          if(args?.percent!==volumeTurn.result.percent)throw new Error('同じ発話で音量変更は一度だけです');
+          return {...volumeTurn.result,duplicate:true};
+        }
+        volumeAllowedUntil=0;
+        return setVolume(args?.percent);
       }
       if (memoryTools.some((t) => t.name === name)) {
         if (name === 'conversation_identify') {
@@ -904,6 +933,21 @@ async function connect() {
             visualAllowedUntil=(!standalone&&!recognitionOnly&&explicitVisualRequest(recognized))
               ? Date.now()+12000 : 0;
             photoTurn=undefined;
+            volumeTurn=undefined;
+            volumeAllowedUntil=(!standalone&&!recognitionOnly&&volumeRequest(recognized))
+              ? Date.now()+12000 : 0;
+            if(volumeAllowedUntil) {
+              const command=volumeCommandFromText(recognized);
+              if(command)try {
+                const previous=getVolume().percent;
+                const percent=command.kind==='set'?command.percent:Math.max(0,Math.min(100,previous+command.delta));
+                const result=setVolume(percent);
+                volumeTurn={at:Date.now(),result};
+                trace('[volume] direct requested='+percent+' applied='+result.percent+'\n');
+              }catch(error) {
+                trace('[volume] direct command failed\n');
+              }
+            }
             if(visualAllowedUntil && directPhotoRequest(recognized) && photoHandler) {
               const promise=Promise.resolve().then(()=>photoHandler({question:recognized}));
               photoTurn={expires:visualAllowedUntil,promise};
