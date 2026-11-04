@@ -43,8 +43,13 @@ command -v python3 >/dev/null 2>&1 || die "python3なし"
 if [[ -z "$REPO" ]]; then REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || die "Gitリポジトリ内で実行してください"; fi
 [[ -e "$REPO/.git" && -d "$REPO/firmware" ]] || die "StackChan作業ツリーを特定できません"
 if [[ -d /mnt/data/Development/node22/current/bin ]]; then export PATH="/mnt/data/Development/node22/current/bin:$PATH"; fi
-COMMIT="$(git -C "$REPO" rev-parse --verify "$REF^{commit}" 2>/dev/null)" || die "PR #39をfetchしてください"
-git -C "$REPO" cat-file -e "$COMMIT:firmware/scripts/kmac-pr39.sh" 2>/dev/null || die "PR #39のスクリプトを含まないコミットです"
+if [[ "$MODE" == restore ]]; then
+  # Recovery must not depend on FETCH_HEAD, a full SDK or a private manifest.
+  COMMIT="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)" || die "GitリポジトリのHEADを読めません"
+else
+  COMMIT="$(git -C "$REPO" rev-parse --verify "$REF^{commit}" 2>/dev/null)" || die "PR #39をfetchしてください"
+  git -C "$REPO" cat-file -e "$COMMIT:firmware/scripts/kmac-pr39.sh" 2>/dev/null || die "PR #39のスクリプトを含まないコミットです"
+fi
 log CHECK "対象commit=$COMMIT; 既存checkoutは変更しません"
 git -C "$REPO" status --short --branch | head -n 8
 PRIVATE_SOURCE="$REPO/firmware/host/app/manifest_archive_private.json"
