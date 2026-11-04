@@ -389,18 +389,22 @@ export function setChatMode(on) {
     throw new Error(
       chatProvider() === 'gemini' ? '設定ページでGemini APIキーを保存してください' : '会話の初期登録が必要です',
     )
-  modeChanged?.(on)
   const starting = on && !enabled()
   if(!on){chatSaveFailedOff=true;closeChat();collectMemory()}
   let saveError
   try {
-    changeSettings((data) => { data.chatMode=on; if(on)data.transcriptionMode=false })
+    // Restoring an already persisted ON mode must not rewrite the SD card.
+    const settings=getSettings()
+    if(settings.chatMode!==on||(on&&settings.transcriptionMode!==false))
+      changeSettings((data) => { data.chatMode=on; if(on)data.transcriptionMode=false })
     chatSaveFailedOff=false
     if(on)recognitionSaveFailedOff=false
   } catch(e) {
     if(on)throw e
     saveError='会話は停止しましたが、OFF設定を保存できませんでした。再起動後の設定を確認してください'
   }
+  // Do not change audio ownership until the ON preference is safely persisted.
+  if(on||!saveError)modeChanged?.(on)
   if(starting){
     if(recognitionMode())closeChat()
     beginConversation()
