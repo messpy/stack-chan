@@ -15,7 +15,7 @@ git fetch https://github.com/messpy/stack-chan.git fix/archive-issues-33-38-2026
 実行内容は順に：
 
 1. 元のGit作業ブランチ・未コミット変更は触らず、隣の `stack-chan-pr39-acceptance` worktreeを作成/更新する。既存の暗号化Archive設定を秘密値表示なしで引き継ぐ。
-2. Node/Pythonテストを実行する。テストが失敗したら書き込みしない。
+2. 専用worktree内に `npm ci --prefer-offline --no-audit --no-fund` でlockfile通りの依存を導入（キャッシュ優先、不足分はネット経由）。元の `node_modules` は変更しない。続いてNode/Pythonテストを実行し、失敗時は書き込まない。
 3. 共有Moddable SDKパッチ実行のため **yes/no確認** を行い、既存の `scripts/update-archive.sh --build-only` でCoreS3 Archiveをビルドする。
 4. USBは1台だけとし、複数の場合は `STACKCHAN_PORT` で選択する。Hubサービスがポートを使っていれば、停止して終了時に復帰する。
 5. **本体の16MiBフラッシュを読み取り、バックアップサイズとSHA256を確認した後で**、書込用の **yes/no確認** を行う。バックアップに失敗したら書き込まない。
