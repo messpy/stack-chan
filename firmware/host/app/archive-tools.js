@@ -11,7 +11,7 @@ const elapsedTimer=t=>Math.min(t.duration,(Time.ticks-t.started)>>>0);
 let alarmDisplay,alarmMotion;
 export function setAlarmMotion(factory){alarmMotion=factory;}
 export function setAlarmDisplay(display){alarmDisplay=display;}
-const toolDefinitions=()=>definitions??(definitions=JSON.parse(String.fromArrayBuffer(new Resource('reminder-tools.txt'))).concat(headMoveTool));
+const toolDefinitions=()=>definitions??(definitions=JSON.parse(String.fromArrayBuffer(new Resource('reminder-tools.txt'))).concat(headMoveTool,[{name:'volume_get',description:'現在の本体音量を取得する。',inputSchema:{type:'object',properties:{},additionalProperties:false}},{name:'volume_set',description:'本体音量を0〜100パーセントで設定する。',inputSchema:{type:'object',properties:{percent:{type:'integer',minimum:0,maximum:100}},required:['percent'],additionalProperties:false}}]));
 let robot,claim,release,ringing=false,stopped=false;
 const ready=()=>Date.now()>1700000000000;
 const localTime=()=>new Date(Date.now()+9*3600000).toISOString().slice(0,19)+'+09:00';

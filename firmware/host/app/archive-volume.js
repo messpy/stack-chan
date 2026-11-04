@@ -11,7 +11,9 @@ function previewVolume(){
 export function getVolume(){return {percent:Math.round(robot.audio.volume*100)};}
 export function setVolume(percent,playPreview=false){
   if(!Number.isInteger(percent)||percent<0||percent>100)throw new Error('Volume must be 0..100');
+  const previous=getVolume().percent;
   robot.audio.volume=percent/100;
+  trace('[volume] changed from='+previous+' to='+getVolume().percent+'\n');
   if(playPreview)previewVolume();
   return getVolume();
 }

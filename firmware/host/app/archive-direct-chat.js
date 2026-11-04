@@ -19,6 +19,7 @@ import { uiFont } from 'ui-theme'
 import { getSettings, changeSettings } from 'archive-vault'
 import { getSettingsStatus } from 'archive-settings'
 import { listDeviceTools, callDeviceTool } from 'archive-tools'
+import {getVolume,setVolume} from 'archive-volume'
 import {
   memoryTools,
   callMemory,
@@ -390,6 +391,8 @@ export function setChatMode(on) {
     throw new Error(
       chatProvider() === 'gemini' ? '設定ページでGemini APIキーを保存してください' : '会話の初期登録が必要です',
     )
+  const previousMode={chatMode:getSettings().chatMode,transcriptionMode:getSettings().transcriptionMode}
+  const wasRecognitionMode=recognitionMode()
   const starting = on && !enabled()
   if(!on){chatSaveFailedOff=true;closeChat();collectMemory()}
   let saveError
@@ -405,9 +408,21 @@ export function setChatMode(on) {
     saveError='会話は停止しましたが、OFF設定を保存できませんでした。再起動後の設定を確認してください'
   }
   // Do not change audio ownership until the ON preference is safely persisted.
-  if(on||!saveError)modeChanged?.(on)
+  try {
+    if(on||!saveError)modeChanged?.(on)
+  } catch(e) {
+    // A rejected audio handoff must not leave the persisted mode enabled.
+    if(on && starting) {
+      try {
+        changeSettings((data) => { data.chatMode=previousMode.chatMode;data.transcriptionMode=previousMode.transcriptionMode })
+      } catch(rollbackError) {
+        trace('[direct-chat] failed to roll back chat mode: '+rollbackError+'\n')
+      }
+    }
+    throw e
+  }
   if(starting){
-    if(recognitionMode())closeChat()
+    if(wasRecognitionMode)closeChat()
     beginConversation()
     greetingPending=true
     resetTranscripts()
@@ -434,6 +449,7 @@ export function setChatMode(on) {
 export function setRecognitionMode(on){
   trace('[action] recognition_mode requested='+(on?'on':'off')+'\n')
   if(typeof on!=='boolean')throw new Error('文字起こしのON/OFFを指定してください')
+  const previousMode={chatMode:getSettings().chatMode,transcriptionMode:getSettings().transcriptionMode}
   if(on&&!cloudConfig()?.cloudConsent)throw new Error('XiaoZhiの初期登録が必要です')
   if(!on){recognitionSaveFailedOff=true;closeChat();collectMemory()}
   let saveError
@@ -446,7 +462,12 @@ export function setRecognitionMode(on){
   }
   catch(e){if(on)throw e;saveError='文字起こしは停止しましたが、OFF設定を保存できませんでした'}
   // A failed ON save must not interrupt audio or the current chat session.
-  if(on)modeChanged?.(true)
+  if(on)try{modeChanged?.(true)}catch(e){
+    if(previousMode.chatMode!==false||previousMode.transcriptionMode!==true)try{
+      changeSettings(data=>{data.chatMode=previousMode.chatMode;data.transcriptionMode=previousMode.transcriptionMode})
+    }catch(rollbackError){trace('[recognition] failed to roll back mode: '+String(rollbackError).slice(0,120)+'\n')}
+    throw e
+  }
   enrollment.reset();closeChat();resetTranscripts();greetingPending=false;
   retryAt=0;retryDelay=3000;error='';detail='';state=running()?'waiting':'off';
   refreshRecognition?.();refreshAITalk?.();
@@ -696,11 +717,19 @@ async function connect() {
             }),
           }
     let ollamaBusy = false,recognitionTurnCurrent=()=>false
+    let visualAllowed=false,headHandled
+    const wantsCamera=text=>/(?:カメラ|写真|撮影|画像|映像|写っ|映っ|見えて|見える|見せて|目の前|これ何|これは何|何がある|文字を読)/.test(String(text||''))
     async function executeTool(name, args) {
       if (chat !== instance&&!recognitionTurnCurrent()) throw new Error('会話が切り替わりました')
       if (name === 'camera_describe') {
+        if(!visualAllowed){trace('[vision] rejected unrequested camera\n');return {error:'ユーザーが撮影を依頼していません。カメラを使用しないでください。'}}
+        visualAllowed=false
+        trace('[vision] authorized camera\n')
         if (!photoHandler) throw new Error('Camera unavailable')
+        const startedAt=Date.now()
+        trace('[vision] capture start\n')
         const result = await photoHandler(args)
+        trace('[vision] capture result status='+String(result.analysis?.status||'unknown')+' elapsedMs='+(Date.now()-startedAt)+'\n')
         return result.analysis?.status === 'complete'
           ? { photo: result.image, description: result.analysis.text }
           : { photo: result.image, error: result.analysis?.error || '画像認識できませんでした' }
@@ -733,6 +762,15 @@ async function connect() {
         if (name === 'user_remember' && !args.source_message_ids)
           args = { ...args, source_message_ids: lastInputId ? [lastInputId] : [] }
         return callMemory(name, args)
+      }
+      if(name==='volume_get')return getVolume()
+      if(name==='volume_set')return setVolume(args.percent)
+      if(name==='head_move'&&headHandled?.direction===args?.direction){
+        const pending=headHandled;headHandled=undefined
+        const result=await pending.promise
+        if(result?.commanded!==true)throw new Error('首振り動作が完了していません')
+        trace('[head-motion] duplicate reused completed result\n')
+        return {...result,duplicate:true}
       }
       return callDeviceTool(name, args)
     }
@@ -842,7 +880,9 @@ async function connect() {
               receiveRegistrationName(text)
               return
             }
-            trace('[asr] final chars='+input.length+'\n')
+            visualAllowed=wantsCamera(input)
+            headHandled=undefined
+            trace('[asr] final chars='+input.length+' visual='+visualAllowed+'\n')
             const event = archive('input', input)
             lastInputId = event?.id || ''
             if(standalone){
@@ -863,7 +903,11 @@ async function connect() {
             // the cloud chooses a function call or only speaks an acknowledgement.
             if (!standalone && !recognitionOnly) {
               const direction=headDirectionFromText(recognized)
-              if(direction) Promise.resolve(callDeviceTool('head_move',{direction})).catch(()=>trace('[head-motion] voice command failed\n'))
+              if(direction){
+                const promise=Promise.resolve().then(()=>callDeviceTool('head_move',{direction}))
+                headHandled={direction,promise}
+                promise.catch(e=>trace('[head-motion] voice command failed: '+String(e?.message||e).slice(0,120)+'\n'))
+              }
             }
             if(recognitionOnly)Timer.set(()=>recognitionTurn(recognized),0)
           }
@@ -920,20 +964,22 @@ async function connect() {
             })
             .then((result) => {
               if(name==='conversation_identify'&&result?.message)try{robot.showBalloon(result.message,{bottom:40,height:24,paddingY:4,holdMs:10000})}catch(_){trace('[speaker] result display unavailable\n')}
+              trace('[chat-tool] completed '+name+'\n')
               return chat === instance ? instance.sendFunctionResult(call, name, result) : undefined
             })
             .catch((e) => {
               if (chat !== instance) return
               trace('[chat-tool] failed '+name+'\n')
               let message = '道具を実行できませんでした'
-              if (provider === 'ollama' || memoryTools.some(t=>t.name===name)) {
-                message = String(e.message || message)
-                for (const key of [getSettings().api?.ollama, getSettings().api?.gemini])
+              if (provider === 'ollama' || memoryTools.some(t=>t.name===name) || name==='head_move' || name==='camera_describe') {
+                message = String(e?.message || message)
+                for (const key of [getSettings().api?.ollama, getSettings().api?.gemini, cloudConfig()?.accessToken])
                   if (key) message = message.split(key).join('[redacted]')
                 error = message.slice(0, 200)
-                robot.showBalloon(error)
+                try{robot.showBalloon(error)}catch(_){trace('[chat-tool] error display unavailable\n')}
               }
-              return instance.sendFunctionResult(call, name, { error: message.slice(0, 200) })
+              try{return instance.sendFunctionResult(call, name, { error: message.slice(0, 200) })}
+              catch(_){trace('[chat-tool] result transport unavailable '+name+'\n')}
             })
         },
       },
