@@ -144,6 +144,45 @@ def summarize_debug_line(line: str, token: str) -> str | None:
     return f"[{name}] {phrase} {' '.join(fields)}".strip()
 
 
+def passive_probe(serial_port: str, seconds: float, output: Path) -> int:
+    """Read-only USB probe. No writes, commands, reset, or need for Archive token."""
+    import serial
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    # Never overwrite the old log; contents may include private debug output.
+    handle = os.open(str(output), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    bytes_read = 0
+    lines_read = 0
+    try:
+        with os.fdopen(handle, "wb") as logfile:
+            port = serial.Serial(port=None, baudrate=115200, timeout=0.25)
+            port.dtr = False
+            port.rts = False
+            port.port = serial_port
+            try:
+                port.open()
+                print(f"[CHECK] PASSIVE USB={serial_port}; DTR/RTS=off; writes=0")
+                print(f"[INFO] local_log={output} (mode=0600; do not paste raw log)")
+                end = time.monotonic() + seconds
+                while time.monotonic() < end:
+                    chunk = port.read(512)
+                    if chunk:
+                        bytes_read += len(chunk)
+                        lines_read += chunk.count(b"\n")
+                        logfile.write(chunk)
+            finally:
+                port.close()
+    except serial.SerialException:
+        print("[WARN] USBを読み取れません。抜き差し・占有プロセス・デバイス権限を確認")
+        return 2
+    print(f"[CHECK] passive_bytes={bytes_read} newlines={lines_read} sent_requests=0")
+    if bytes_read == 0:
+        print("[WARN] USBから受信なし（リリース版は通常ログを蓄積するため、無応答のみではハングと断定不可）")
+    else:
+        print("[INFO] USB受信あり。起動/デバッグ内容はローカルの非公開ログに保存")
+    return 0
+
+
 def run(serial_port, token: str, seconds: float, output: Path) -> int:
     import serial
 
@@ -179,7 +218,20 @@ def run(serial_port, token: str, seconds: float, output: Path) -> int:
                     request_id += 1
                     req = {"id": request_id, "token": token, "op": op, "args": {}}
                     wire = ("@SC " + json.dumps(req, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
-                    port.write(wire)
+                    try:
+                        written = port.write(wire)
+                        if written != len(wire):
+                            errors.append(f"{op}: USB short write")
+                            print("[WARN] USB送信が途中で停止。実機の受信ループ/ポート状態を確認")
+                            break
+                    except serial.SerialTimeoutException:
+                        errors.append(f"{op}: USB write timeout")
+                        print("[WARN] USB送信タイムアウト。本体が読み取っていない可能性があります。追加の要求を中止")
+                        break
+                    except serial.SerialException:
+                        errors.append(f"{op}: USB transport failure")
+                        print("[WARN] USB通信が切断または停止しました。追加の要求を中止")
+                        break
                     pending[request_id] = op
                     last_send = now
                 raw = port.read_until(b"\n", 16384)
@@ -230,7 +282,7 @@ def run(serial_port, token: str, seconds: float, output: Path) -> int:
         for message in errors:
             print("[WARN] " + message)
     if not response_count:
-        print("[WARN] 認証済みの応答なし。USBポート、実機接続、manifest token、起動状態を確認")
+        print("[WARN] 認証済みの応答なし。USBポート/本体受信ループ/アプリ起動/manifest tokenを調査")
         return 2
     chat = responses.get("/chat/status", {})
     store = responses.get("/settings/status", {})
@@ -252,6 +304,8 @@ def run(serial_port, token: str, seconds: float, output: Path) -> int:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", help="USB Serial/JTAG port; otherwise auto-select unique port")
+    parser.add_argument("--passive", action="store_true",
+                        help="read USB only; never send token/commands, useful after write timeout")
     parser.add_argument("--config", help="Local private Archive manifest (read-only)")
     parser.add_argument("--seconds", type=float, default=13,
                         help="USB debug read duration (3..120 s, default 13)")
@@ -260,11 +314,14 @@ def main(argv=None) -> int:
     if not 3 <= args.seconds <= 120:
         parser.error("--seconds must be between 3 and 120")
     try:
-        config = manifest_path(args.config)
-        token = load_token(config)
         serial_port = select_port(args.port)
         output = args.output or (Path.home() / "stackchan-diagnostics" /
-                 ("usb-debug-" + dt.datetime.now().strftime("%Y%m%d-%H%M%S") + ".log"))
+                 ("usb-" + ("passive-" if args.passive else "debug-") +
+                  dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f") + ".log"))
+        if args.passive:
+            return passive_probe(serial_port, args.seconds, output)
+        config = manifest_path(args.config)
+        token = load_token(config)
         return run(serial_port, token, args.seconds, output)
     except ModuleNotFoundError as exc:
         print("[FATAL] pyserialがありません: " + str(exc), file=sys.stderr)
