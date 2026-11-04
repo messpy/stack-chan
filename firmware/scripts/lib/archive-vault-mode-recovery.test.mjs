@@ -13,6 +13,7 @@ const code=source.slice(begin,statusEnd).replaceAll('export function','function'
 function mock(unreadable) {
   let writes=0
   const context={
+    path:index=>`stackchan/settings-${index}.bin`,
     data:{generation:8,chatMode:true,transcriptionMode:false,api:{},reminders:[]},
     loadError:unreadable,
     unreadableSlots:unreadable?2:0,
