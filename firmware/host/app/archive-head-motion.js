@@ -25,6 +25,7 @@ export function headDirectionFromText(text) {
 export async function moveHead(robot, args = {}) {
   const direction = args.direction
   if (!Object.hasOwn(HEAD_ROTATIONS, direction)) throw new Error('首の向きは上下・左右・正面から選んでください')
+  trace('[head-motion] start direction='+direction+'\n')
   robot.lookAway()
   await robot.setTorque(true)
   try {
