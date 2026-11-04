@@ -394,6 +394,8 @@ export function setChatMode(on) {
     throw new Error(
       chatProvider() === 'gemini' ? '設定ページでGemini APIキーを保存してください' : '会話の初期登録が必要です',
     )
+  const previousMode={chatMode:getSettings().chatMode,transcriptionMode:getSettings().transcriptionMode}
+  const wasRecognitionMode=recognitionMode()
   const starting = on && !enabled()
   if(!on){chatSaveFailedOff=true;closeChat();collectMemory()}
   let saveError
@@ -409,9 +411,18 @@ export function setChatMode(on) {
     saveError='会話は停止しましたが、OFF設定を保存できませんでした。再起動後の設定を確認してください'
   }
   // Do not change audio ownership until the ON preference is safely persisted.
-  if(on||!saveError)modeChanged?.(on)
+  try {
+    if(on||!saveError)modeChanged?.(on)
+  } catch(e) {
+    if(on && starting) try {
+      changeSettings(data=>{data.chatMode=previousMode.chatMode;data.transcriptionMode=previousMode.transcriptionMode})
+    } catch(rollbackError) {
+      trace('[direct-chat] mode rollback failed\n')
+    }
+    throw e
+  }
   if(starting){
-    if(recognitionMode())closeChat()
+    if(wasRecognitionMode)closeChat()
     beginConversation()
     greetingPending=true
     resetTranscripts()
@@ -438,6 +449,7 @@ export function setChatMode(on) {
 export function setRecognitionMode(on){
   trace('[action] recognition_mode requested='+(on?'on':'off')+'\n')
   if(typeof on!=='boolean')throw new Error('文字起こしのON/OFFを指定してください')
+  const previousMode={chatMode:getSettings().chatMode,transcriptionMode:getSettings().transcriptionMode}
   if(on&&!cloudConfig()?.cloudConsent)throw new Error('XiaoZhiの初期登録が必要です')
   if(!on){recognitionSaveFailedOff=true;closeChat();collectMemory()}
   let saveError
@@ -450,7 +462,14 @@ export function setRecognitionMode(on){
   }
   catch(e){if(on)throw e;saveError='文字起こしは停止しましたが、OFF設定を保存できませんでした'}
   // A failed ON save must not interrupt audio or the current chat session.
-  if(on)modeChanged?.(true)
+  if(on)try{modeChanged?.(true)}catch(e){
+    try {
+      changeSettings(data=>{data.chatMode=previousMode.chatMode;data.transcriptionMode=previousMode.transcriptionMode})
+    } catch(rollbackError) {
+      trace('[recognition] mode rollback failed\n')
+    }
+    throw e
+  }
   enrollment.reset();closeChat();resetTranscripts();greetingPending=false;
   retryAt=0;retryDelay=3000;error='';detail='';state=running()?'waiting':'off';
   refreshRecognition?.();refreshAITalk?.();
