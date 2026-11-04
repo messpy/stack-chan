@@ -381,6 +381,7 @@ export function configureDirectChat(value) {
   return { configured: true }
 }
 export function setChatMode(on) {
+  trace('[action] chat_mode requested='+(on?'on':'off')+'\n')
   if(on&&chatProvider()==='gemini'&&!getSettings().api?.gemini)throw new Error('Gemini APIキーを保存してください')
   if (on && chatProvider() === 'ollama' && (!getSettings().api?.ollama || (!usesXiaoZhiRecognition()&&!getSettings().api?.gemini)))
     throw new Error('Ollama Cloudと音声用GeminiのAPIキーを保存してください')
@@ -431,6 +432,7 @@ export function setChatMode(on) {
   return directChatStatus()
 }
 export function setRecognitionMode(on){
+  trace('[action] recognition_mode requested='+(on?'on':'off')+'\n')
   if(typeof on!=='boolean')throw new Error('文字起こしのON/OFFを指定してください')
   if(on&&!cloudConfig()?.cloudConsent)throw new Error('XiaoZhiの初期登録が必要です')
   if(!on){recognitionSaveFailedOff=true;closeChat();collectMemory()}
@@ -840,6 +842,7 @@ async function connect() {
               receiveRegistrationName(text)
               return
             }
+            trace('[asr] final chars='+input.length+'\n')
             const event = archive('input', input)
             lastInputId = event?.id || ''
             if(standalone){
@@ -877,6 +880,7 @@ async function connect() {
           }
           if (!more && output) {
             if (!enrollment.active) {
+              trace('[llm] output_final chars='+output.length+'\n')
               archive('output', output)
               if(conversationStage==='greeting')advanceConversation('conversation')
               lastSubtitle=output
