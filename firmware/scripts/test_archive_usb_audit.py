@@ -53,5 +53,34 @@ class AuditTests(unittest.TestCase):
             self.assertGreater(output.stat().st_size, 0)
 
 
+    def test_write_timeout_returns_transport_diagnostic_not_crash(self):
+        class Timeout(Exception):
+            pass
+        class Port:
+            dtr = False
+            rts = False
+            def open(self):
+                pass
+            def write(self, data):
+                raise Timeout("Write timeout")
+            def read_until(self, separator, limit):
+                return b""
+            def close(self):
+                pass
+
+        fake = types.SimpleNamespace(Serial=lambda **kwargs: Port(),
+                                     SerialTimeoutException=Timeout,
+                                     SerialException=Timeout)
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory) / "log.bin"
+            printed = io.StringIO()
+            with patch.dict(sys.modules, {"serial": fake}), redirect_stdout(printed):
+                result = audit.run("/dev/ttyACM0", "test-token-placeholder",
+                                   0.01, output)
+            self.assertEqual(result, 2)
+            self.assertIn("USB送信タイムアウト", printed.getvalue())
+            self.assertNotIn("test-token-placeholder", printed.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
