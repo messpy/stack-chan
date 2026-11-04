@@ -321,6 +321,8 @@ def compare_photo_snapshots(before: dict, after: dict) -> tuple[int, str]:
     prior = before.get("statuses", {}).get("/photo/status", {})
     current = after.get("statuses", {}).get("/photo/status", {})
     old_time, new_time = prior.get("startedAt"), current.get("startedAt")
+    if old_time is None:  # No capture has happened since boot.
+        old_time = 0
     if (not isinstance(old_time, (int, float)) or isinstance(old_time, bool)
             or not isinstance(new_time, (int, float)) or isinstance(new_time, bool)
             or new_time <= old_time):
