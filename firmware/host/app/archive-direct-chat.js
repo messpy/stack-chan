@@ -706,7 +706,10 @@ async function connect() {
         visualAllowed=false
         trace('[vision] authorized camera\n')
         if (!photoHandler) throw new Error('Camera unavailable')
+        const startedAt=Date.now()
+        trace('[vision] capture start\n')
         const result = await photoHandler(args)
+        trace('[vision] capture result status='+String(result.analysis?.status||'unknown')+' elapsedMs='+(Date.now()-startedAt)+'\n')
         return result.analysis?.status === 'complete'
           ? { photo: result.image, description: result.analysis.text }
           : { photo: result.image, error: result.analysis?.error || '画像認識できませんでした' }
@@ -931,6 +934,7 @@ async function connect() {
             })
             .then((result) => {
               if(name==='conversation_identify'&&result?.message)try{robot.showBalloon(result.message,{bottom:40,height:24,paddingY:4,holdMs:10000})}catch(_){trace('[speaker] result display unavailable\n')}
+              trace('[chat-tool] completed '+name+'\n')
               return chat === instance ? instance.sendFunctionResult(call, name, result) : undefined
             })
             .catch((e) => {
