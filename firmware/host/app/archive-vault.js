@@ -29,6 +29,9 @@ export function loadSettings(){
 export function getSettings(){return loadSettings();}
 export function changeSettings(change){
   loadSettings();
+  // Never overwrite the last two encrypted snapshots with empty defaults when
+  // both exist but neither could be authenticated on this boot.
+  if(loadError)throw new Error('保存済み設定を読み取れません。元のSD設定は保持しています');
   const next=JSON.parse(JSON.stringify(data));change(next);next.generation=data.generation+1;
   const encrypted=sealVault(ArrayBuffer.fromString(JSON.stringify(next)));
   let persisted=false;
@@ -40,7 +43,7 @@ export function changeSettings(change){
   data=next;loadError=false;
   return data;
 }
-export function vaultStatus(){return {encrypted:true,generation:data.generation,loadError,apiNames:Object.keys(data.api),ssid:data.wifi?.ssid??''};}
+export function vaultStatus(){return {encrypted:true,generation:data.generation,loadError,chatMode:data.chatMode===true,transcriptionMode:data.transcriptionMode===true,apiNames:Object.keys(data.api),ssid:data.wifi?.ssid??''};}
 export function vaultSelfTest(){
   const plain=ArrayBuffer.fromString('configuration-encryption-self-test');
   const sealed=sealVault(plain);
