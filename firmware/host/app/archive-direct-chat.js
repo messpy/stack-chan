@@ -268,6 +268,9 @@ const labels = {
   unconfigured: '会話の初期登録が必要です',
 }
 let chatSaveFailedOff=false,recognitionSaveFailedOff=false
+// Automatic offline fallback must suspend the native session, never change the
+// user-selected chat/transcription preferences saved on SD.
+let automaticOfflineSuspended=false
 function enabled() {
   try {
     return !chatSaveFailedOff && getSettings().chatMode === true
@@ -680,7 +683,7 @@ async function provision() {
   trace('[direct-chat] cloud configuration renewed\n')
 }
 async function connect() {
-  if (connecting || chat || !running()) return
+  if (automaticOfflineSuspended || connecting || chat || !running()) return
   if (enrollment.phase === 'confirming') return
   if (!getSettingsStatus().connected) {
     state = 'waiting'
@@ -1108,6 +1111,19 @@ export function pauseDirectChat() {
 export function resumeDirectChat() {
   if (running()) retryAt = 0
 }
+export function suspendDirectChatForAutomaticOffline(){
+  if(automaticOfflineSuspended)return
+  automaticOfflineSuspended=true
+  pauseDirectChat()
+  state=running()?'waiting':'off'
+  trace('[offline-mode] temporary suspension; saved preference untouched\n')
+}
+export function resumeDirectChatFromAutomaticOffline(){
+  if(!automaticOfflineSuspended)return
+  automaticOfflineSuspended=false
+  resumeDirectChat()
+  trace('[offline-mode] temporary suspension ended; saved preference untouched\n')
+}
 export async function provisionDirectChat() {
   await provision()
   return { configured: true }
@@ -1309,7 +1325,7 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
   // Restore saved conversation mode; credentials must not turn an explicit OFF on.
   Timer.set(()=>restoreConversationOnBoot(onBoot),1000)
   Timer.repeat(() => {
-    if (!running()) return
+    if (automaticOfflineSuspended || !running()) return
     if (chat) {
       if (signature() !== connectionSignature) {
         closeChat()
