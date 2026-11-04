@@ -31,10 +31,12 @@ export function changeSettings(change){
   loadSettings();
   const next=JSON.parse(JSON.stringify(data));change(next);next.generation=data.generation+1;
   const encrypted=sealVault(ArrayBuffer.fromString(JSON.stringify(next)));
+  let persisted=false;
   withSDCard(root=>{
     const file=root.openFile({path:path(next.generation%2),mode:'w'});
-    try{file.write(encrypted,0);file.flush();}finally{file.close();}
+    try{file.write(encrypted,0);file.flush();persisted=true;}finally{file.close();}
   });
+  if(!persisted)throw new Error('SDカードに設定を保存できませんでした');
   data=next;loadError=false;
   return data;
 }
