@@ -12,6 +12,11 @@ on:
       - '.github/workflows/archive-issues-regression.yml'
   workflow_dispatch:
 
+# Old commits must not run multiple expensive CoreS3 builds concurrently.
+concurrency:
+  group: archive-issues-33-38-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   offline-regression:
     runs-on: ubuntu-latest
