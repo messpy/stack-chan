@@ -138,9 +138,9 @@ test('camera tool refuses unsolicited requests and reuses direct capture', async
 })
 
 test('conversation subtitle paths are bottom anchored, including error and camera analysis', () => {
-  assert.equal((direct.match(/robot\.showBalloon\(/g) ?? []).length, 1, 'route all conversation balloons through the helper')
-  assert.match(direct, /function showConversationBalloon\(message, options=\{\}\)/)
-  assert.match(direct, /return robot\.showBalloon\(message, \{bottom:40,height:24,paddingY:4,\.\.\.options\}\)/)
+  assert.equal((direct.match(/robot\.showBalloon\(/g) ?? []).length, 0, 'route all conversation balloons through the helper')
+  assert.match(direct, /function showConversationBalloon\(message, options=\{\}, target=robot\)/)
+  assert.match(direct, /return target\.showBalloon\(message, \{bottom:40,height:24,paddingY:4,\.\.\.options\}\)/)
   assert.match(lan, /robot\.showBalloon\(analysis\.text,\{bottom:40,height:24,paddingY:4\}\)/)
 })
 
