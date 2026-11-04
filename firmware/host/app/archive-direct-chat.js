@@ -763,7 +763,7 @@ async function connect() {
             }),
           }
     let ollamaBusy = false,recognitionTurnCurrent=()=>false
-    let visualAllowedUntil=0,photoTurn,volumeAllowedUntil=0,volumeTurn
+    let visualAllowedUntil=0,photoTurn,volumeAllowedUntil=0,volumeTurn,headHandled
     async function executeTool(name, args) {
       if (chat !== instance&&!recognitionTurnCurrent()) throw new Error('会話が切り替わりました')
       if (name === 'camera_describe') {
@@ -788,6 +788,13 @@ async function connect() {
         }
         volumeAllowedUntil=0;
         return setVolume(args?.percent);
+      }
+      if(name==='head_move'&&headHandled?.direction===args?.direction){
+        const pending=headHandled;headHandled=undefined
+        const result=await pending.promise
+        if(result?.commanded!==true)throw new Error('首振り動作が完了していません')
+        trace('[head-motion] duplicate reused result verified=false\n')
+        return {...result,duplicate:true}
       }
       if (memoryTools.some((t) => t.name === name)) {
         if (name === 'conversation_identify') {
@@ -945,6 +952,7 @@ async function connect() {
               }catch(_){trace('[speaker] introduction needs clarification\n')}
             }
             const recognized=input;input = ''
+            headHandled=undefined
             const modeCommand=modeCommandFromText(recognized)
             if(modeCommand) {
               try {
@@ -989,7 +997,11 @@ async function connect() {
             // the cloud chooses a function call or only speaks an acknowledgement.
             if (!standalone && !recognitionOnly) {
               const direction=headDirectionFromText(recognized)
-              if(direction) Promise.resolve(callDeviceTool('head_move',{direction})).catch(()=>trace('[head-motion] voice command failed\n'))
+              if(direction){
+                const promise=Promise.resolve().then(()=>callDeviceTool('head_move',{direction}))
+                headHandled={direction,promise}
+                promise.catch(error=>trace('[head-motion] voice command failed: '+String(error?.message||error).slice(0,120)+'\n'))
+              }
             }
             if(recognitionOnly)Timer.set(()=>recognitionTurn(recognized),0)
           }
