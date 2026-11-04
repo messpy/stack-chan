@@ -5,6 +5,8 @@ on:
     branches: [stackchan-super]
     paths:
       - 'firmware/host/app/archive-direct-chat.js'
+      - 'firmware/host/app/archive-offline.js'
+      - 'firmware/host/app/archive-offline-policy.js'
       - 'firmware/host/app/lan-archive.js'
       - 'firmware/host/app/archive-volume.js'
       - 'firmware/host/app/archive-tools.js'
