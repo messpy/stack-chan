@@ -51,6 +51,12 @@ jobs:
             esac
           done
           node --experimental-vm-modules --test "${files[@]}"
+      - name: kmac quick-start shell syntax and read-only preflight
+        env:
+          STACKCHAN_SOURCE_REF: HEAD
+        run: |
+          bash -n firmware/scripts/kmac-pr39.sh
+          bash firmware/scripts/kmac-pr39.sh check
       - name: E2E evidence evaluator unit tests
         run: python3 -m unittest discover -s firmware/scripts -p 'test_voice_e2e.py' -v
 
