@@ -2,6 +2,31 @@
 
 対象は **kmac / Linux Mint / ESP32-S3(CoreS3) / PR #39** です。実際に接続された本体だけを操作します。GitHub Actionsの成功は実機PASSではありません。
 
+## 2026-11-05 撮影テストの再実行（再ビルド・書き込みなし）
+
+以前の実機結果（書き込み成功、VOICEVOX WAV保存のみ、USB `/photo/status` 送信タイムアウト）を踏まえ、一括実行フローを修正しました。
+
+- `voicevox-pc-play.py` は既存の `speak.py` を呼び出して**新たに生成されたWAV**を特定し、`paplay` / `pw-play` / `aplay` で実際に再生します。新規WAVがない場合や再生コマンドが失敗した場合はテスト失敗です。ユーザーの聴覚確認（yes/no）も必須です。
+- `archive-photo-lan.py` はPCから**同一LAN上の本体**の認証付き `http://<本体IP>:8082/status` にHTTP GETし、`photo` の許可された診断フィールドだけを保存します。接続先はRFC1918のプライベートIPv4に限定、リダイレクトとプロキシは拒否し、トークンは標準出力に表示しません。HTTPなので同じ信頼できるLANでのみ実行してください。
+- `STACKCHAN_DEVICE_IP` を設定すると**LANの状態取得を優先**します。省略した場合は従来のUSB確認を試し、送信タイムアウト時に本体のQR画面に表示されるIPを尋ねます。
+- USBもLANも無応答なら、**撮影音声は再生・録音しますが、結果はUNVERIFIED**。実機でJPEGが撮れたと推定しません。
+- ファームウェアのコード変更はなく、先に書き込んだ `7829e6f0` のまま、**新しい試験スクリプトだけを取得して**再試験できます。
+
+```bash
+clear
+cd /mnt/data/Development/stackchan/stack-chan && git fetch https://github.com/messpy/stack-chan.git fix/archive-issues-33-38-20261104 && git show FETCH_HEAD:firmware/scripts/kmac-pr39.sh > /tmp/stackchan-pr39.sh && bash /tmp/stackchan-pr39.sh test photo_explicit
+```
+
+USB診断がタイムアウトしている場合、本体の「スマホで操作」QRにある **IPのみ** を環境変数に設定すると再試験しやすくなります。トークン付きQR URLは履歴やチャットへ貼り付けないでください。
+
+```bash
+STACKCHAN_DEVICE_IP=192.168.210.123 bash /tmp/stackchan-pr39.sh test photo_explicit
+```
+
+IPは**例示**なので必ず本体画面の実際のIPへ置き換えてください。スピーカー切り替えが必要なら `STACKCHAN_PC_PLAYER=aplay` を指定します。
+
+最初にPCから音が出るか単体で確認するには、以前保存されたWAVを `aplay -q /home/kmac/work/camera-voicevox/audio/20261105_075211_466693.wav` で再生してください。
+
 ## 1コマンド（既存のGit作業ツリーを壊さない）
 
 **USBでStackChan本体を接続し、元の設定 `firmware/host/app/manifest_archive_private.json` が存在することを確認してください。**
@@ -19,8 +44,8 @@ cd /mnt/data/Development/stackchan/stack-chan && git fetch https://github.com/me
 4. USBは1台だけとし、複数の場合は `STACKCHAN_PORT` で選択する。Hubサービスがポートを使っていれば、停止して終了時に復帰する。
 5. **本体の16MiBフラッシュを読み取り、バックアップサイズとSHA256を確認した後で**、書込用の **yes/no確認** を行う。バックアップに失敗したら書き込まない。
 6. `scripts/update-archive.sh --flash-only` で書き込む。成功/失敗とログは `firmware/dist/update-logs/` に残す。
-7. PC上の既存VOICEVOX `speak.py` で「普通の会話」を再生し、PCマイクでWAV録音する。続けて認証付きUSB `/photo/status` の撮影前状態を保存し、「写真撮って」を再生・録音する。
-8. 撮影後の `/photo/status` と比較し、**今回新たに始まった撮影**でJPEGのSD保存が報告されたか検証。`errorStage`（例: `camera-start`、`frame-wait`、`jpeg-encode`、`sd-save`）を表示し、秘密情報を含む生ログは `~/stackchan-e2e/` のローカルに限定する。
+7. PC上のVOICEVOXで新しいWAVを作り、**PCスピーカーで再生**して、PCマイクで録音する。実際に聞こえたか本人確認する。続けてUSB（またはLAN）の撮影前状態を保存し、「写真撮って」をスピーカーで再生・録音する。
+8. 撮影後の `/photo/status` またはLAN `/status` と比較し、**今回新たに始まった撮影**でJPEGのSD保存が報告されたか検証。`errorStage`（例: `camera-start`、`frame-wait`、`jpeg-encode`、`sd-save`）を表示し、秘密情報を含む生ログは `~/stackchan-e2e/` のローカルに限定する。
 
 **注意:** `all` は書き込み後のVOICEVOX・録音・USB診断が失敗すると非ゼロ終了します。*書き込み失敗と同義ではありません*。USB通信がタイムアウトしても撮影失敗と即断せず、状態を `UNVERIFIED` として扱います。 `dist/update-logs/latest.json` とバックアップを確認してください。
 
