@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# kmac PR39: check | build | flash | all | test [case] | restore /absolute/path/backup.bin
+# kmac PR39: check | build | flash | all (ordinary chat + photo E2E) | test [case] | restore
 # Use through: git show FETCH_HEAD:firmware/scripts/kmac-pr39.sh | bash -s -- all
 if [[ -t 1 ]]; then clear; fi
 umask 077
@@ -242,6 +242,40 @@ acoustic(){
     --output-dir "$output" "${extra[@]}" || die "音響E2E失敗。録音デバイス/VOICEVOXを確認"
   log WARN "PC音響試験の記録完了。review.jsonによる実機証拠の評価は未実施=UNVERIFIED"
 }
+photo_probe(){
+  STEP=PHOTO_STATUS
+  local destination="$1"
+  # Open authenticated read-only USB only after Hub releases the port.
+  stop_hub
+  log ACTION "USB /photo/status を読み取り専用で取得（機密ログはローカル限定）"
+  python3 "$FW/scripts/archive-usb-audit.py" --photo-only --config "$PRIVATE_TARGET" \
+    --port "$PORT" --seconds 8 --json-out "$destination" --output "$destination.usb.log" ||
+    die "撮影診断APIの取得失敗。USB送信タイムアウト/本体接続/トークンを確認: $destination.usb.log"
+  if [[ "$HUB_STOPPED" == yes ]]; then
+    systemctl --user start "$SERVICE" || die "USB管理サービス復帰失敗"
+    HUB_STOPPED=no
+  fi
+}
+photo_e2e(){
+  STEP=PHOTO_E2E
+  device
+  python3 -c 'import serial' >/dev/null 2>&1 || die "pyserial がありません（python3 -m pipで準備が必要）。書込済みの本体は変更しません"
+  local root="${STACKCHAN_E2E_OUTPUT:-$HOME/stackchan-e2e}"
+  local dir="$root/photo-status-$(date -u +%Y%m%dT%H%M%SZ)-$"
+  mkdir -p "$dir" || die "診断結果ディレクトリ作成失敗"
+  chmod 700 "$dir" || die "診断結果の権限設定失敗"
+  log CHECK "Issue #33: 撮影前の状態を取得"
+  photo_probe "$dir/before.json"
+  log ACTION "音声で「写真撮って」を実行し、PCマイクで収録"
+  acoustic test photo_explicit
+  log CHECK "Issue #33: 撮影後の状態を取得"
+  photo_probe "$dir/after.json"
+  STEP=PHOTO_VERDICT
+  python3 "$FW/scripts/archive-usb-audit.py" --compare-photo "$dir/before.json" "$dir/after.json" ||
+    die "Issue #33: 撮影ステータスを確認。診断結果=$dir（書込成功とは別）"
+  log CHECK "Issue #33: 新しい写真のSD保存を本体が報告。画像内容/AI応答の品質は手動検証"
+  log INFO "診断結果=$dir"
+}
 case "$MODE" in
   build) dependencies; tests; build ;;
   flash)
@@ -251,8 +285,12 @@ case "$MODE" in
     device # Fail early if the expected device or esptool is missing.
     [[ -f "${STACKCHAN_SPEAK_SCRIPT:-/home/kmac/work/camera-voicevox/speak.py}" ]] || die "VOICEVOX speak.pyがありません。テスト不要ならflashを指定"
     command -v arecord >/dev/null 2>&1 || die "arecordがありません。テスト不要ならflashを指定"
-    dependencies; tests; build; flash; acoustic test ordinary_chat ;;
-  test) dependencies; tests; acoustic "$@" ;;
+    dependencies; tests; build; flash; acoustic test ordinary_chat; photo_e2e ;;
+  test)
+    dependencies; tests
+    if [[ "${2:-}" == photo_explicit ]]; then photo_e2e
+    else acoustic "$@"
+    fi ;;
   restore) restore "$@" ;;
 esac
 STEP=DONE
