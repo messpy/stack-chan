@@ -3,7 +3,9 @@
 import argparse
 import datetime as dt
 import json
+import hashlib
 import pathlib
+import re
 import shlex
 import subprocess
 import sys
@@ -47,6 +49,57 @@ def command(template, *, text=None, wav=None):
     return [part.replace("{text}", text or "").replace("{wav}", str(wav or "")) for part in argv]
 
 
+
+# Device debug lines are buffered in Archive and require authenticated USB/Hub
+# polling. A serial stream by itself may NOT contain these markers.
+DEVICE_MARKERS = {
+    "asr_final": r"\[asr\] final",
+    "boot_mode_read": r"\[boot-mode\] read",
+    "boot_mode_restored": r"\[boot-mode\] restored",
+    "boot_mode_blocked": r"\[boot-mode\] restore blocked",
+    "mode_voice_applied": r"\[mode-voice\] applied",
+    "mode_voice_rejected": r"\[mode-voice\] rejected",
+    "camera_start": r"\[archive-camera\] capture begin",
+    "camera_saved": r"\[archive-camera\] saved",
+    "camera_failure": r"\[archive-camera\] capture failed",
+    "volume_applied": r"\[volume\] applied",
+    "fatal": r"\bfatal\b",
+    "brownout": r"\bbrownout\b",
+    "panic": r"\bpanic\b",
+}
+
+
+def debug_markers(content):
+    """Return only bounded counts and a digest; never copy credential-bearing logs."""
+    text = content.decode("utf-8", errors="replace")
+    return {
+        "bytes": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "markers": {
+            name: len(re.findall(pattern, text, re.IGNORECASE))
+            for name, pattern in DEVICE_MARKERS.items()
+        },
+        "note": "A marker is diagnostic context, NOT proof of physical behavior or ASR correctness.",
+    }
+
+
+def tail_device_log(path, offset):
+    if path is None:
+        return None
+    if not path.is_file():
+        return {"error": "device log was not available"}
+    end = path.stat().st_size
+    if end < offset:  # log rotation/truncation
+        offset = 0
+    with path.open("rb") as handle:
+        handle.seek(offset)
+        delta = handle.read(1024 * 1024)  # bounded; no secret-bearing raw upload
+    result = debug_markers(delta)
+    result["start_offset"] = offset
+    result["end_offset"] = end
+    result["truncated"] = end - offset > len(delta)
+    return result
+
 def capture(args, case):
     out = args.output_dir / (dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "-" + case["id"])
     out.mkdir(parents=True, exist_ok=False)
@@ -63,6 +116,7 @@ def capture(args, case):
         "device_response_verified": False,
     }
     recorder = None
+    initial_log_offset = args.device_log.stat().st_size if args.device_log and args.device_log.is_file() else 0
     try:
         if args.record_command:
             record_argv = command(args.record_command, wav=wav)
@@ -77,6 +131,16 @@ def capture(args, case):
             if recorder.returncode != 0 or not wav.is_file() or wav.stat().st_size < 44:
                 raise RuntimeError("No valid PC mic WAV was recorded")
             run["pc_mic_wav"] = wav.name
+            if args.stt_command:
+                try:
+                    stt_cmd = command(args.stt_command, wav=wav)
+                    stt = subprocess.run(stt_cmd, check=True, timeout=args.timeout, stdin=subprocess.DEVNULL,
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    candidate = stt.stdout.decode("utf-8", errors="replace")[:4096]
+                    (out / "pc_stt_candidate.txt").write_text(candidate, encoding="utf-8")
+                    run["pc_stt_status"] = "candidate_only"
+                except (OSError, ValueError, subprocess.SubprocessError) as stt_error:
+                    run["pc_stt_status"] = type(stt_error).__name__
     except (OSError, ValueError, subprocess.SubprocessError, RuntimeError) as error:
         run["capture_error"] = type(error).__name__ + ": " + str(error)[:200]
     finally:
@@ -87,6 +151,14 @@ def capture(args, case):
             except subprocess.TimeoutExpired:
                 recorder.kill()
                 recorder.wait()
+        # This summary is tied to the run interval, but cannot verify its semantics.
+        if args.device_log:
+            log_data = tail_device_log(args.device_log, initial_log_offset)
+            (out / "device_log_summary.json").write_text(
+                json.dumps(log_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            run["device_log_summary"] = "device_log_summary.json"
+        run["utc_finished"] = dt.datetime.now(dt.timezone.utc).isoformat()
         (out / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         review = {
             "checks": {
@@ -108,6 +180,8 @@ def main(argv=None):
     run.add_argument("--case", required=True)
     run.add_argument("--speak-command", required=True, help="argv template containing {text}; never uses shell=True")
     run.add_argument("--record-command", help="optional argv template containing {wav}, e.g. arecord ... {wav}")
+    run.add_argument("--stt-command", help="optional independent PC ASR command with {wav}; saves candidate, not proof")
+    run.add_argument("--device-log", type=pathlib.Path, help="existing decoded debug-log file; saves counts/hash only, not raw secrets")
     run.add_argument("--output-dir", type=pathlib.Path, required=True)
     run.add_argument("--timeout", type=int, default=30)
     run.add_argument("--firmware-sha", default="UNKNOWN")
