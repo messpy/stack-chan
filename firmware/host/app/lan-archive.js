@@ -107,6 +107,7 @@ async function photo(robot,args={},fromConversation=false) {
   let frame,jpeg,result,primaryError;
   const startedAt=Date.now();
   try {
+    try {
     trace('[archive-camera] capture begin\n');
     const options={width:176,height:144,imageType:'rgb565le'};
     await robot.camera.start(options);
@@ -130,7 +131,6 @@ async function photo(robot,args={},fromConversation=false) {
       if(!primaryError)throw error;
     } finally {
       if(ownsBusy)busy=false;
-      photoActive=false;
     }
   }
   if(args.analyze!==false) {
@@ -138,7 +138,11 @@ async function photo(robot,args={},fromConversation=false) {
     Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
     trace('[archive-camera] analysis result='+String(result.analysis?.status||'unknown')+'\n');
   }
-  return result;
+    return result;
+  } finally {
+    // Retain the single-flight lease through JPEG analysis and its failures.
+    photoActive=false;
+  }
 }
 
 async function describeImage(robot,name,jpeg,question){
