@@ -15,7 +15,7 @@ function harness(initial,failWrite=false){
   const events=[]
   const context={
     getSettings:()=>settings,chatProvider:()=> 'xiaozhi',cloudConfig:()=>settings.directChat,
-    enabled:()=>settings.chatMode===true,modeChanged:on=>events.push('mode:'+on),
+    enabled:()=>settings.chatMode===true,recognitionMode:()=>settings.transcriptionMode===true,modeChanged:on=>events.push('mode:'+on),
     changeSettings:change=>{events.push('write');if(failWrite)throw Error('SD unavailable');change(settings)},
     chatSaveFailedOff:false,recognitionSaveFailedOff:false,
     closeChat:()=>{},collectMemory:()=>{},beginConversation:()=>events.push('begin'),
