@@ -55,6 +55,17 @@ let robot,
   connectionSignature = '',
   generation = 0,
   owned = false
+// Explicit consent is turn-scoped. Mere mentions and negated camera requests are never consent.
+function explicitVisualRequest(text) {
+  const normalized=String(text||'').replace(/[\s、。！？!?]/g,'');
+  if(/(?:撮らない|撮るな|撮影しない|撮影するな|見ないで|写さない|映さない|やめて|禁止)/.test(normalized))return false;
+  return /(?:写真|撮影|カメラ|画像|映像|目の前|これ|ここ)/.test(normalized)
+    && /(?:撮って|とって|撮影して|見て|確認して|映して|写して|見せて)/.test(normalized);
+}
+function directPhotoRequest(text) {
+  const normalized=String(text||'').replace(/[\s、。！？!?]/g,'');
+  return /^(?:写真|カメラ)(?:を|で)?(?:撮って|とって|撮影して)(?:ください|お願い|ね|よ)?$/.test(normalized);
+}
 let refreshAITalk
 let photoHandler, modeChanged
 // Conversation captions belong below the status bar, including errors and setup prompts.
@@ -719,11 +730,18 @@ async function connect() {
             }),
           }
     let ollamaBusy = false,recognitionTurnCurrent=()=>false
+    let visualAllowedUntil=0,photoTurn
     async function executeTool(name, args) {
       if (chat !== instance&&!recognitionTurnCurrent()) throw new Error('会話が切り替わりました')
       if (name === 'camera_describe') {
         if (!photoHandler) throw new Error('Camera unavailable')
-        const result = await photoHandler(args)
+        const now=Date.now();
+        if(now>visualAllowedUntil)throw new Error('ユーザーによる撮影依頼がありません');
+        const result=photoTurn && now<=photoTurn.expires
+          ? await photoTurn.promise
+          : await photoHandler(args);
+        visualAllowedUntil=0;
+        trace('[vision] camera result='+String(result.analysis?.status||'unknown')+'\n');
         return result.analysis?.status === 'complete'
           ? { photo: result.image, description: result.analysis.text }
           : { photo: result.image, error: result.analysis?.error || '画像認識できませんでした' }
@@ -882,6 +900,18 @@ async function connect() {
               }catch(_){trace('[speaker] introduction needs clarification\n')}
             }
             const recognized=input;input = ''
+            // Authorize at most one camera result for this recognized turn.
+            visualAllowedUntil=(!standalone&&!recognitionOnly&&explicitVisualRequest(recognized))
+              ? Date.now()+12000 : 0;
+            photoTurn=undefined;
+            if(visualAllowedUntil && directPhotoRequest(recognized) && photoHandler) {
+              const promise=Promise.resolve().then(()=>photoHandler({question:recognized}));
+              photoTurn={expires:visualAllowedUntil,promise};
+              promise.then(
+                ()=>trace('[vision] explicit photo completed\n'),
+                ()=>trace('[vision] explicit photo failed\n')
+              );
+            }
             // A short, explicit physical command should not depend on whether
             // the cloud chooses a function call or only speaks an acknowledgement.
             if (!standalone && !recognitionOnly) {
