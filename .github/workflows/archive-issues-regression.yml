@@ -64,8 +64,10 @@ jobs:
         run: |
           bash -n firmware/scripts/kmac-pr39.sh
           bash -n firmware/scripts/update-archive.sh
-          python3 -m py_compile firmware/scripts/archive-usb-audit.py
+          python3 -m py_compile firmware/scripts/archive-usb-audit.py firmware/scripts/archive-photo-lan.py firmware/scripts/voicevox-pc-play.py
           python3 -m unittest discover -s firmware/scripts -p 'test_archive_usb_audit.py' -v
+          python3 -m unittest discover -s firmware/scripts -p 'test_archive_photo_lan.py' -v
+          python3 -m unittest discover -s firmware/scripts -p 'test_voicevox_pc_play.py' -v
           bash firmware/scripts/kmac-pr39.sh check
       - name: E2E evidence evaluator unit tests
         run: python3 -m unittest discover -s firmware/scripts -p 'test_voice_e2e.py' -v
