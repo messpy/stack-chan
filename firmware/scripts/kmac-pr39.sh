@@ -260,7 +260,9 @@ acoustic(){
     --record-command "arecord -q -D ${STACKCHAN_RECORD_DEVICE:-default} -f S16_LE -r 16000 -c 1 -d 20 -t wav {wav}" \
     --timeout 90 --provider "${STACKCHAN_PROVIDER:-xiaozhi}" --firmware-sha "$evidence_commit" \
     --output-dir "$output" "${extra[@]}" || die "音響E2E失敗。録音デバイス/VOICEVOXを確認"
-  log WARN "PC音響試験の記録完了。review.jsonによる実機証拠の評価は未実施=UNVERIFIED"
+  log CHECK "PCの再生プロセス完了。聴覚上の確認を行います"
+  confirm "今、PCから読み上げが実際に聞こえましたか？"
+  log WARN "PC音響試験の記録完了。StackChan側の音声認識・応答はreview.jsonで別途検証=UNVERIFIED"
 }
 photo_probe(){
   STEP=PHOTO_STATUS
