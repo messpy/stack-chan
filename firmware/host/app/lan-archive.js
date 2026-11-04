@@ -27,7 +27,7 @@ import {analyzeJPEG,visionStatus} from 'archive-vision';
 import {startAlarmSettings,openAlarmSettings,showRingingAlarm,hideRingingAlarm} from 'archive-alarm-ui';
 import {alarmSoundCommand,playAlarmSound} from 'archive-alarm-sound';
 import {startWeb,openControl,controlStatus} from 'archive-web';
-import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat} from 'archive-direct-chat';
+import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat,suspendDirectChatForAutomaticOffline,resumeDirectChatFromAutomaticOffline} from 'archive-direct-chat';
 import {recordMemory,history,deviceHistory,currentSpeaker,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
 import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
 import {acceptAudioChunk} from 'archive-audio-upload';
@@ -459,6 +459,7 @@ export function startArchive(robot) {
   });
   const offlinePolicy=new OfflinePolicy();
   let hadOnlineConnection=usbConnected()||getSettingsStatus().connected;
+  let automaticOfflineActive=false;
   const autoOffline=value=>{
     if(typeof value==='boolean'){changeSettings(s=>{s.autoOffline=value;});offlinePolicy.reset();}
     return {enabled:getSettings().autoOffline!==false,usb:usbConnected(),wifi:getSettingsStatus().connected,active:offlinePolicy.entered};
@@ -467,10 +468,21 @@ export function startArchive(robot) {
     try{
       const connection=autoOffline(),network=getSettingsStatus();
       const online=connection.usb||connection.wifi;
-      if(online&&!hadOnlineConnection)closeOffline();
+      if(online&&!hadOnlineConnection){
+        if(automaticOfflineActive){
+          automaticOfflineActive=false;
+          resumeDirectChatFromAutomaticOffline();
+          trace('[offline-mode] online again; restoring saved conversation/recognition preference\n');
+        }
+        closeOffline();
+      }
       hadOnlineConnection=online;
       if(!offlinePolicy.observe({...connection,setup:network.setupActive||checkStatus().running,busy:(busy&&!directChatStatus().busy)||offlineStatus().playing}))return;
-      openOffline();offlinePolicy.enteredOffline();trace('[offline] automatic mode: USB and Wi-Fi disconnected\n');
+      suspendDirectChatForAutomaticOffline();
+      automaticOfflineActive=true;
+      openOffline({automatic:true});
+      offlinePolicy.enteredOffline();
+      trace('[offline] automatic mode: USB and Wi-Fi disconnected; user preference preserved\n');
     }catch(_){offlinePolicy.absent=0;}
   },1000);
   startWeb(robot,{
