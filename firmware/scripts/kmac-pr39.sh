@@ -62,6 +62,12 @@ if [[ "$MODE" == check ]]; then
   log CHECK "READ-ONLY完了"
   exit 0
 fi
+STEP=LOCK
+command -v flock >/dev/null 2>&1 || die "flock(util-linux)がありません"
+mkdir -p "$HOME/.cache" || die "ロックディレクトリ作成失敗"
+exec 8>"$HOME/.cache/stackchan-pr39.lock" || die "ロックを開けません"
+flock -n 8 || die "別のStackChan更新または復旧が実行中です"
+log CHECK "更新・復旧の排他ロック取得"
 if [[ "$MODE" != restore ]]; then
 STEP=WORKTREE
 [[ "$WORKTREE" != "$REPO" && "$WORKTREE" != /tmp/* ]] || die "専用worktreeパスが危険です"
