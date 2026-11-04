@@ -375,7 +375,12 @@ export function startArchive(robot) {
     finally{usbBusy=false;}
   },5);
 
-  try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},args=>photo(robot,{...args,analyze:true},true),on=>{if(on){if(offlineStatus().playing)throw new Error('読み上げが終わってから会話を開始してください');closeOffline();}},async()=>{if(bootSpeechEnabled(getSettings())){trace('[boot] speaking name\n');await offlineAction('boot');robot.hideBalloon();}});}catch(_){trace('[direct-chat] initialization unavailable\n');}
+  try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},args=>photo(robot,{...args,analyze:true},true),on=>{if(on){
+    // Preserve the user's ON choice while boot/offline speech owns the audio device.
+    // The regular chat retry loop will connect after the audio lease is released.
+    if(offlineStatus().playing)return;
+    closeOffline();
+  }},async()=>{if(bootSpeechEnabled(getSettings())){trace('[boot] speaking name\n');await offlineAction('boot');robot.hideBalloon();}});}catch(_){trace('[direct-chat] initialization unavailable\n');}
   startChecks(robot,{
     prepare(){if((busy&&!directChatStatus().busy)||offlineStatus().playing||reminderStatus().ringing)throw new Error('busy');if(directChatStatus().enabled)setChatMode(false);closeOffline();},
     async test(kind,report,stopped){
