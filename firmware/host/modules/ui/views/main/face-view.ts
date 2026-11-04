@@ -448,7 +448,16 @@ export const FaceMainTemplate: TemplateFunction<FaceViewParams, PiuContainer> = 
       top: 0,
       bottom: 0,
       skin,
+      // Make unused face-screen space reveal the app bar without stealing
+      // touches from face parts, app-bar buttons, or drawer overlays.
+      active: true,
+      backgroundTouch: true,
       contents: [faceRegion, effects],
+      Behavior: class extends Behavior {
+        onTouchEnded(container: PiuContainer) {
+          container.bubble('onFaceTouch')
+        }
+      },
     }
   },
 ) as unknown as TemplateFunction<FaceViewParams, PiuContainer>
