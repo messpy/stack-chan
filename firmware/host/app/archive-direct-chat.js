@@ -88,8 +88,8 @@ function volumeCommandFromText(text) {
 let refreshAITalk
 let photoHandler, modeChanged
 // Conversation captions belong below the status bar, including errors and setup prompts.
-function showConversationBalloon(message, options={}) {
-  return robot.showBalloon(message, {bottom:40,height:24,paddingY:4,...options});
+function showConversationBalloon(message, options={}, target=robot) {
+  return target.showBalloon(message, {bottom:40,height:24,paddingY:4,...options});
 }
 let greetingPending = true,
   conversationProviderSeen,
@@ -1113,7 +1113,7 @@ export function registerAITalk(robot, actions) {
         // Run after the launcher finishes closing, so speaker selection stays visible.
         Timer.set(() => {
           try { actions.toggle(); refresh() }
-          catch (error) { showConversationBalloon(String(error.message || '会話設定を確認してください')) }
+          catch (error) { showConversationBalloon(String(error.message || '会話設定を確認してください'),{},robot) }
         }, 0)
         return {content}
       },
