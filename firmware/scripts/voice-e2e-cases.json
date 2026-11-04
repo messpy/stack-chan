@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "description": "CoreS3 physical voice E2E stimuli; no result is PASS without external evidence",
+  "description": "CoreS3 physical voice E2E stimuli (18 cases); human evidence and device state are mandatory; OFF cannot receive a voice ON instruction without an active recognizer",
   "cases": [
     {
       "id": "photo_explicit",
@@ -111,6 +111,76 @@
         "stability"
       ],
       "note": "Repeat across 30 minutes and record heap/reset reason"
+    },
+    {
+      "id": "mode_recognition_on",
+      "text": "文字起こしをオンにして",
+      "required": [
+        "asr",
+        "mode"
+      ],
+      "note": "Start with conversation ON. Confirm stored transcription ON, conversation OFF, and old session closed"
+    },
+    {
+      "id": "mode_recognition_only_no_tool",
+      "text": "写真撮って",
+      "required": [
+        "asr",
+        "no_photo",
+        "no_head",
+        "no_llm"
+      ],
+      "note": "Start with transcription ON. ASR must display words but no camera, head motion, AI answer or audio"
+    },
+    {
+      "id": "mode_recognition_off",
+      "text": "文字起こしをオフにして",
+      "required": [
+        "asr",
+        "mode"
+      ],
+      "note": "Start with transcription ON. Confirm explicit OFF persists and microphone stops"
+    },
+    {
+      "id": "mode_reboot_chat_on",
+      "text": "こんにちは",
+      "required": [
+        "boot_mode",
+        "asr",
+        "response",
+        "audio"
+      ],
+      "note": "Manually set conversation ON, power-cycle CoreS3 before the trial. Confirm saved AND connected values, not just ON on screen"
+    },
+    {
+      "id": "mode_reboot_chat_off",
+      "text": "こんにちは",
+      "required": [
+        "boot_mode",
+        "no_asr",
+        "no_audio"
+      ],
+      "note": "Manually set conversation+transcription OFF, power-cycle CoreS3; sending stimulus must not activate microphone or cloud. Prove this via active monitor and physical output"
+    },
+    {
+      "id": "head_voice_right",
+      "text": "右を向いて",
+      "required": [
+        "asr",
+        "head",
+        "response"
+      ],
+      "note": "Hardware observation for the previously working #32 motion; do not claim motor movement from a tool acknowledgement"
+    },
+    {
+      "id": "head_voice_up",
+      "text": "上を向いて",
+      "required": [
+        "asr",
+        "head",
+        "response"
+      ],
+      "note": "Measure physical tilt direction and return to safe pose if testing fails"
     }
   ]
 }
