@@ -789,12 +789,17 @@ async function connect() {
         volumeAllowedUntil=0;
         return setVolume(args?.percent);
       }
-      if(name==='head_move'&&headHandled?.direction===args?.direction){
-        const pending=headHandled;headHandled=undefined
-        const result=await pending.promise
-        if(result?.commanded!==true)throw new Error('首振り動作が完了していません')
-        trace('[head-motion] duplicate reused result verified=false\n')
-        return {...result,duplicate:true}
+      if(name==='head_move'){
+        if(headHandled){
+          if(headHandled.direction!==args?.direction)throw new Error('同一発話中の異なる首振り指示は実行できません')
+          const result=await headHandled.promise
+          if(result?.commanded!==true)throw new Error('首振り動作が完了していません')
+          trace('[head-motion] duplicate reused result verified=false\n')
+          return {...result,duplicate:true}
+        }
+        const promise=Promise.resolve().then(()=>callDeviceTool(name,args))
+        headHandled={direction:args?.direction,promise}
+        return await promise
       }
       if (memoryTools.some((t) => t.name === name)) {
         if (name === 'conversation_identify') {
