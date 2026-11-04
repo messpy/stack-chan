@@ -78,6 +78,26 @@ test('a conversation that ends during capture does not restore obsolete busy=tru
   assert.equal(h.context.photoActive, false)
 })
 
+test('photo lease remains exclusive during image analysis and releases on analysis failure', async () => {
+  const h = photoHarness()
+  let rejectAnalysis
+  const analysis = new Promise((resolve, reject) => { rejectAnalysis = reject })
+  let analysisStarted
+  const started = new Promise(resolve => { analysisStarted = resolve })
+  h.context.describeImage = async () => {
+    analysisStarted()
+    return analysis
+  }
+  const first = h.photo(h.robot, { analyze: true })
+  await started
+  assert.equal(h.context.photoActive, true)
+  await assert.rejects(h.photo(h.robot, { analyze: false }), /Camera busy/)
+  rejectAnalysis(Error('vision service unavailable'))
+  await assert.rejects(first, /vision service unavailable/)
+  assert.equal(h.context.photoActive, false)
+  assert.equal(h.context.busy, false)
+})
+
 test('camera failures still try stop and release the lock', async () => {
   for (const option of [{ failStart: true }, { failCapture: true }, { failStop: true }]) {
     const h = photoHarness(option)
