@@ -1,15 +1,14 @@
-# kmac: PR #39を数行でビルド → バックアップ → CoreS3書き込み → PC音声試験
+# kmac: PR #39を1コマンドでビルド → バックアップ → CoreS3書き込み → #33撮影診断
 
 対象は **kmac / Linux Mint / ESP32-S3(CoreS3) / PR #39** です。実際に接続された本体だけを操作します。GitHub Actionsの成功は実機PASSではありません。
 
-## 最短3行（既存のGit作業ツリーを壊さない）
+## 1コマンド（既存のGit作業ツリーを壊さない）
 
 **USBでStackChan本体を接続し、元の設定 `firmware/host/app/manifest_archive_private.json` が存在することを確認してください。**
 
 ```bash
 clear
-cd /mnt/data/Development/stackchan/stack-chan
-git fetch https://github.com/messpy/stack-chan.git fix/archive-issues-33-38-20261104 && git show FETCH_HEAD:firmware/scripts/kmac-pr39.sh > /tmp/stackchan-pr39.sh && bash /tmp/stackchan-pr39.sh all
+cd /mnt/data/Development/stackchan/stack-chan && git fetch https://github.com/messpy/stack-chan.git fix/archive-issues-33-38-20261104 && git show FETCH_HEAD:firmware/scripts/kmac-pr39.sh > /tmp/stackchan-pr39.sh && bash /tmp/stackchan-pr39.sh all
 ```
 
 実行内容は順に：
@@ -20,17 +19,18 @@ git fetch https://github.com/messpy/stack-chan.git fix/archive-issues-33-38-2026
 4. USBは1台だけとし、複数の場合は `STACKCHAN_PORT` で選択する。Hubサービスがポートを使っていれば、停止して終了時に復帰する。
 5. **本体の16MiBフラッシュを読み取り、バックアップサイズとSHA256を確認した後で**、書込用の **yes/no確認** を行う。バックアップに失敗したら書き込まない。
 6. `scripts/update-archive.sh --flash-only` で書き込む。成功/失敗とログは `firmware/dist/update-logs/` に残す。
-7. PC上の既存VOICEVOX `speak.py` で「普通の会話」ケースを読み上げ、PCマイクで本体の返答をWAV録音して、手動レビュー用データを保存する。
+7. PC上の既存VOICEVOX `speak.py` で「普通の会話」を再生し、PCマイクでWAV録音する。続けて認証付きUSB `/photo/status` の撮影前状態を保存し、「写真撮って」を再生・録音する。
+8. 撮影後の `/photo/status` と比較し、**今回新たに始まった撮影**でJPEGのSD保存が報告されたか検証。`errorStage`（例: `camera-start`、`frame-wait`、`jpeg-encode`、`sd-save`）を表示し、秘密情報を含む生ログは `~/stackchan-e2e/` のローカルに限定する。
 
-**注意:** `all` は書き込み後のVOICEVOX/録音試験が失敗すると非ゼロ終了します。*書き込み失敗と同義ではありません*。 `dist/update-logs/latest.json` とバックアップを確認してください。
+**注意:** `all` は書き込み後のVOICEVOX・録音・USB診断が失敗すると非ゼロ終了します。*書き込み失敗と同義ではありません*。USB通信がタイムアウトしても撮影失敗と即断せず、状態を `UNVERIFIED` として扱います。 `dist/update-logs/latest.json` とバックアップを確認してください。
 
 ### 状態を調べるだけ（本体変更なし）
 
-上記3行目の末尾の `all` を `check` に変更して実行します。
+上記コマンド末尾の `all` を `check` に変更して実行します。
 
 ### ビルドのみ、またはビルド＋書き込み
 
-先の3行目でスクリプトを取得した後なら、次のどちらか一行で実行できます。
+先のコマンドでスクリプトを取得した後なら、次のどちらか一行で実行できます。
 
 ```bash
 bash /tmp/stackchan-pr39.sh build
@@ -42,7 +42,15 @@ bash /tmp/stackchan-pr39.sh flash
 
 `build` はテスト＋ビルド、`flash` はテスト＋ビルド＋16MiBバックアップ＋書込です。いずれも共有SDKへのパッチ適用前に確認します。
 
-### 音声E2Eを試す
+### #33の撮影E2Eだけを再実行する（再ビルド・再書き込みなし）
+
+```bash
+bash /tmp/stackchan-pr39.sh test photo_explicit
+```
+
+前後2回の認証付きUSB診断と「写真撮って」の音声再生・録音を行います。PCに `pyserial` が必要です。撮影後に新しい保存が認められても、実際のJPEGの画質やAI画像認識は自動PASSにしません。
+
+### その他の音声E2Eを試す
 
 ```bash
 bash /tmp/stackchan-pr39.sh test mode_recognition_on
@@ -52,7 +60,7 @@ bash /tmp/stackchan-pr39.sh test mode_recognition_on
 
 本体の認証済みUSB/Hubから別プロセスで取得したデバッグログがあれば `STACKCHAN_DEVICE_LOG=/path/to/decoded.log` を渡せます。runnerはその**追記分の件数とSHA256のみ**保存します。USBの認証・Hubのログ取得をrunner自身が行うわけではありません。追加STTは `STACKCHAN_STT_COMMAND='whisper-cli -m /path/to/model.bin -f {wav}'` で指定できます。録音ファイルだけでASR/LLM実行を証明したことにはなりません。
 
-結果：`~/stackchan-e2e/<UTC timestamp>-<case>/` に `run.json`・`review.json`・`pc-mic.wav`、任意の `device_log_summary.json` と `pc_stt_candidate.txt` を保存します。**review.jsonの各根拠が埋まるまでは UNVERIFIED です**。
+結果：`~/stackchan-e2e/<UTC timestamp>-<case>/` に `run.json`・`review.json`・`pc-mic.wav`、任意の `device_log_summary.json` と `pc_stt_candidate.txt` を保存します。#33については同ディレクトリ内の `photo-status-<UTC timestamp>-<PID>/before.json`・`after.json`・`*.usb.log` に、秘密値を出さない状態とローカル専用デバッグ記録を分けます。**review.jsonの各根拠が埋まるまでは UNVERIFIED です**。
 
 ### 複数のUSBシリアルがある場合
 
