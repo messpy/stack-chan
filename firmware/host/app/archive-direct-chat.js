@@ -406,7 +406,19 @@ export function setChatMode(on) {
     saveError='会話は停止しましたが、OFF設定を保存できませんでした。再起動後の設定を確認してください'
   }
   // Do not change audio ownership until the ON preference is safely persisted.
-  if(on||!saveError)modeChanged?.(on)
+  try {
+    if(on||!saveError)modeChanged?.(on)
+  } catch(e) {
+    // A rejected audio handoff must not leave the persisted mode enabled.
+    if(on && starting) {
+      try {
+        changeSettings((data) => { data.chatMode=false })
+      } catch(rollbackError) {
+        trace('[direct-chat] failed to roll back chat mode: '+rollbackError+'\n')
+      }
+    }
+    throw e
+  }
   if(starting){
     if(recognitionMode())closeChat()
     beginConversation()
