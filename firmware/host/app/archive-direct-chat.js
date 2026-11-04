@@ -997,8 +997,20 @@ async function connect() {
               const promise=Promise.resolve().then(()=>photoHandler({question:recognized}));
               photoTurn={expires:visualAllowedUntil,promise};
               promise.then(
-                ()=>trace('[vision] explicit photo completed\n'),
-                ()=>trace('[vision] explicit photo failed\n')
+                result=>{
+                  const saved=!!result?.image;
+                  const status=String(result?.analysis?.status||'skipped').replace(/[^a-zA-Z0-9_-]/g,'').slice(0,30);
+                  trace('[vision] explicit photo saved='+saved+' analysis='+status+'\n');
+                  if(chat!==instance||!running())return;
+                  if(saved)showConversationBalloon(status==='complete'
+                    ?'撮影してSDカードに保存しました。画像解析も完了しました。'
+                    :'撮影してSDカードに保存しました。画像解析は完了していません。');
+                },
+                error=>{
+                  const reason=String(error?.name||'Error').replace(/[^A-Za-z0-9_]/g,'').slice(0,30);
+                  trace('[vision] explicit photo failed type='+reason+'\n');
+                  if(chat===instance&&running())showConversationBalloon('写真を撮影できませんでした。カメラとSDカードの状態を確認してください。');
+                }
               );
             }
             // A short, explicit physical command should not depend on whether
