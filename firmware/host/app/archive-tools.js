@@ -1,4 +1,5 @@
 import {headMoveTool,moveHead} from 'archive-head-motion';
+import {getVolume,setVolume} from 'archive-volume';
 import Time from 'time';
 import {nextDailyDue,japaneseClock,finishReminder} from 'archive-reminder-time';
 import {playAlarmSound,stopAlarmSound} from 'archive-alarm-sound';
@@ -11,7 +12,8 @@ const elapsedTimer=t=>Math.min(t.duration,(Time.ticks-t.started)>>>0);
 let alarmDisplay,alarmMotion;
 export function setAlarmMotion(factory){alarmMotion=factory;}
 export function setAlarmDisplay(display){alarmDisplay=display;}
-const toolDefinitions=()=>definitions??(definitions=JSON.parse(String.fromArrayBuffer(new Resource('reminder-tools.txt'))).concat(headMoveTool));
+const volumeTools=[{name:'volume_get',description:'本体の現在の音量を取得する。',inputSchema:{type:'object',properties:{},additionalProperties:false}},{name:'volume_set',description:'ユーザーが依頼した本体音量を0〜100%で指定する。',inputSchema:{type:'object',properties:{percent:{type:'integer',minimum:0,maximum:100}},required:['percent'],additionalProperties:false}}];
+const toolDefinitions=()=>definitions??(definitions=JSON.parse(String.fromArrayBuffer(new Resource('reminder-tools.txt'))).concat(headMoveTool,volumeTools));
 let robot,claim,release,ringing=false,stopped=false;
 const ready=()=>Date.now()>1700000000000;
 const localTime=()=>new Date(Date.now()+9*3600000).toISOString().slice(0,19)+'+09:00';
@@ -22,6 +24,8 @@ export function reminderStatus(){return {clockReady:ready(),timezone:'Asia/Tokyo
 export function callDeviceTool(name,args={}){
   if(!toolDefinitions().some(tool=>tool.name===name))throw new Error('Unknown device tool');
   if(name==='head_move')return moveHead(robot,args);
+  if(name==='volume_get')return getVolume();
+  if(name==='volume_set')return setVolume(args.percent);
   if(name==='clock_now')return {clockReady:ready(),timezone:'Asia/Tokyo',localTime:ready()?localTime():null,utc:ready()?new Date().toISOString():null};
   if(name==='reminder_list')return {...reminderStatus(),items:reminderStatus().items.filter(row=>args.include_completed||row.status==='scheduled'||row.status==='pending')};
   if(name==='alarm_stop'){stopped=true;stopAlarmSound();return {stopping:ringing};}
