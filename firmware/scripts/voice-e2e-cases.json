@@ -1,0 +1,116 @@
+{
+  "schema": 1,
+  "description": "CoreS3 physical voice E2E stimuli; no result is PASS without external evidence",
+  "cases": [
+    {
+      "id": "photo_explicit",
+      "text": "写真撮って",
+      "required": [
+        "asr",
+        "photo",
+        "touch_after"
+      ],
+      "note": "Explicit capture without relying on an AI tool choice"
+    },
+    {
+      "id": "photo_denied",
+      "text": "写真を撮らないで",
+      "required": [
+        "asr",
+        "no_photo"
+      ],
+      "note": "Negated camera request must not start capture"
+    },
+    {
+      "id": "photo_topic",
+      "text": "写真について教えて",
+      "required": [
+        "asr",
+        "no_photo",
+        "response"
+      ],
+      "note": "Mentioning photographs is not authorization"
+    },
+    {
+      "id": "camera_describe",
+      "text": "カメラで見てください",
+      "required": [
+        "asr",
+        "photo",
+        "response"
+      ],
+      "note": "User-authorized visual description"
+    },
+    {
+      "id": "ordinary_chat",
+      "text": "こんにちは。今日の気分はどう？",
+      "required": [
+        "asr",
+        "no_photo",
+        "response",
+        "audio"
+      ],
+      "note": "Ordinary conversation must not trigger camera"
+    },
+    {
+      "id": "volume_20",
+      "text": "音量を20パーセントにして",
+      "required": [
+        "asr",
+        "volume",
+        "audio"
+      ],
+      "note": "Check actual output and stored percent"
+    },
+    {
+      "id": "volume_30",
+      "text": "音量を30パーセントにして",
+      "required": [
+        "asr",
+        "volume",
+        "audio"
+      ],
+      "note": "Run alternating 20↔30 ten times during device acceptance"
+    },
+    {
+      "id": "chat_off",
+      "text": "AIモードをオフにして",
+      "required": [
+        "asr",
+        "mode"
+      ],
+      "note": "Check persisted setting and ownership"
+    },
+    {
+      "id": "chat_on",
+      "text": "AIモードをオンにして",
+      "required": [
+        "asr",
+        "mode"
+      ],
+      "note": "Check next turn and reboot restore"
+    },
+    {
+      "id": "post_capture_chat",
+      "text": "今、会話できますか？",
+      "required": [
+        "asr",
+        "no_photo",
+        "response",
+        "audio"
+      ],
+      "note": "Ensure conversation resumes after camera"
+    },
+    {
+      "id": "long_conversation",
+      "text": "続けてお話ししてください",
+      "required": [
+        "asr",
+        "response",
+        "audio",
+        "stability"
+      ],
+      "note": "Repeat across 30 minutes and record heap/reset reason"
+    }
+  ]
+}
