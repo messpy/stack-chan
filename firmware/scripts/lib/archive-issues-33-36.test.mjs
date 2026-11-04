@@ -32,10 +32,14 @@ function photoHarness(options = {}) {
   const context = {
     busy: options.busy ?? false,
     photoActive: false,
+    photoDiagnostics: {phase:'idle',saved:false},
     Date, trace: () => undefined, id: () => '42',
     encodeJPEG: () => new Uint8Array([1, 2, 3]),
     save: () => events.push('save'),
     describeImage: async () => ({ analysis: { status: 'complete', text: '確認' } }),
+  }
+  context.photoStage=(phase,details={})=>{
+    context.photoDiagnostics={...context.photoDiagnostics,phase,...details}
   }
   let resume
   const held = new Promise(resolve => { resume = resolve })
@@ -60,6 +64,9 @@ test('photo starts, captures and stops before releasing busy', async () => {
   assert.deepEqual(h.events, ['start', 'capture', 'save', 'close', 'stop'])
   assert.equal(h.context.photoActive, false)
   assert.equal(h.context.busy, false)
+  assert.equal(h.context.photoDiagnostics.phase,'complete')
+  assert.equal(h.context.photoDiagnostics.saved,true)
+  assert.equal(h.context.photoDiagnostics.jpegBytes,3)
 })
 
 test('photo concurrent requests are rejected and the first releases lock', async () => {
@@ -105,7 +112,28 @@ test('camera failures still try stop and release the lock', async () => {
     assert.equal(h.context.photoActive, false)
     assert.equal(h.context.busy, false)
     assert.ok(h.events.includes('stop'))
+    assert.equal(h.context.photoDiagnostics.phase,'error')
+    assert.equal(h.context.photoDiagnostics.saved,option.failStop===true)
+    assert.ok(h.context.photoDiagnostics.errorStage)
   }
+})
+
+test('photo capture succeeds even if cloud image analysis is unavailable', async () => {
+  const h = photoHarness()
+  h.context.describeImage=async()=>({analysis:{status:'unconfigured'}})
+  const result=await h.photo(h.robot,{analyze:true})
+  assert.equal(result.image,'photo-42.jpg')
+  assert.equal(h.context.photoDiagnostics.saved,true)
+  assert.equal(h.context.photoDiagnostics.analysisStatus,'unconfigured')
+  assert.equal(h.context.photoDiagnostics.phase,'analysis-unavailable')
+})
+
+test('photo diagnostic endpoint reports stages without user text or credential fields', () => {
+  assert.match(lan,/else if\(request\.op==='\/photo\/status'\)result=photoStatus\(\)/)
+  assert.match(lan,/photo:photoStatus\(\)/)
+  assert.match(lan,/function photoStatus\(\)/)
+  assert.match(direct,/撮影してSDカードに保存しました/)
+  assert.match(direct,/写真を撮影できませんでした/)
 })
 
 const executeToolSource = direct.slice(
