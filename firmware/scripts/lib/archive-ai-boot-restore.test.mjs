@@ -17,7 +17,7 @@ function mock(settings,opts={}) {
       if(opts.failRead)throw Error('SD I/O failed')
       return settings
     },
-    getSettingsStatus:()=>({generation:opts.generation??7,loadError:opts.loadError??false}),
+    getSettingsStatus:()=>({generation:opts.generation??7,loadError:opts.loadError??false,unreadableSlots:opts.unreadableSlots??0}),
     setChatMode:on=>{events.push('chat:'+on);return {enabled:on}},
     setRecognitionMode:on=>{events.push('transcription:'+on);return {recognitionMode:on}},
     showConversationBalloon:message=>events.push('warning:'+message),
@@ -69,6 +69,14 @@ test('unreadable encrypted snapshots warn, keep the originals and do not activat
   assert.ok(h.context.error.includes('読み取れません'))
   assert.ok(h.events.some(v=>v.startsWith('warning:')))
   assert.ok(!h.events.some(v=>/^chat:|^transcription:/.test(v)))
+})
+
+test('one unreadable slot restores the valid snapshot but warns of possible rollback',async()=>{
+  const h=mock({chatMode:true,transcriptionMode:false},{unreadableSlots:1})
+  await h.restore()
+  assert.ok(h.events.includes('chat:true'))
+  assert.ok(h.context.error.includes('以前の有効な設定'))
+  assert.ok(h.events.some(v=>v.includes('partial snapshot recovery')))
 })
 
 test('contradictory saved chat and transcription do not silently pick either',async()=>{
