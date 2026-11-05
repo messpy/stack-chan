@@ -85,8 +85,12 @@ def clean_motor(value: object) -> dict:
     data = value if isinstance(value, dict) else {}
     power = data.get("power") if isinstance(data.get("power"), dict) else {}
     bus = data.get("bus") if isinstance(data.get("bus"), dict) else {}
-    result = {"power": {k: power.get(k) if type(power.get(k)) is bool else None
-                        for k in ("available", "output")}}
+    raw_output = power.get("output")
+    output_enabled = (raw_output if type(raw_output) is bool
+                      else bool(raw_output) if type(raw_output) is int and raw_output in (0, 1)
+                      else None)
+    result = {"power": {"available": power.get("available") if type(power.get("available")) is bool else None,
+                        "output": output_enabled}}
     for axis in ("pan", "tilt"):
         item = data.get(axis) if isinstance(data.get(axis), dict) else {}
         result[axis] = {"success": item.get("success") is True,
