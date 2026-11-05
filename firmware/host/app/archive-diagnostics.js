@@ -49,7 +49,7 @@ export function markHeap(stage, heap, emit) {
   return summary;
 }
 
-export function diagnosticSnapshot({heap, chat, photo, debug, now}) {
+export function diagnosticSnapshot({heap, chat, photo, debug, servo, now}) {
   const c = chat || {}, p = photo || {}, d = debug || {};
   return {
     schema: 1,
@@ -65,6 +65,7 @@ export function diagnosticSnapshot({heap, chat, photo, debug, now}) {
       errorStage: p.errorStage == null ? null : tag(p.errorStage),
       active: p.active === true,
     },
+    servo: {lastReadFailure: tag(servo?.lastReadFailure || 'none')},
     debug: {
       queued: count(d.queued), dropped: count(d.dropped),
       truncated: count(d.truncated), usbRetries: count(d.usbRetries),
