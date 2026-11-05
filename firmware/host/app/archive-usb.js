@@ -2,6 +2,7 @@ export const readUSB = native('xs_archive_usb_read');
 export const writeUSB = native('xs_archive_usb_write');
 
 export const rebootUSB = native('xs_archive_usb_reboot');
+export const resetReason = native('xs_archive_reset_reason');
 
 export const convertRGB24 = native('xs_archive_rgb24');
 
