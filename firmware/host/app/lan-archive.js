@@ -35,7 +35,7 @@ import {startSettings,openSettings,closeSettings,getSettingsStatus,vaultSelfTest
 import {startDeviceTools,setAlarmDisplay,setAlarmMotion,callDeviceTool,listDeviceTools,reminderStatus} from 'archive-tools';
 import Time from 'time';
 import {getM5StackChanDriver} from 'm5stackchan-servo-driver';
-import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG,heapStatus} from 'archive-usb';
+import {readUSB,writeUSB,usbConnected,rebootUSB,resetReason,convertRGB24,encodeJPEG,heapStatus} from 'archive-usb';
 import Base64 from 'base64';
 import config from 'mc/config';
 import {HttpServerService, Response} from 'http-server-service';
@@ -46,6 +46,7 @@ let sequence=0;
 let busy=false;
 let photoActive=false;
 let lastServoReadFailure='none';
+let bootResetCode=null;
 // Read-only capture progress; never record image pixels, API keys or transcript text.
 let photoDiagnostics={phase:'idle',saved:false,analysisStatus:'not-started',errorStage:null,errorType:null};
 function photoStatus(){
@@ -250,6 +251,7 @@ async function recordAudio(robot) {
 }
 export function startArchive(robot) {
   let monitor,monitorVoice;
+  try{bootResetCode=resetReason();trace('[boot-reset] reasonCode='+bootResetCode+'\n')}catch(_){bootResetCode=null}
   startDebugDrain();
   try{markHeap('archive-start',heapStatus(),trace)}catch(_){}
   startLocalClock();
@@ -320,7 +322,7 @@ export function startArchive(robot) {
       }
       else if(request.op==='/screen/show'){if(busy||directChatStatus().enabled||reminderStatus().ringing)throw new Error('本体の操作が終わってから画面を確認してください');if(request.args?.scene!=='balloon-test')closeOffline();result=showScreen(robot,request.args?.scene);await new Promise(resolve=>Timer.set(resolve,150));}
       else if(request.op==='/debug/status')result=debugLogStatus();
-      else if(request.op==='/diagnostics/status')result=diagnosticSnapshot({heap:heapStatus(),chat:directChatStatus(),photo:photoStatus(),debug:debugLogStatus(),servo:{lastReadFailure:lastServoReadFailure},now:Date.now()});
+      else if(request.op==='/diagnostics/status')result=diagnosticSnapshot({heap:heapStatus(),chat:directChatStatus(),photo:photoStatus(),debug:debugLogStatus(),servo:{lastReadFailure:lastServoReadFailure},resetCode:bootResetCode,now:Date.now()});
       else if(request.op==='/offline/auto')result=autoOffline(request.args?.enabled);
       else if(request.op==='/offline/status')result=offlineStatus();
       else if(request.op==='/offline/open')result=openOffline();
