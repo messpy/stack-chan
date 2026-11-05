@@ -15,6 +15,7 @@ test('read-only snapshot excludes tokens, identifiers, free-text, and servo poll
     chat:{state:'retrying',provider:'xiaozhi',enabled:true,detail:'内蔵RAM不足 token=SECRET'},
     photo:{phase:'error',errorStage:'sd-save',saved:false,image:'PRIVATE_IMAGE'},
     debug:{queued:4,dropped:2,secret:'PRIVATE_LOG'},
+    servo:{lastReadFailure:'timeout',reason:'SECRET_NATIVE'},
     now:1793859000000
   })
   assert.equal(actual.heap.internalFree,76659)
@@ -22,6 +23,7 @@ test('read-only snapshot excludes tokens, identifiers, free-text, and servo poll
   assert.equal(actual.chat.failureClass,'memory-pressure')
   assert.equal(actual.photo.errorStage,'sd-save')
   assert.equal(actual.debug.dropped,2)
+  assert.equal(actual.servo.lastReadFailure,'timeout')
   assert.ok(!JSON.stringify(actual).includes('SECRET'))
   assert.ok(!JSON.stringify(actual).includes('PRIVATE'))
   assert.ok(!JSON.stringify(actual).includes('DO_NOT_COPY'))
