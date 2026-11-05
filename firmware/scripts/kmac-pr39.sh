@@ -165,6 +165,7 @@ tests(){
   (cd "$FW" && python3 -m unittest discover -s scripts -p 'test_archive_usb_audit.py' -v) || die "USB/photo診断テストFAIL"
   (cd "$FW" && python3 -m unittest discover -s scripts -p 'test_archive_photo_lan.py' -v) || die "LAN/photo診断テストFAIL"
   (cd "$FW" && python3 -m unittest discover -s scripts -p 'test_archive_lan_diagnostics.py' -v) || die "LAN/diagnosticsテストFAIL"
+  (cd "$FW" && python3 -m unittest discover -s scripts -p 'test_archive_private_manifest_preflight.py' -v) || die "private manifest互換テストFAIL"
   (cd "$FW" && python3 -m unittest discover -s scripts -p 'test_voicevox_pc_play.py' -v) || die "PC音声再生テストFAIL"
 }
 build(){
