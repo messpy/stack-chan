@@ -52,6 +52,14 @@ class LanDiagnosticsTests(unittest.TestCase):
         self.assertEqual(motor["bus"], {"timeouts": 2, "errorCount": 4})
         self.assertNotIn("ABC", json.dumps(motor))
 
+    def test_motor_numeric_gpio_power_values(self):
+        off = module.clean_motor({"power": {"available": True, "output": 0}})
+        on = module.clean_motor({"power": {"available": True, "output": 1}})
+        unknown = module.clean_motor({"power": {"available": True, "output": 17}})
+        self.assertIs(off["power"]["output"], False)
+        self.assertIs(on["power"]["output"], True)
+        self.assertIsNone(unknown["power"]["output"])
+
     def test_sample_stores_mode_0600_and_no_raw_private_data(self):
         reply = {"schema": 1, "heap": {"internalFree": 120000},
                  "chat": {"state": "waiting", "provider": "xiaozhi",
