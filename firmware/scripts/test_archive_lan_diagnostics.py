@@ -21,7 +21,7 @@ class LanDiagnosticsTests(unittest.TestCase):
                 module.private_ip(value)
 
     def test_snapshot_drops_secrets_and_raw_logs(self):
-        value = {"schema": 1, "boot": {"resetReasonCode": 9},
+        value = {"schema": 1, "boot": {"resetReasonCode": 9, "uptimeMs": 155000},
                  "heap": {"internalFree": 76659, "internalLargest": 31744,
                           "token": "SECRET"},
                  "servo": {"lastReadFailure": "timeout", "reason": "PRIVATE"},
@@ -34,6 +34,7 @@ class LanDiagnosticsTests(unittest.TestCase):
         cleaned = module.clean_snapshot(value)
         self.assertEqual(cleaned["heap"]["internalFree"], 76659)
         self.assertEqual(cleaned["boot"]["resetReasonCode"], 9)
+        self.assertEqual(cleaned["boot"]["uptimeMs"], 155000)
         self.assertEqual(cleaned["chat"]["failureClass"], "memory-pressure")
         self.assertEqual(cleaned["debug"]["dropped"], 1)
         self.assertEqual(cleaned["servo"]["lastReadFailure"], "timeout")
