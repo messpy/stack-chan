@@ -46,6 +46,7 @@ import {bgr24,bitmapHeader,aviHeader,frameHeader,aviAudioHeader,audioFrameHeader
 let sequence=0;
 let busy=false;
 let photoActive=false;
+let lastServoReadFailure='none';
 // Read-only capture progress; never record image pixels, API keys or transcript text.
 let photoDiagnostics={phase:'idle',saved:false,analysisStatus:'not-started',errorStage:null,errorType:null};
 function photoStatus(){
@@ -111,6 +112,7 @@ async function cameraPreview(robot) {
 async function photo(robot,args={},fromConversation=false) {
   if(photoActive || (busy&&!fromConversation))throw new Error('Camera busy');
   photoActive=true;
+  try{markHeap('photo-start',heapStatus(),trace)}catch(_){}
   const photoStartedAt=Date.now();
   photoDiagnostics={phase:'starting',startedAt:photoStartedAt,finishedAt:null,
     elapsedMs:0,saved:false,analysisStatus:'not-started',errorStage:null,errorType:null};
@@ -171,6 +173,7 @@ async function photo(robot,args={},fromConversation=false) {
   } finally {
     // Retain the single-flight lease through JPEG analysis and its failures.
     photoActive=false;
+    try{markHeap('photo-end',heapStatus(),trace)}catch(_){}
   }
 }
 
@@ -249,6 +252,7 @@ async function recordAudio(robot) {
 export function startArchive(robot) {
   let monitor,monitorVoice;
   startDebugDrain();
+  try{markHeap('archive-start',heapStatus(),trace)}catch(_){}
   startLocalClock();
   startCustomFace(robot);
   startOffline(robot,{stopCloud:()=>{if(directChatStatus().recognitionMode)setRecognitionMode(false);if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings,startCloud:()=>setChatMode(true),openAI:()=>robot.ui.application.behavior.launchMiniApp('archive-ai-settings')});
@@ -275,7 +279,7 @@ export function startArchive(robot) {
     },
     release(){busy=false;try{markHeap('monitor-stop',heapStatus(),trace)}catch(_){}resumeDirectChat();trace('[monitor] stopped\n');},
     log:message=>trace('[head-jog] '+message+'\n'),
-    readHeadRotation:()=>new Promise((resolve,reject)=>{const driver=getM5StackChanDriver();if(!driver){reject(new Error('Motor unavailable'));return}driver.getRotation(result=>{if(result.success){resolve({...result.value});return}const code=servoReasonCode(result.reason);trace('[servo-read] result=failed reasonClass='+code+'\n');reject(new Error('Position unavailable: '+code))})}),
+    readHeadRotation:()=>new Promise((resolve,reject)=>{const driver=getM5StackChanDriver();if(!driver){lastServoReadFailure='unavailable';reject(new Error('Motor unavailable'));return}driver.getRotation(result=>{if(result.success){lastServoReadFailure='none';resolve({...result.value});return}const code=servoReasonCode(result.reason);lastServoReadFailure=code;trace('[servo-read] result=failed reasonClass='+code+'\n');reject(new Error('Position unavailable: '+code))})}),
     createInput:options=>new AudioIn(options),
     convertPCM:(raw,channels)=>prepareRecognitionPCM(raw,0,raw.byteLength,channels),jpeg:encodeJPEG,
     cancelSpeech:()=>monitorVoice?.cancel(),
@@ -317,7 +321,7 @@ export function startArchive(robot) {
       }
       else if(request.op==='/screen/show'){if(busy||directChatStatus().enabled||reminderStatus().ringing)throw new Error('本体の操作が終わってから画面を確認してください');if(request.args?.scene!=='balloon-test')closeOffline();result=showScreen(robot,request.args?.scene);await new Promise(resolve=>Timer.set(resolve,150));}
       else if(request.op==='/debug/status')result=debugLogStatus();
-      else if(request.op==='/diagnostics/status')result=diagnosticSnapshot({heap:heapStatus(),chat:directChatStatus(),photo:photoStatus(),debug:debugLogStatus(),now:Date.now()});
+      else if(request.op==='/diagnostics/status')result=diagnosticSnapshot({heap:heapStatus(),chat:directChatStatus(),photo:photoStatus(),debug:debugLogStatus(),servo:{lastReadFailure:lastServoReadFailure},now:Date.now()});
       else if(request.op==='/offline/auto')result=autoOffline(request.args?.enabled);
       else if(request.op==='/offline/status')result=offlineStatus();
       else if(request.op==='/offline/open')result=openOffline();
