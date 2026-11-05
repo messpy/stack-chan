@@ -8,7 +8,7 @@
 - `archive-lan-diagnostics.py` polls this endpoint, stores timestamped JSONL on **kmac** with mode 0600, and does not store IPs, tokens, transcript text, images, raw debug lines, or an unbounded log queue on ESP32.
 - `--motor-once` is optional; it performs **one** existing read-only `/motor-status` query, which uses the servo's half-duplex UART. **Only run with the head stopped.** It does not toggle torque/power or move the servos.
 - RAM marks use the existing trace queue at connection preflight, connect failure, delayed chat cleanup, monitor start/stop, photo start/end and Archive startup. Each record contains stage tags and numeric memory data only.
-- The LAN sampler does **not** export raw native trace logs or persistent reset reasons. A reboot or fatal panic may interrupt sampling; reset reason/panic backtrace requires a separate native/boot path in #36.
+- The LAN sampler does **not** export raw native trace logs. It **does** expose the ESP-IDF `esp_reset_reason()` integer read at Archive startup as `boot.resetReasonCode` (no flash write). A reboot or fatal panic may interrupt sampling; panic backtrace and detailed crash evidence still require a separate native/boot path in #36.
 - If LAN fails, the JSONL records an `unavailable` sample rather than reporting a test pass.
 - This is **not** an automatic fix for RAM shortage, physical servo nonresponse or missed photos.
 
@@ -68,7 +68,7 @@ For the *existing* servo symptom, stop the head first and add `--motor-once` to 
 - `servo.lastReadFailure` describes the **last position-read attempt from the Web monitor**, not a continuously polled physical sensor; `motor-once.pan/tilt.reasonClass` comes from an explicit read when enabled.
 - `debug.dropped` increasing means the in-RAM debug queue lost events. This snapshot mechanism does not need USB but cannot retrieve historical raw trace text.
 - `photo.phase` is the firmware's latest reported stage, not independent validation of the JPEG content.
-- If the device resets, preserve the last PC snapshot and collect native reset reason separately; don't infer a brownout or panic without evidence.
+- If the device resets, preserve the last PC snapshot, reconnect, then compare `boot.resetReasonCode` after reboot. ESP-IDF commonly reports SW=3, PANIC=4, TASK_WDT=6, BROWNOUT=9, but verify enum against the SDK used in the actual build. This is the **most recent reset cause**, not a stack trace. Do not infer a specific failing call without additional evidence.
 
 ## Regression and integration
 
