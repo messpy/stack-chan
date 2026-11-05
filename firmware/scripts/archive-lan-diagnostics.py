@@ -64,9 +64,11 @@ def clean_snapshot(value: object) -> dict:
         "internalMinimum", "nativeStackMinimumFree", "psramFree",
         "psramLargest", "psramMinimum"))
     debug = counters(value.get("debug"), ("queued", "dropped", "truncated", "usbRetries"))
+    servo = value.get("servo") if isinstance(value.get("servo"), dict) else {}
     chat = value.get("chat") if isinstance(value.get("chat"), dict) else {}
     photo = value.get("photo") if isinstance(value.get("photo"), dict) else {}
     return {"heap": heap, "debug": debug,
+        "servo": {"lastReadFailure": safe_tag(servo.get("lastReadFailure"))},
         "chat": {"state": safe_tag(chat.get("state")),
                  "provider": safe_tag(chat.get("provider")),
                  "enabled": chat.get("enabled") is True,
