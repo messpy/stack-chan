@@ -335,7 +335,7 @@ export function startArchive(robot) {
         const kind=request.args?.kind||'alarm';
         if(!['alarm','timer'].includes(kind))throw new Error('通知音の種類を選んでください');
         busy=true;
-        try{result={played:await playAlarmSound(robot,()=>false,Math.max(1,Math.min(5,Number(request.args?.seconds)||2)),kind)};}
+        try{result={played:await playAlarmSound(robot,()=>false,Math.max(1,Math.min(5,Number(request.args?.seconds)||2)),kind)};if(!result.played){await robot.audio.tone(880,240,Math.min(robot.audio.volume,0.45));result={played:true,standard:true};}}
         finally{busy=false;}
       }
       else if(request.op==='/volume'){result=request.args?.percent===undefined?getVolume():setVolume(Number(request.args.percent),request.args.preview===true&&!monitor.active);}
