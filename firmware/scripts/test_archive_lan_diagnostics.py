@@ -1,0 +1,79 @@
+import importlib.util
+import json
+import os
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+source = Path(__file__).with_name("archive-lan-diagnostics.py")
+spec = importlib.util.spec_from_file_location("archive_lan_diagnostics", source)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+
+class LanDiagnosticsTests(unittest.TestCase):
+    def test_lan_only(self):
+        self.assertEqual(module.private_ip("192.168.2.102"), "192.168.2.102")
+        for value in ("8.8.8.8", "127.0.0.1", "169.254.1.2",
+                      "http://192.168.2.102", "localhost", "100.100.100.100"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                module.private_ip(value)
+
+    def test_snapshot_drops_secrets_and_raw_logs(self):
+        value = {"schema": 1,
+                 "heap": {"internalFree": 76659, "internalLargest": 31744,
+                          "token": "SECRET"},
+                 "chat": {"state": "retrying", "provider": "xiaozhi",
+                          "failureClass": "memory-pressure",
+                          "detail": "PRIVATE CHAT"},
+                 "photo": {"phase": "error", "errorStage": "frame-wait",
+                           "pixels": "PRIVATE IMAGE"},
+                 "debug": {"queued": 5, "dropped": 1, "lines": ["PRIVATE LOG"]}}
+        cleaned = module.clean_snapshot(value)
+        self.assertEqual(cleaned["heap"]["internalFree"], 76659)
+        self.assertEqual(cleaned["chat"]["failureClass"], "memory-pressure")
+        self.assertEqual(cleaned["debug"]["dropped"], 1)
+        rendered = json.dumps(cleaned)
+        for secret in ("SECRET", "PRIVATE", "token", "lines"):
+            self.assertNotIn(secret, rendered)
+
+    def test_motor_drops_native_text_and_exposes_reason_class(self):
+        raw = {"pan": {"success": False, "reason": "UART timeout secret=ABC"},
+               "tilt": {"success": False, "reason": "CRC invalid"},
+               "power": {"available": True, "output": False, "secret": "ABC"},
+               "bus": {"timeouts": 2, "credential": "ABC", "errorCount": 4}}
+        motor = module.clean_motor(raw)
+        self.assertEqual(motor["pan"]["reasonClass"], "timeout")
+        self.assertEqual(motor["tilt"]["reasonClass"], "invalid-reply")
+        self.assertFalse(motor["power"]["output"])
+        self.assertEqual(motor["bus"], {"timeouts": 2, "errorCount": 4})
+        self.assertNotIn("ABC", json.dumps(motor))
+
+    def test_sample_stores_mode_0600_and_no_raw_private_data(self):
+        reply = {"schema": 1, "heap": {"internalFree": 120000},
+                 "chat": {"state": "waiting", "provider": "xiaozhi",
+                          "detail": "SECRET"}, "photo": {}, "debug": {}}
+        class FakeResponse:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self, size): return json.dumps(reply).encode()
+        class FakeOpener:
+            def open(self, req, timeout): return FakeResponse()
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "device.jsonl"
+            with patch.object(module, "build_opener", return_value=FakeOpener()):
+                ok, errors = module.sample("192.168.2.102", "TOKEN_PRIVATE",
+                                           1, 0.5, output)
+            self.assertEqual((ok, errors), (1, 0))
+            self.assertEqual(os.stat(output).st_mode & 0o777, 0o600)
+            saved = output.read_text()
+            self.assertEqual(json.loads(saved)["data"]["heap"]["internalFree"], 120000)
+            self.assertNotIn("SECRET", saved)
+            self.assertNotIn("TOKEN_PRIVATE", saved)
+            self.assertNotIn("192.168.2.102", saved)
+
+
+if __name__ == "__main__":
+    unittest.main()
