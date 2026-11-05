@@ -101,6 +101,33 @@ log CHECK "専用worktree=$WORKTREE; 既存認証設定を保持"
 fi
 FW="${FW:-$REPO/firmware}"
 if [[ "$MODE" != restore ]]; then
+  STEP=MANIFEST
+  # Check the actual private manifest used by kmac, not just the example used by CI.
+  if ! python3 - "$PRIVATE_TARGET" "$FW/host/app/archive-web-page.js" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+private_path, page_path = map(Path, sys.argv[1:3])
+try:
+    modules = json.loads(private_path.read_text(encoding="utf-8"))["modules"]
+    page = page_path.read_text(encoding="utf-8")
+except (OSError, ValueError, KeyError, TypeError) as exc:
+    print("[ERROR] STEP=MANIFEST 設定/ソースを読み取れません: " + type(exc).__name__)
+    sys.exit(1)
+required = set(re.findall(r"(?m)^import\\s+\\w+\\s+from\\s+['\"]([^'\"]+)['\"]", page))
+missing = sorted(name for name in required if name not in modules)
+if missing:
+    print("[ERROR] STEP=MANIFEST private manifestに未登録のWebモジュール: " + ", ".join(missing))
+    sys.exit(1)
+print("[CHECK] STEP=MANIFEST 本番private manifestとWebモジュールの登録が一致")
+PY
+  then
+    die "private manifestに必要なWebモジュールがありません。ビルド・書き込みを中止"
+  fi
+fi
+if [[ "$MODE" != restore ]]; then
   command -v node >/dev/null 2>&1 || die "Nodeなし"
   command -v npm >/dev/null 2>&1 || die "npmなし"
   major="$(node -p 'Number(process.versions.node.split(".")[0])')" || die "Node取得失敗"
