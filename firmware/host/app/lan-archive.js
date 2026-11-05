@@ -61,6 +61,13 @@ let audioUpload;
 let server;
 const folder='stackchan';
 const safe=name=>typeof name==='string' && /^[a-z0-9-]+\.(bmp|avi|wav|jpg|json|mp3)$/.test(name);
+export function validArchiveUSBRequest(request,expectedToken){
+ return request!==null&&typeof request==='object'&&!Array.isArray(request)&&
+  Number.isSafeInteger(request.id)&&request.id>=0&&
+  request.token===expectedToken&&
+  typeof request.op==='string'&&request.op.length>0&&request.op.length<=64&&
+  (request.args===undefined||(request.args!==null&&typeof request.args==='object'&&!Array.isArray(request.args)));
+}
 function files(operation) {
   return withSDCard(root=>{
     try {root.createDirectory(folder);} catch (_) { if (!root.status(folder).isDirectory()) throw new Error('SD directory unavailable'); }
@@ -451,7 +458,7 @@ export function startArchive(robot) {
     if(!raw)return;
     let request;
     try{request=JSON.parse(raw);}catch(_){return;}
-    if(!Number.isInteger(request.id)||request.token!==token)return;
+    if(!validArchiveUSBRequest(request,token))return;
     armDebugDrain();
     usbBusy=true;
     try {
