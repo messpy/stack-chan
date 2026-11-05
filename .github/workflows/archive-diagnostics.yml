@@ -5,8 +5,10 @@ on:
     branches:
       - stackchan-super
       - fix/archive-issues-33-38-20261104
+      - fix/archive-diagnostics-20261105
     paths:
       - 'firmware/host/app/archive-debug.js'
+      - 'firmware/host/app/archive-memory-policy.js'
       - 'firmware/host/app/archive-usb.c'
       - 'firmware/host/app/archive-usb.js'
       - 'firmware/host/app/archive-direct-chat.js'
@@ -15,6 +17,7 @@ on:
       - 'firmware/scripts/archive-lan-diagnostics.py'
       - 'firmware/scripts/test_archive_lan_diagnostics.py'
       - 'firmware/scripts/lib/archive-diagnostics.test.mjs'
+      - 'firmware/scripts/lib/archive-memory-policy.test.mjs'
       - '.github/workflows/archive-diagnostics.yml'
   workflow_dispatch:
 
@@ -28,8 +31,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Test bounded JS diagnostics and failure classes
-        run: node --experimental-vm-modules --test firmware/scripts/lib/archive-diagnostics.test.mjs
+      - name: Test bounded JS diagnostics and memory admission policy
+        run: node --experimental-vm-modules --test firmware/scripts/lib/archive-diagnostics.test.mjs firmware/scripts/lib/archive-memory-policy.test.mjs
       - name: Test private LAN sampler and syntax
         run: |
           python3 -m py_compile firmware/scripts/archive-lan-diagnostics.py
