@@ -3,8 +3,24 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-const script=(await import(new URL('../../host/app/archive-alarm-upload-page.js',import.meta.url))).default;
 const page=fs.readFileSync(new URL('../../host/app/archive-web-page.js',import.meta.url),'utf8');
+const literal=page.split('\n').find(line=>line.startsWith('const ALARM_UPLOAD_PAGE = '));
+assert.ok(literal,'browser script must be embedded in the already registered page');
+const script=JSON.parse(literal.slice('const ALARM_UPLOAD_PAGE = '.length,-1));
+
+test('old private manifest boots the browser page without a newly registered module',async()=>{
+ const manifest=JSON.parse(fs.readFileSync(new URL('../../host/app/manifest_archive.example.json',import.meta.url),'utf8'));
+ assert.equal(manifest.modules['archive-alarm-upload-page'],undefined);
+ assert.doesNotMatch(page,/import\s+\w+\s+from\s+['"]archive-alarm-upload-page['"]/);
+ const imports=[...page.matchAll(/^import\s+\w+\s+from\s+['"]([^'"]+)['"]/gm)].map(item=>item[1]);
+ for(const name of imports)assert.ok(manifest.modules[name],name+' missing from old manifest');
+ const context=vm.createContext({});
+ const compiled=new vm.SourceTextModule(page,{context});
+ await compiled.link(name=>new vm.SyntheticModule(['default'],function(){this.setExport('default','');},{context}));
+ await compiled.evaluate();
+ assert.ok(compiled.namespace.default.includes('<script>'+script+'</script>'));
+ assert.ok(compiled.namespace.default.includes('id="reminderSoundUpload"'));
+});
 
 test('sound upload is valid browser JS and mounted into the authenticated settings page',()=>{
  assert.doesNotThrow(()=>new vm.Script(script));

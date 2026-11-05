@@ -8,7 +8,7 @@ const folder='stackchan/';
 const validTarget=value=>['alarm','timer','both'].includes(value);
 export function selectedReminderSound(kind='alarm'){
  const settings=getSettings();
- if(kind==='timer')return Object.hasOwn(settings,'timerSound')?settings.timerSound||null:settings.alarmSound||null;
+ if(kind==='timer')return 'timerSound' in settings?settings.timerSound||null:settings.alarmSound||null;
  return settings.alarmSound||null;
 }
 export function alarmSoundStatus(){
@@ -72,7 +72,7 @@ export function alarmSoundCommand(op,args={}){
   if(item.role==='audio'&&!validTarget(target))throw new Error('Invalid sound target');
   const original=args.original;
   if(item.role==='audio'&&original!==undefined){
-   if(typeof original!=='string'||!/^alarm-[a-f0-9]+-source\\.mp3$/.test(original))
+   if(typeof original!=='string'||!/^alarm-[a-f0-9]+-source\.mp3$/.test(original))
     throw new Error('Invalid original sound');
    withSDCard(root=>{if(!root.status(folder+original).isFile())throw new Error('Original MP3 missing');});
   }
