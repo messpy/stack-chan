@@ -47,6 +47,9 @@ void xs_archive_usb_write(xsMachine *the) {
 
 void xs_archive_usb_reboot(xsMachine *the) { usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(200)); esp_restart(); }
 
+// Read the ESP-IDF reset reason without mutating flash, RTC or reboot state.
+void xs_archive_reset_reason(xsMachine *the) { xsmcSetInteger(xsResult, (int)esp_reset_reason()); }
+
 void xs_archive_rgb24(xsMachine *the) {
     void *data; xsUnsignedValue length;
     xsmcGetBufferReadable(xsArg(0), &data, &length);
