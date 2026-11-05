@@ -87,11 +87,11 @@ export function markHeap(stage, heap, emit) {
   return summary;
 }
 
-export function diagnosticSnapshot({heap, chat, photo, debug, servo, resetCode, now}) {
+export function diagnosticSnapshot({heap, chat, photo, debug, servo, resetCode, uptime, now}) {
   const c = chat || {}, p = photo || {}, d = debug || {};
   return {
     schema: 1,
-    boot: {resetReasonCode: count(resetCode)},
+    boot: {resetReasonCode: count(resetCode), uptimeMs: Number.isFinite(uptime) && uptime >= 0 ? Math.floor(uptime) : null},
     at: Number.isSafeInteger(now) && now > 0 ? now : null,
     heap: heapSummary(heap),
     chat: {
