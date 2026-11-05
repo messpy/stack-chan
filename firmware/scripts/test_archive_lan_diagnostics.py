@@ -26,6 +26,7 @@ class LanDiagnosticsTests(unittest.TestCase):
                           "token": "SECRET"},
                  "servo": {"lastReadFailure": "timeout", "reason": "PRIVATE"},
                  "chat": {"state": "retrying", "provider": "xiaozhi",
+                          "lastMemoryAdmission": {"status": "blocked", "mode": "transcription", "at": 1793859000000, "internalFree": 76659, "internalLargest": 31744, "requiredFree": 114688, "requiredLargest": 24576, "shortfallFree": 38029, "shortfallLargest": 0, "secret": "SECRET"},
                           "failureClass": "memory-pressure",
                           "detail": "PRIVATE CHAT"},
                  "photo": {"phase": "error", "errorStage": "frame-wait",
@@ -36,11 +37,29 @@ class LanDiagnosticsTests(unittest.TestCase):
         self.assertEqual(cleaned["boot"]["resetReasonCode"], 9)
         self.assertEqual(cleaned["boot"]["uptimeMs"], 155000)
         self.assertEqual(cleaned["chat"]["failureClass"], "memory-pressure")
+        self.assertEqual(cleaned["chat"]["lastMemoryAdmission"]["shortfallFree"], 38029)
+        self.assertEqual(cleaned["chat"]["lastMemoryAdmission"]["at"], 1793859000000)
+        self.assertEqual(cleaned["chat"]["lastMemoryAdmission"]["mode"], "transcription")
         self.assertEqual(cleaned["debug"]["dropped"], 1)
         self.assertEqual(cleaned["servo"]["lastReadFailure"], "timeout")
         rendered = json.dumps(cleaned)
         for secret in ("SECRET", "PRIVATE", "token", "lines"):
             self.assertNotIn(secret, rendered)
+
+    def test_admission_labels_must_match_known_values(self):
+        snap = module.clean_snapshot({"schema": 1, "chat": {
+            "lastMemoryAdmission": {"status": "secret", "mode": "secret",
+                "at": -5, "internalFree": -1,
+                "requiredFree": 114688, "shortfallFree": 38029,
+                "accessToken": "PRIVATE_SECRET"}
+        }})
+        admission = snap["chat"]["lastMemoryAdmission"]
+        self.assertEqual(admission["status"], "unknown")
+        self.assertEqual(admission["mode"], "unknown")
+        self.assertIsNone(admission["at"])
+        self.assertIsNone(admission["internalFree"])
+        self.assertEqual(admission["shortfallFree"], 38029)
+        self.assertNotIn("PRIVATE_SECRET", json.dumps(snap))
 
     def test_motor_drops_native_text_and_exposes_reason_class(self):
         raw = {"pan": {"success": False, "reason": "UART timeout secret=ABC"},
