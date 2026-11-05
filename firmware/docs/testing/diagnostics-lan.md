@@ -12,41 +12,54 @@
 - If LAN fails, the JSONL records an `unavailable` sample rather than reporting a test pass.
 - This is **not** an automatic fix for RAM shortage, physical servo nonresponse or missed photos.
 
-## Preflight
+## kmac setup, safe flash and snapshot
 
-On kmac, verify that the device firmware actually includes this diagnostics patch and that the local private manifest matches the device. A new script alone cannot enable the endpoint on old firmware.
+These changes live in **PR #41**, which is not merged. Fetch the exact PR branch into the original kmac repository; the existing checkout is never reset.
 
-Verify LAN reachability without transmitting credentials:
+**1. Read-only preflight — no build or flash.** Run from an interactive kmac terminal:
 
 ```bash
 clear
-ping -c 2 192.168.2.102
+cd /mnt/data/Development/stackchan/stack-chan || exit 1
+git fetch https://github.com/messpy/stack-chan.git fix/archive-diagnostics-20261105 || exit 1
+git show FETCH_HEAD:firmware/scripts/kmac-pr39.sh > /tmp/stackchan-pr41.sh || exit 1
+STACKCHAN_SOURCE_REF=FETCH_HEAD \
+STACKCHAN_ACCEPTANCE_WORKTREE=/mnt/data/Development/stackchan/stack-chan-pr41-acceptance \
+bash /tmp/stackchan-pr41.sh check
 ```
 
-Run a one-time snapshot from the firmware workspace (adapt IP and paths to the actual deployment):
+**2. Only after CI success and on-site confirmation, build + 16MiB backup + flash.** The updater requests separate `yes` confirmation for the shared Moddable SDK patch/build and for device flashing. The backup is checksummed before writing. USB must identify the single intended CoreS3.
 
 ```bash
 clear
-cd /mnt/data/Development/stackchan/stack-chan/firmware
+cd /mnt/data/Development/stackchan/stack-chan || exit 1
+git fetch https://github.com/messpy/stack-chan.git fix/archive-diagnostics-20261105 || exit 1
+git show FETCH_HEAD:firmware/scripts/kmac-pr39.sh > /tmp/stackchan-pr41.sh || exit 1
+STACKCHAN_SOURCE_REF=FETCH_HEAD \
+STACKCHAN_ACCEPTANCE_WORKTREE=/mnt/data/Development/stackchan/stack-chan-pr41-acceptance \
+bash /tmp/stackchan-pr41.sh flash
+```
+
+The `flash` mode runs the existing #39 tests **plus #41 diagnostics tests**, builds, backs up the complete 16MiB ESP32 flash with SHA256, then asks for flashing approval. It does **not** replace SD card data or auto-confirm writes. The original working tree remains untouched. Keep the path to the backup printed by the script.
+
+**3. Collect read-only diagnostics after the new firmware boots.** Do not run this on the old firmware, which has no `/diagnostics` endpoint. Change the LAN IP if the QR shows a different address:
+
+```bash
+clear
+cd /mnt/data/Development/stackchan/stack-chan-pr41-acceptance/firmware || exit 1
 python3 scripts/archive-lan-diagnostics.py \
   --ip 192.168.2.102 \
   --config host/app/manifest_archive_private.json \
-  --output "/tmp/stackchan-diag-$(date +%Y%m%d-%H%M%S).jsonl" \
-  --samples 1
-```
-
-For an interval study (120 seconds at two-second intervals):
-
-```bash
-clear
-python3 scripts/archive-lan-diagnostics.py \
-  --ip 192.168.2.102 \
-  --config host/app/manifest_archive_private.json \
-  --output "/tmp/stackchan-diag-$(date +%Y%m%d-%H%M%S).jsonl" \
+  --output "$HOME/stackchan-diag-$(date +%Y%m%d-%H%M%S).jsonl" \
   --samples 60 --interval 2
 ```
 
-Stop all head movement first to add **one** servo status query via `--motor-once`; its `reasonClass` is a category rather than the device's free-text native error.
+This samples for about 120 seconds and writes a private 0600 JSONL file on kmac. Observe RAM before and after enabling XiaoZhi, then after manually ending monitor/camera activity; don't repeat motor motion while collecting.
+
+For the *existing* servo symptom, stop the head first and add `--motor-once` to the command above to perform **one** read-only diagnostic (this contacts the UART but never moves/toggles the servos). Do not repeat the motor diagnostic continuously.
+
+**4. Interpretation and rollback.** A successful build or flash is not a physical acceptance PASS. If network access is lost, the sampler records `unavailable`. If the device fails after flashing, restore the checksummed 16MiB ESP32 backup via the same updater's `restore /absolute/path/backup.bin` mode with explicit user confirmation. The ESP32 flash backup does **not** include the SD card.
+
 
 ## Interpretation
 
