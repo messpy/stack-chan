@@ -1,7 +1,7 @@
 import {headDirectionFromText} from 'archive-head-motion'
 import {heapStatus,collectMemory} from 'archive-usb'
 import {checkVoiceMemory,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
-import {markHeap} from 'archive-diagnostics'
+import {markHeap} from 'archive-debug'
 import { ollamaChat, ollamaModel, validOllamaModel, geminiTextChat, DEFAULT_GEMINI_TEXT_MODEL, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
 import { VoiceRegistration, enrollmentInstructions, explicitSpeakerName, registrationName } from 'archive-speaker-registration'
 import { speakerButtons } from 'archive-button-schema'
