@@ -877,7 +877,7 @@ async function connect() {
             return
           }
           if(recognitionOnly&&value===ChatState.CONNECTED){
-            state='listening';microphoneAt=Date.now();error='';retryDelay=3000;failures=0
+            state='listening';microphoneAt=Date.now();error='';detail='';retryDelay=3000;failures=0
             trace('[mode-session] connected mode='+(standalone?'transcription':'recognition-transport')+'\n')
             if(!standalone&&greetingPending&&!enrollment.active){greetingPending=false;Timer.set(()=>recognitionTurn(null),0)}
             return
@@ -912,6 +912,7 @@ async function connect() {
               openSpeakerChooser()
             }
             error = ''
+            detail = ''
             retryDelay = 3000
             failures = 0
           }
