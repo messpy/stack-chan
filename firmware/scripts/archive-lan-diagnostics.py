@@ -70,7 +70,9 @@ def clean_snapshot(value: object) -> dict:
     photo = value.get("photo") if isinstance(value.get("photo"), dict) else {}
     reason = boot.get("resetReasonCode")
     safe_reason = reason if type(reason) is int and 0 <= reason <= 100 else None
-    return {"boot": {"resetReasonCode": safe_reason}, "heap": heap, "debug": debug,
+    uptime = boot.get("uptimeMs")
+    safe_uptime = uptime if type(uptime) in (int, float) and 0 <= uptime < 1e14 else None
+    return {"boot": {"resetReasonCode": safe_reason, "uptimeMs": safe_uptime}, "heap": heap, "debug": debug,
         "servo": {"lastReadFailure": safe_tag(servo.get("lastReadFailure"))},
         "chat": {"state": safe_tag(chat.get("state")),
                  "provider": safe_tag(chat.get("provider")),
