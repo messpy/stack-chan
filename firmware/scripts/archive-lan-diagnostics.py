@@ -60,6 +60,7 @@ def safe_tag(value: object) -> str:
 def clean_snapshot(value: object) -> dict:
     if not isinstance(value, dict) or value.get("schema") != 1:
         raise ValueError("unsupported diagnostics response")
+    boot = value.get("boot") if isinstance(value.get("boot"), dict) else {}
     heap = counters(value.get("heap"), ("internalFree", "internalLargest",
         "internalMinimum", "nativeStackMinimumFree", "psramFree",
         "psramLargest", "psramMinimum"))
@@ -67,7 +68,9 @@ def clean_snapshot(value: object) -> dict:
     servo = value.get("servo") if isinstance(value.get("servo"), dict) else {}
     chat = value.get("chat") if isinstance(value.get("chat"), dict) else {}
     photo = value.get("photo") if isinstance(value.get("photo"), dict) else {}
-    return {"heap": heap, "debug": debug,
+    reason = boot.get("resetReasonCode")
+    safe_reason = reason if type(reason) is int and 0 <= reason <= 100 else None
+    return {"boot": {"resetReasonCode": safe_reason}, "heap": heap, "debug": debug,
         "servo": {"lastReadFailure": safe_tag(servo.get("lastReadFailure"))},
         "chat": {"state": safe_tag(chat.get("state")),
                  "provider": safe_tag(chat.get("provider")),
