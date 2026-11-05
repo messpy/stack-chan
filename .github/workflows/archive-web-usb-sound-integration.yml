@@ -1,0 +1,65 @@
+name: Archive Integrated USB Web and Reminder Audio
+
+on:
+  pull_request:
+    branches:
+      - feat/archive-reminder-sounds-web-20261105
+      - fix/archive-issue40-memory-admission-20261105
+      - fix/archive-diagnostics-20261105
+      - stackchan-super
+    paths:
+      - 'firmware/host/app/archive-web.js'
+      - 'firmware/scripts/lib/archive-usb-web-gates.test.mjs'
+      - 'firmware/host/app/archive-alarm-sound.js'
+      - 'firmware/host/app/archive-alarm-upload-page.js'
+      - 'firmware/host/app/archive-web-page.js'
+      - 'firmware/host/app/archive-tools.js'
+      - 'firmware/host/app/lan-archive.js'
+      - 'firmware/host/app/manifest_archive.example.json'
+      - 'firmware/scripts/lib/archive-alarm-sound.test.mjs'
+      - 'firmware/scripts/lib/archive-reminder-sound-settings.test.mjs'
+      - 'firmware/scripts/lib/archive-reminder-sound-page.test.mjs \
+            firmware/scripts/lib/archive-usb-web-gates.test.mjs'
+      - '.github/workflows/archive-web-usb-sound-integration.yml'
+  workflow_dispatch:
+
+jobs:
+  reminder-sound-regression:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Integration of USB guards and reminder audio browser
+        run: |
+          node --experimental-vm-modules --test \
+            firmware/scripts/lib/archive-alarm-sound.test.mjs \
+            firmware/scripts/lib/archive-reminder-sound-settings.test.mjs \
+            firmware/scripts/lib/archive-reminder-sound-page.test.mjs
+      - name: Existing timer and LAN monitor regressions
+        run: node --experimental-vm-modules --test firmware/scripts/lib/archive-timer-ui.test.mjs firmware/scripts/lib/archive-navigation.test.mjs firmware/scripts/lib/archive-lan-monitor.test.mjs firmware/scripts/lib/archive-lan-monitor-page.test.mjs
+
+  cores3-clean-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Generate dummy private manifest with no production secrets
+        working-directory: ./firmware
+        run: npm run init:archive
+      - name: CoreS3 full clean archive build, never flash
+        working-directory: ./firmware
+        shell: bash
+        run: |
+          source "$HOME/.local/share/xs-dev-export.sh"
+          node scripts/clean.mjs
+          npm run build:archive
+      - name: Verify firmware output
+        working-directory: ./firmware
+        run: test -s dist/bin/esp32/m5stack_cores3/release/stack-chan-host/xs_esp32.bin
