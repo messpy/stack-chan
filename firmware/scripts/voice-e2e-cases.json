@@ -126,11 +126,11 @@
       "text": "写真撮って",
       "required": [
         "asr",
-        "no_photo",
+        "photo",
         "no_head",
         "no_llm"
       ],
-      "note": "Start with transcription ON. ASR must display words but no camera, head motion, AI answer or audio"
+      "note": "Transcription-only mode can run a user's exact local photo command without any cloud LLM/tool or head movement."
     },
     {
       "id": "mode_recognition_off",
