@@ -289,3 +289,13 @@ test('failed photo still restores recognition transport and displays a failure',
   assert.ok(h.balloons.some(text=>text.includes('撮影できませんでした')))
   assert.equal(h.records.filter(row=>row.role==='output').length,0)
 })
+
+
+test('physical E2E expectation requires an explicit local photo in transcription-only mode', () => {
+  const cases = JSON.parse(readFileSync(new URL('../voice-e2e-cases.json',import.meta.url),'utf8'))
+  const row=cases.cases.find(item=>item.id==='mode_recognition_only_no_tool')
+  assert.ok(row,'transcription photo E2E case exists')
+  assert.ok(row.required.includes('photo'))
+  assert.ok(!row.required.includes('no_photo'))
+  assert.ok(row.required.includes('no_llm'))
+})
