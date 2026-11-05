@@ -1,0 +1,66 @@
+name: Archive PR45 Startup Compatibility
+
+on:
+  pull_request:
+    branches:
+      - integrate/archive-web-usb-sound-20261105
+    paths:
+      - 'firmware/host/app/archive-web-page.js'
+      - 'firmware/host/app/archive-alarm-sound.js'
+      - 'firmware/host/app/manifest_archive.example.json'
+      - 'firmware/scripts/lib/archive-reminder-sound-page.test.mjs'
+      - '.github/workflows/archive-pr45-startup-regression.yml'
+  workflow_dispatch:
+
+jobs:
+  legacy-manifest-regressions:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Evaluate reminder browser module without new private manifest alias
+        run: |
+          node --experimental-vm-modules --test \
+            firmware/scripts/lib/archive-reminder-sound-page.test.mjs \
+            firmware/scripts/lib/archive-reminder-sound-settings.test.mjs \
+            firmware/scripts/lib/archive-alarm-sound.test.mjs \
+            firmware/scripts/lib/archive-usb-web-gates.test.mjs
+      - name: Verify old public manifest does not need alarm upload module
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          modules=json.loads(Path("firmware/host/app/manifest_archive.example.json").read_text())["modules"]
+          page=Path("firmware/host/app/archive-web-page.js").read_text()
+          assert "archive-web-page" in modules
+          assert "archive-alarm-upload-page" not in modules
+          assert "import ALARM_UPLOAD_PAGE" not in page
+          assert "const ALARM_UPLOAD_PAGE =" in page
+          print("Legacy-manifest browser page compatibility PASS")
+          PY
+
+  cores3-legacy-manifest-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Build from legacy private manifest shape, no real credentials
+        working-directory: ./firmware
+        run: npm run init:archive
+      - name: Full clean CoreS3 firmware build without adding a new module alias
+        working-directory: ./firmware
+        shell: bash
+        run: |
+          source "$HOME/.local/share/xs-dev-export.sh"
+          node scripts/clean.mjs
+          npm run build:archive
+      - name: Check output exists
+        working-directory: ./firmware
+        run: test -s dist/bin/esp32/m5stack_cores3/release/stack-chan-host/xs_esp32.bin
