@@ -330,7 +330,14 @@ export function startArchive(robot) {
       else if(request.op==='/clock/status')result=localClockStatus();
       else if(request.op==='/alarms/open')result=openAlarmSettings();
       else if(request.op.startsWith('/alarm-sound/')&&request.op!=='/alarm-sound/preview')result=alarmSoundCommand(request.op.slice('/alarm-sound/'.length),request.args);
-      else if(request.op==='/alarm-sound/preview'){busy=true;try{result={played:await playAlarmSound(robot,()=>false,Math.max(1,Math.min(5,Number(request.args?.seconds)||2)))};}finally{busy=false;}}
+      else if(request.op==='/alarm-sound/preview'){
+        if(busy||reminderStatus().ringing)throw new Error('音声の再生・録音が終わってから試聴してください');
+        const kind=request.args?.kind||'alarm';
+        if(!['alarm','timer'].includes(kind))throw new Error('通知音の種類を選んでください');
+        busy=true;
+        try{result={played:await playAlarmSound(robot,()=>false,Math.max(1,Math.min(5,Number(request.args?.seconds)||2)),kind)};}
+        finally{busy=false;}
+      }
       else if(request.op==='/volume'){result=request.args?.percent===undefined?getVolume():setVolume(Number(request.args.percent),request.args.preview===true&&!monitor.active);}
       else if(request.op==='/network/open')result=openControl(request.args?.mode);
       else if(request.op==='/vision/status')result=visionStatus();
