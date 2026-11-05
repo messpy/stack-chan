@@ -1036,8 +1036,26 @@ async function connect() {
               } else {
                 trace('[vision] direct photo dispatch mode='+
                   (standalone?'transcription':recognitionOnly?'recognition-transport':'conversation')+'\n');
-                const promise=Promise.resolve().then(()=>photoHandler({question:recognized,analyze:false}));
+                // Recognition-only XiaoZhi aborts its stream at final STT. Free
+                // Opus/audio ownership before camera allocation, then reconnect.
+                let pausedRecognition=false;
+                const promise=Promise.resolve().then(()=>{
+                  if(recognitionOnly&&chat===instance){
+                    closeChat();
+                    state='waiting';
+                    retryAt=Date.now()+120000;
+                    pausedRecognition=true;
+                    trace('[vision] recognition transport released for capture\n');
+                  }
+                  return photoHandler({question:recognized,analyze:false});
+                });
                 photoTurn={expires:Date.now()+12000,promise};
+                function finishLocalPhoto(){
+                  if(!pausedRecognition||!running()||chat)return;
+                  state='waiting';
+                  retryAt=Date.now()+1000;
+                  trace('[vision] recognition reconnect scheduled\n');
+                }
                 promise.then(
                   result=>{
                     const saved=!!result?.image;
@@ -1045,14 +1063,17 @@ async function connect() {
                     // Link the saved photo to the normal conversation history, without
                     // storing a raw image or posting it to an external vision service.
                     if(saved)archive('output','写真を撮影してSDカードに保存しました。',undefined,result.image);
-                    if(chat!==instance||!running())return;
-                    showConversationBalloon(saved?'写真を撮影してSDカードに保存しました。':
-                      '写真を撮影できませんでした。');
+                    if((chat===instance||pausedRecognition)&&running())
+                      showConversationBalloon(saved?'写真を撮影してSDカードに保存しました。':
+                        '写真を撮影できませんでした。');
+                    finishLocalPhoto();
                   },
                   error=>{
                     const reason=String(error?.name||'Error').replace(/[^A-Za-z0-9_]/g,'').slice(0,30);
                     trace('[vision] direct photo failed type='+reason+'\n');
-                    if(chat===instance&&running())showConversationBalloon('写真を撮影できませんでした。カメラとSDカードの状態を確認してください。');
+                    if((chat===instance||pausedRecognition)&&running())
+                      showConversationBalloon('写真を撮影できませんでした。カメラとSDカードの状態を確認してください。');
+                    finishLocalPhoto();
                   }
                 );
               }
