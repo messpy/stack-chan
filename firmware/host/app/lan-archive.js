@@ -24,6 +24,7 @@ import {reconnectSavedWiFi} from 'archive-settings';
 import {imageUploadCommand} from 'archive-image-upload';
 import {startWiFiDisplay,wifiDisplayStatus} from 'archive-wifi-display';
 import {analyzeJPEG,visionStatus} from 'archive-vision';
+import {showChatCaption} from 'archive-chat-caption';
 import {startAlarmSettings,openAlarmSettings,showRingingAlarm,hideRingingAlarm} from 'archive-alarm-ui';
 import {alarmSoundCommand,playAlarmSound} from 'archive-alarm-sound';
 import {startWeb,openControl,controlStatus} from 'archive-web';
@@ -108,7 +109,7 @@ async function describeImage(robot,name,jpeg,question){
  const input=archiveTranscript('input',prompt,undefined,name,speakerId);
  const analysis=await analyzeJPEG(jpeg,prompt);
  const answer=archiveTranscript('output',analysis.status==='complete'?analysis.text:'画像認識エラー: '+(analysis.error||'回答を取得できませんでした'),undefined,name,speakerId);
- if(analysis.status==='complete')robot.showBalloon(analysis.text);
+ if(analysis.status==='complete')showChatCaption(robot,analysis.text);
  return {analysis,historySaved:!!input&&!!answer,messageIds:[input?.id,answer?.id]};
 }
 
