@@ -18,7 +18,7 @@ test('USB command gate rejects null JSON, missing credentials, arrays and invali
   id:1,token,op:''},{
   id:1,token,op:'/status',args:[]},{
   id:1,token,op:'/status',args:null},{
-  id:1,token,op:'/status',args:{},length:65},{
+  id:1,token,op:'/status',args:42},{
   id:1.5,token,op:'/status'},{
   id:-1,token,op:'/status'},{
   id:1,token,op:'a'.repeat(65)}])
