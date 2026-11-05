@@ -1,0 +1,65 @@
+name: Archive Camera Local Voice Capture
+
+on:
+  push:
+    branches:
+      - fix/archive-photo-local-voice-dispatch-20261105
+  pull_request:
+    branches:
+      - fix/archive-pr45-startup-private-manifest-20261105
+    paths:
+      - 'firmware/host/app/archive-direct-chat.js'
+      - 'firmware/host/app/lan-archive.js'
+      - 'firmware/scripts/lib/archive-issues-33-36.test.mjs'
+      - '.github/workflows/archive-camera-voice-local.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: archive-camera-local-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  camera-voice-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: JS source syntax checks
+        run: |
+          node --check firmware/host/app/archive-direct-chat.js
+          node --check firmware/host/app/lan-archive.js
+      - name: Photo and voice-mode integration regression
+        run: |
+          node --experimental-vm-modules --test \
+            firmware/scripts/lib/archive-issues-33-36.test.mjs \
+            firmware/scripts/lib/archive-voice-volume.test.mjs \
+            firmware/scripts/lib/archive-xiaozhi-recognition.test.mjs
+      - name: Read-only photo LAN and legacy manifest regressions
+        run: |
+          python3 -m unittest discover -s firmware/scripts -p 'test_archive_photo_lan.py' -v
+          python3 -m unittest discover -s firmware/scripts -p 'test_archive_private_manifest_preflight.py' -v
+          bash -n firmware/scripts/kmac-pr39.sh
+
+  cores3-clean-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Generate throwaway Archive manifest without real credentials
+        working-directory: ./firmware
+        run: npm run init:archive
+      - name: Build CoreS3 Archive firmware (no flash)
+        working-directory: ./firmware
+        shell: bash
+        run: |
+          source "$HOME/.local/share/xs-dev-export.sh"
+          node scripts/clean.mjs
+          npm run build:archive
+      - name: Verify firmware binary
+        run: test -s firmware/dist/bin/esp32/m5stack_cores3/release/stack-chan-host/xs_esp32.bin
