@@ -11,6 +11,7 @@ on:
       - 'firmware/host/app/archive-direct-chat.js'
       - 'firmware/host/app/lan-archive.js'
       - 'firmware/scripts/lib/archive-issues-33-36.test.mjs'
+      - 'firmware/scripts/voice-e2e-cases.json'
       - '.github/workflows/archive-camera-voice-local.yml'
   workflow_dispatch:
 
@@ -44,6 +45,7 @@ jobs:
           python3 -m unittest discover -s firmware/scripts -p 'test_archive_photo_lan.py' -v
           python3 -m unittest discover -s firmware/scripts -p 'test_archive_private_manifest_preflight.py' -v
           bash -n firmware/scripts/kmac-pr39.sh
+          python3 -m unittest discover -s firmware/scripts -p 'test_voice_e2e.py' -v
 
   cores3-clean-build:
     runs-on: ubuntu-24.04
