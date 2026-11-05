@@ -22,7 +22,8 @@ test('read-only snapshot excludes tokens, identifiers, free-text, and servo poll
   })
   assert.equal(actual.heap.internalFree,76659)
   assert.equal(actual.heap.internalLargest,31744)
-  assert.equal(actual.chat.failureClass,'memory-pressure')
+  assert.equal(actual.chat.failureClass,'none') // listening state suppresses stale errors
+  assert.equal(diagnosticSnapshot({chat:{state:'retrying',detail:'内蔵RAMが不足'}}).chat.failureClass,'memory-pressure')
   assert.equal(actual.photo.errorStage,'sd-save')
   assert.equal(actual.debug.dropped,2)
   assert.equal(actual.servo.lastReadFailure,'timeout')
@@ -58,6 +59,12 @@ test('network and authentication details remain sanitized classes',()=>{
   assert.equal(memoryReasonCode('authentication failed 401: SECRET'),'authentication')
   assert.equal(memoryReasonCode('websocket timeout to example.test'),'network')
   assert.equal(memoryReasonCode('custom error SECRET'),'other')
+})
+
+test('successful XiaoZhi and recognition-only connections clear old error details',()=>{
+  const direct=readFileSync(new URL('../../host/app/archive-direct-chat.js',import.meta.url),'utf8')
+  assert.match(direct,/state='listening';microphoneAt=Date\.now\(\);error='';detail='';retryDelay=3000;failures=0/)
+  assert.match(direct,/error = ''\s+detail = ''\s+retryDelay = 3000\s+failures = 0/)
 })
 
 test('memory pressure is not displayed as a network disconnect',()=>{
