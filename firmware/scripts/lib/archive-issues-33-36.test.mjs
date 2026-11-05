@@ -193,7 +193,9 @@ function voicePhotoHarness({standalone, recognitionOnly}) {
   const instance = {}
   const context = {
     chat: instance, instance, input: '', introText: '',
-    standalone, recognitionOnly, enrollment: {active: false},
+    standalone, recognitionOnly, state:'listening',retryAt:0,closed:0,
+    closeChat(){ context.chat=undefined; context.closed++ },
+    enrollment: {active: false},
     audioStats: {recognizedEvents: 0,lastTranscriptAt: 0},
     lastInputId: '', trace() {}, conversationIndicator() {},
     archive(role,text,eventId,image) { records.push({role,text,image}); return {id:'new-input'} },
@@ -236,6 +238,11 @@ test('direct photo saves locally and records linked history in all voice modes',
     assert.equal(h.records.filter(row=>row.role==='output'&&row.image==='photo-new.jpg').length,1)
     assert.equal(h.scheduled.length,0,'direct photo must not launch another LLM turn')
     assert.ok(h.balloons.some(x=>x.includes('SDカードに保存')))
+    assert.equal(h.context.closed,mode.recognitionOnly?1:0,'XiaoZhi ASR transport must be released')
+    if(mode.recognitionOnly){
+      assert.equal(h.context.state,'waiting')
+      assert.ok(h.context.retryAt>Date.now(),'ASR reconnect must be scheduled')
+    }
   }
 })
 
@@ -267,4 +274,18 @@ test('local photo handler keeps analysis opt-out and skips a second vision uploa
   assert.equal(result.analysisStatus,'skipped')
   assert.match(result.error,/画像解析は実行していません/)
   assert.equal(saved.context.captures,0)
+})
+
+
+test('failed photo still restores recognition transport and displays a failure', async () => {
+  const h=voicePhotoHarness({standalone:true,recognitionOnly:true})
+  h.context.photoHandler=async()=>{throw Error('native camera unavailable')}
+  h.run('写真撮って',false)
+  await assert.rejects(h.context.photoTurn.promise,/native camera unavailable/)
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(h.context.closed,1)
+  assert.equal(h.context.state,'waiting')
+  assert.ok(h.context.retryAt>Date.now())
+  assert.ok(h.balloons.some(text=>text.includes('撮影できませんでした')))
+  assert.equal(h.records.filter(row=>row.role==='output').length,0)
 })
