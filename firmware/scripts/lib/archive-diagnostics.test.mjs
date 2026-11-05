@@ -22,8 +22,9 @@ test('read-only snapshot excludes tokens, identifiers, free-text, and servo poll
   })
   assert.equal(actual.heap.internalFree,76659)
   assert.equal(actual.heap.internalLargest,31744)
-  assert.equal(actual.chat.failureClass,'none') // listening state suppresses stale errors
+  assert.equal(actual.chat.failureClass,'memory-pressure')
   assert.equal(diagnosticSnapshot({chat:{state:'retrying',detail:'内蔵RAMが不足'}}).chat.failureClass,'memory-pressure')
+  assert.equal(diagnosticSnapshot({chat:{state:'listening',detail:'websocket timeout'}}).chat.failureClass,'none')
   assert.equal(actual.photo.errorStage,'sd-save')
   assert.equal(actual.debug.dropped,2)
   assert.equal(actual.servo.lastReadFailure,'timeout')
