@@ -1,0 +1,55 @@
+name: Archive USB and Web Control Guard
+
+on:
+  pull_request:
+    branches:
+      - fix/archive-issue40-memory-admission-20261105
+      - stackchan-super
+    paths:
+      - 'firmware/host/app/lan-archive.js'
+      - 'firmware/host/app/archive-web.js'
+      - 'firmware/scripts/lib/archive-usb-web-gates.test.mjs'
+      - '.github/workflows/archive-usb-web-gates.yml'
+  workflow_dispatch:
+
+jobs:
+  usb-web-regression:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test malformed USB requests and HTTP listener failures
+        run: |
+          node --experimental-vm-modules --test \
+            firmware/scripts/lib/archive-usb-web-gates.test.mjs
+      - name: Check existing browser LAN monitor behavior
+        run: |
+          node --experimental-vm-modules --test \
+            firmware/scripts/lib/archive-lan-monitor.test.mjs \
+            firmware/scripts/lib/archive-lan-monitor-page.test.mjs
+
+  cores3-clean-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Create temporary manifest with no live secrets
+        working-directory: ./firmware
+        run: npm run init:archive
+      - name: Clean CoreS3 firmware build; no device flash
+        working-directory: ./firmware
+        shell: bash
+        run: |
+          source "$HOME/.local/share/xs-dev-export.sh"
+          node scripts/clean.mjs
+          npm run build:archive
+      - name: Check generated firmware
+        working-directory: ./firmware
+        run: test -s dist/bin/esp32/m5stack_cores3/release/stack-chan-host/xs_esp32.bin

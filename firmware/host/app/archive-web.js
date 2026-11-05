@@ -24,21 +24,24 @@ function protect(handler){return async c=>{
   try{return await handler(c);}catch(error){trace('[control] request failed: '+String(error?.name||'Error')+'\n');return c.json({error:String(error.message||'本体で処理できませんでした')},503);}
 };}
 function startServer(){
-  server=new HttpServerService({server:ArchiveHTTPServer,port:8082,maxRequestBodyBytes:20000});
-  server.get('/',protect(c=>{c.header('Set-Cookie','sc_device='+access+'; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400');return new Response(PAGE,{headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Set-Cookie':'sc_device='+access+'; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400'}});}));
-  for(const [path,name,type] of [['/face-editor','page','text/html'],['/face-editor.js','script','text/javascript'],['/face-format.js','format','text/javascript']])server.get(path,protect(()=>new Response(faceEditorAsset(name),{headers:{'Content-Type':type+'; charset=utf-8'}})));
-  server.post('/rpc',protect(async c=>{const request=await c.req.json();if(!request||typeof request.op!=='string'||request.op.length>64||request.args!==undefined&&(!request.args||typeof request.args!=='object'||Array.isArray(request.args)))return c.json({error:'Invalid command'},400);return c.json(await actions.execute({op:request.op,args:request.args||{}}));}));
-  server.get('/status',protect(async c=>c.json(await actions.execute({op:'/status',args:{}}))));
+  const listener=new HttpServerService({server:ArchiveHTTPServer,port:8082,maxRequestBodyBytes:20000});
+  try {
+  listener.get('/',protect(c=>{c.header('Set-Cookie','sc_device='+access+'; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400');return new Response(PAGE,{headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Set-Cookie':'sc_device='+access+'; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400'}});}));
+  for(const [path,name,type] of [['/face-editor','page','text/html'],['/face-editor.js','script','text/javascript'],['/face-format.js','format','text/javascript']])listener.get(path,protect(()=>new Response(faceEditorAsset(name),{headers:{'Content-Type':type+'; charset=utf-8'}})));
+  listener.post('/rpc',protect(async c=>{const request=await c.req.json();if(!request||typeof request.op!=='string'||request.op.length>64||request.args!==undefined&&(!request.args||typeof request.args!=='object'||Array.isArray(request.args)))return c.json({error:'Invalid command'},400);return c.json(await actions.execute({op:request.op,args:request.args||{}}));}));
+  listener.get('/status',protect(async c=>c.json(await actions.execute({op:'/status',args:{}}))));
   // Explicitly authenticated, read-only, bounded metrics; no raw logs or secrets.
-  server.get('/diagnostics',protect(async c=>c.json(await actions.execute({op:'/diagnostics/status',args:{}}))));
-  server.get('/files',protect(async c=>c.json(await actions.execute({op:'/files',args:{}}))));
-  server.get('/file',protect(c=>{const name=c.req.query('name'),offset=Number(c.req.query('offset')||0),length=Number(c.req.query('length')||32768);if(!mediaName(name)||!Number.isSafeInteger(offset)||offset<0||!Number.isInteger(length)||length<1||length>32768)return c.json({error:'Invalid range'},400);return new Response(actions.read(name,offset,length),{headers:{'Content-Type':'application/octet-stream'}});}));
-  server.get('/media',protect(c=>{const name=c.req.query('name');if(!mediaName(name))return c.json({error:'Invalid file'},400);const data=actions.read(name,0,2*1024*1024,true);const type=name.endsWith('.bmp')?'image/bmp':name.endsWith('.jpg')?'image/jpeg':name.endsWith('.wav')?'audio/wav':name.endsWith('.avi')?'video/x-msvideo':'application/json';return new Response(data,{headers:{'Content-Type':type,'Content-Length':String(data.byteLength),'Cache-Control':'no-store'}});}));
-  server.get('/monitor/audio',protect(c=>new Response(actions.monitorAudio(c.req.query('session')),{headers:{'Content-Type':'application/octet-stream','Cache-Control':'no-store'}})));
-  server.get('/camera/frame',protect(async c=>new Response(await actions.preview(c.req.query('session')),{headers:{'Content-Type':'image/jpeg','Cache-Control':'no-store'}})));
-  server.get('/messages',protect(c=>c.json(actions.messages())));
-  for(const op of ['photo','record','audio'])server.post('/'+op,protect(async c=>c.json(await actions.execute({op:'/'+op,args:{}}))));
+  listener.get('/diagnostics',protect(async c=>c.json(await actions.execute({op:'/diagnostics/status',args:{}}))));
+  listener.get('/files',protect(async c=>c.json(await actions.execute({op:'/files',args:{}}))));
+  listener.get('/file',protect(c=>{const name=c.req.query('name'),offset=Number(c.req.query('offset')||0),length=Number(c.req.query('length')||32768);if(!mediaName(name)||!Number.isSafeInteger(offset)||offset<0||!Number.isInteger(length)||length<1||length>32768)return c.json({error:'Invalid range'},400);return new Response(actions.read(name,offset,length),{headers:{'Content-Type':'application/octet-stream'}});}));
+  listener.get('/media',protect(c=>{const name=c.req.query('name');if(!mediaName(name))return c.json({error:'Invalid file'},400);const data=actions.read(name,0,2*1024*1024,true);const type=name.endsWith('.bmp')?'image/bmp':name.endsWith('.jpg')?'image/jpeg':name.endsWith('.wav')?'audio/wav':name.endsWith('.avi')?'video/x-msvideo':'application/json';return new Response(data,{headers:{'Content-Type':type,'Content-Length':String(data.byteLength),'Cache-Control':'no-store'}});}));
+  listener.get('/monitor/audio',protect(c=>new Response(actions.monitorAudio(c.req.query('session')),{headers:{'Content-Type':'application/octet-stream','Cache-Control':'no-store'}})));
+  listener.get('/camera/frame',protect(async c=>new Response(await actions.preview(c.req.query('session')),{headers:{'Content-Type':'image/jpeg','Cache-Control':'no-store'}})));
+  listener.get('/messages',protect(c=>c.json(actions.messages())));
+  for(const op of ['photo','record','audio'])listener.post('/'+op,protect(async c=>c.json(await actions.execute({op:'/'+op,args:{}}))));
+  server=listener;
   trace('[control] device web server ready on 8082\n');
+  }catch(error){try{listener.close?.();}catch(_){}throw error;}
 }
 export function startWeb(context,callbacks,token){
   robot=context;actions=callbacks;access=token;
