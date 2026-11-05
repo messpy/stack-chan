@@ -3,7 +3,8 @@ import {readFileSync} from 'node:fs'
 import {test} from 'node:test'
 import vm from 'node:vm'
 
-const source=readFileSync(new URL('../../host/app/archive-diagnostics.js',import.meta.url),'utf8')
+const fullSource=readFileSync(new URL('../../host/app/archive-debug.js',import.meta.url),'utf8')
+const source=fullSource.slice(fullSource.indexOf('// Bounded, credential-free diagnostics.'))
 const mod=new vm.SourceTextModule(source,{context:vm.createContext({Number,String,RegExp,Error})})
 await mod.link(()=>{throw Error('Diagnostics must have no imports')})
 await mod.evaluate()
