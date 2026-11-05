@@ -1,6 +1,7 @@
 import {headDirectionFromText} from 'archive-head-motion'
 import {heapStatus,collectMemory} from 'archive-usb'
 import {checkVoiceMemory,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
+import {markHeap} from 'archive-debug'
 import { ollamaChat, ollamaModel, validOllamaModel, geminiTextChat, DEFAULT_GEMINI_TEXT_MODEL, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
 import { VoiceRegistration, enrollmentInstructions, explicitSpeakerName, registrationName } from 'archive-speaker-registration'
 import { speakerButtons } from 'archive-button-schema'
@@ -524,7 +525,11 @@ export function setRecognitionMode(on){
   return directChatStatus();
 }
 let memoryCleanupTimer
-function scheduleMemoryCleanup(){if(memoryCleanupTimer!==undefined)return;memoryCleanupTimer=Timer.set(()=>{memoryCleanupTimer=undefined;collectMemory()},0)}
+function scheduleMemoryCleanup(){if(memoryCleanupTimer!==undefined)return;memoryCleanupTimer=Timer.set(()=>{
+  memoryCleanupTimer=undefined;
+  collectMemory();
+  try{markHeap('chat-cleanup',heapStatus(),trace)}catch(_){}
+},0)}
 function closeChat() {
   if(chat || connecting)trace('[mode-session] closing native session\n')
   const speech=recognitionSpeech;recognitionSpeech=undefined;try{speech?.cancel()}catch(_){}
@@ -556,18 +561,21 @@ function failed(reason) {
   if (failures >= 2 && shouldRenewCloudIdentity(reason)) forceProvision = true
   const failedChat = chat,
     failedGeneration = generation
-  error =
-    chatProvider() === 'gemini' && String(reason).startsWith('Gemini')
+  const memoryBlocked = isMemoryPressure(reason)
+  error = memoryBlocked
+    ? '内蔵RAMが不足しているため、音声会話を一時停止しています。'
+    : chatProvider() === 'gemini' && String(reason).startsWith('Gemini')
       ? String(reason).slice(0, 180)
       : '会話の接続が切れました。自動で再接続します。'
   detail = String(reason || 'connection closed')
   for (const secret of [getSettings().api?.gemini, getSettings().api?.ollama, cloudConfig()?.accessToken])
     if (secret) detail = detail.split(secret).join('[redacted]')
   detail = detail.slice(0, 160)
+  try{markHeap('chat-failure',heapStatus(),trace)}catch(_){}
   microphoneIndicator(false)
   conversationIndicator('off')
   state = 'retrying'
-  retryAt = Date.now() + Math.max(retryDelay,isMemoryPressure(reason)?10000:0)
+  retryAt = Date.now() + Math.max(retryDelay,memoryBlocked?10000:0)
   retryDelay = Math.min(60000, retryDelay * 2)
   Timer.set(() => {
     if (generation === failedGeneration && chat === failedChat) {
@@ -699,7 +707,9 @@ async function connect() {
   try {
     const provider = chatProvider(),standalone=recognitionMode(),recognitionOnly=standalone||usesXiaoZhiRecognition(provider),xiaozhiTransport=provider==='xiaozhi'||recognitionOnly
     collectMemory()
-    checkVoiceMemory(heapStatus(),xiaozhiTransport)
+    const preflightHeap=heapStatus()
+    markHeap('chat-preflight',preflightHeap,trace)
+    checkVoiceMemory(preflightHeap,xiaozhiTransport)
     if (conversationProviderSeen !== provider) {
       greetingPending = true
       conversationProviderSeen = provider
@@ -867,7 +877,7 @@ async function connect() {
             return
           }
           if(recognitionOnly&&value===ChatState.CONNECTED){
-            state='listening';microphoneAt=Date.now();error='';retryDelay=3000;failures=0
+            state='listening';microphoneAt=Date.now();error='';detail='';retryDelay=3000;failures=0
             trace('[mode-session] connected mode='+(standalone?'transcription':'recognition-transport')+'\n')
             if(!standalone&&greetingPending&&!enrollment.active){greetingPending=false;Timer.set(()=>recognitionTurn(null),0)}
             return
@@ -902,6 +912,7 @@ async function connect() {
               openSpeakerChooser()
             }
             error = ''
+            detail = ''
             retryDelay = 3000
             failures = 0
           }
