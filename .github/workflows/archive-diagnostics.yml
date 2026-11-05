@@ -1,0 +1,36 @@
+name: Archive Read-only Diagnostics
+
+on:
+  pull_request:
+    branches:
+      - stackchan-super
+      - fix/archive-issues-33-38-20261104
+    paths:
+      - 'firmware/host/app/archive-diagnostics.js'
+      - 'firmware/host/app/archive-direct-chat.js'
+      - 'firmware/host/app/lan-archive.js'
+      - 'firmware/host/app/archive-web.js'
+      - 'firmware/scripts/archive-lan-diagnostics.py'
+      - 'firmware/scripts/test_archive_lan_diagnostics.py'
+      - 'firmware/scripts/lib/archive-diagnostics.test.mjs'
+      - '.github/workflows/archive-diagnostics.yml'
+  workflow_dispatch:
+
+jobs:
+  diagnostics-regression:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test bounded JS diagnostics and failure classes
+        run: node --experimental-vm-modules --test firmware/scripts/lib/archive-diagnostics.test.mjs
+      - name: Test private LAN sampler and syntax
+        run: |
+          python3 -m py_compile firmware/scripts/archive-lan-diagnostics.py
+          python3 -m unittest discover -s firmware/scripts -p 'test_archive_lan_diagnostics.py' -v
+      - name: Run original camera and voice guard regressions
+        run: node --experimental-vm-modules --test firmware/scripts/lib/archive-issues-33-36.test.mjs
