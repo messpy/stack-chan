@@ -97,7 +97,7 @@ export function diagnosticSnapshot({heap, chat, photo, debug, servo, resetCode, 
     chat: {
       state: tag(c.state), provider: tag(c.provider),
       enabled: c.enabled === true, recognitionMode: c.recognitionMode === true,
-      failureClass: memoryReasonCode(c.detail),
+      failureClass: ['retrying', 'failed', 'error'].includes(c.state) ? memoryReasonCode(c.detail) : 'none',
     },
     photo: {
       phase: tag(p.phase), saved: p.saved === true,
