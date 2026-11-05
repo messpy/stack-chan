@@ -131,7 +131,9 @@ tests(){
     scripts/lib/archive-vault-mode-recovery.test.mjs scripts/lib/archive-vault-slot-read.test.mjs \
     scripts/lib/archive-head-motion.test.mjs scripts/lib/archive-head-command-dedupe.test.mjs scripts/lib/archive-issues-33-36.test.mjs \
     scripts/lib/archive-voice-volume.test.mjs scripts/lib/archive-build-preflight.test.mjs \
-    scripts/lib/archive-diagnostics.test.mjs scripts/lib/archive-memory-policy.test.mjs) || die "NodeテストFAIL"
+    scripts/lib/archive-diagnostics.test.mjs scripts/lib/archive-memory-policy.test.mjs \
+    scripts/lib/archive-alarm-sound.test.mjs scripts/lib/archive-reminder-sound-settings.test.mjs \
+    scripts/lib/archive-reminder-sound-page.test.mjs) || die "NodeテストFAIL"
   (cd "$FW" && python3 -m unittest discover -s scripts -p 'test_voice_e2e.py' -v) || die "PythonテストFAIL"
   (cd "$FW" && python3 -m unittest discover -s scripts -p 'test_archive_usb_audit.py' -v) || die "USB/photo診断テストFAIL"
   (cd "$FW" && python3 -m unittest discover -s scripts -p 'test_archive_photo_lan.py' -v) || die "LAN/photo診断テストFAIL"
