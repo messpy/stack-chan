@@ -9,6 +9,8 @@ on:
       - 'firmware/host/app/archive-alarm-sound.js'
       - 'firmware/host/app/manifest_archive.example.json'
       - 'firmware/scripts/lib/archive-reminder-sound-page.test.mjs'
+      - 'firmware/scripts/kmac-pr39.sh'
+      - 'firmware/scripts/test_archive_private_manifest_preflight.py'
       - '.github/workflows/archive-pr45-startup-regression.yml'
   workflow_dispatch:
 
@@ -29,6 +31,10 @@ jobs:
             firmware/scripts/lib/archive-reminder-sound-settings.test.mjs \
             firmware/scripts/lib/archive-alarm-sound.test.mjs \
             firmware/scripts/lib/archive-usb-web-gates.test.mjs
+      - name: Verify production private-manifest preflight and shell syntax
+        run: |
+          bash -n firmware/scripts/kmac-pr39.sh
+          python3 -m unittest discover -s firmware/scripts -p 'test_archive_private_manifest_preflight.py' -v
       - name: Verify old public manifest does not need alarm upload module
         run: |
           python3 - <<'PY'
