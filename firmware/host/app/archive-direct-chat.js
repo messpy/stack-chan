@@ -809,7 +809,7 @@ async function connect() {
         return result.analysis?.status === 'complete'
           ? { photo: result.image, description: result.analysis.text }
           : { photo: result.image, saved: !!result.image, analysisStatus: result.analysis?.status || 'skipped',
-              error: result.analysis?.error || (result.analysis?.status === 'skipped'
+              error: result.analysis?.error || ((!result.analysis || result.analysis.status === 'skipped')
                 ? '写真は保存しましたが、画像解析は実行していません。' : '画像認識できませんでした') }
       }
       if (name === 'volume_get') return getVolume();
