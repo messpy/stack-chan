@@ -68,7 +68,7 @@ For the *existing* servo symptom, stop the head first and add `--motor-once` to 
 - `servo.lastReadFailure` describes the **last position-read attempt from the Web monitor**, not a continuously polled physical sensor; `motor-once.pan/tilt.reasonClass` comes from an explicit read when enabled.
 - `debug.dropped` increasing means the in-RAM debug queue lost events. This snapshot mechanism does not need USB but cannot retrieve historical raw trace text.
 - `photo.phase` is the firmware's latest reported stage, not independent validation of the JPEG content.
-- If the device resets, preserve the last PC snapshot, reconnect, then compare `boot.uptimeMs` (reset to a low value after reboot) and `boot.resetReasonCode` after reboot. ESP-IDF commonly reports SW=3, PANIC=4, TASK_WDT=6, BROWNOUT=9, but verify enum against the SDK used in the actual build. This is the **most recent reset cause**, not a stack trace. Do not infer a specific failing call without additional evidence.
+- If the device resets, preserve the last PC snapshot, reconnect, then compare `boot.uptimeMs` (reset to a low value after reboot) and `boot.resetReasonCode` after reboot. ESP-IDF commonly reports SW=3, PANIC=4, TASK_WDT=6, BROWNOUT=9, USB=11, but verify enum against the SDK used in the actual build. This is the **most recent reset cause**, not a stack trace. Do not infer a specific failing call without additional evidence.
 
 ## Regression and integration
 
