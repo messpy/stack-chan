@@ -98,6 +98,18 @@ export function diagnosticSnapshot({heap, chat, photo, debug, servo, resetCode, 
       state: tag(c.state), provider: tag(c.provider),
       enabled: c.enabled === true, recognitionMode: c.recognitionMode === true,
       failureClass: ['retrying', 'failed', 'error'].includes(c.state) ? memoryReasonCode(c.detail) : 'none',
+      // A prior preflight is intentionally retained across reconnects; this is not live heap.
+      lastMemoryAdmission:c.memoryAdmission ? {
+        status:['pass','blocked','unmeasured'].includes(c.memoryAdmission.status)?c.memoryAdmission.status:'unknown',
+        mode:['conversation','transcription','recognition-transport'].includes(c.memoryAdmission.mode)?c.memoryAdmission.mode:'unknown',
+        at:count(c.memoryAdmission.at),
+        internalFree:count(c.memoryAdmission.internalFree),
+        internalLargest:count(c.memoryAdmission.internalLargest),
+        requiredFree:count(c.memoryAdmission.requiredFree),
+        requiredLargest:count(c.memoryAdmission.requiredLargest),
+        shortfallFree:count(c.memoryAdmission.shortfallFree),
+        shortfallLargest:count(c.memoryAdmission.shortfallLargest),
+      } : null,
     },
     photo: {
       phase: tag(p.phase), saved: p.saved === true,

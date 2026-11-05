@@ -1,6 +1,6 @@
 import {headDirectionFromText} from 'archive-head-motion'
 import {heapStatus,collectMemory} from 'archive-usb'
-import {checkVoiceMemory,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
+import {checkVoiceMemory,voiceMemoryAdmission,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
 import {markHeap} from 'archive-debug'
 import { ollamaChat, ollamaModel, validOllamaModel, geminiTextChat, DEFAULT_GEMINI_TEXT_MODEL, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
 import { VoiceRegistration, enrollmentInstructions, explicitSpeakerName, registrationName } from 'archive-speaker-registration'
@@ -44,6 +44,7 @@ let robot,
   forceProvision = false,
   failures = 0,
   lastProvisionAttempt = 0,
+  lastMemoryAdmission = null,
   state = 'off',
   error = '',
   detail = '',
@@ -386,6 +387,8 @@ export function directChatStatus() {
     conversationStage,
     audio: { ...audioStats },
     memory: typeof heapStatus==='function'?heapStatus():null,
+    // Last admission attempt, not live free RAM; survives a retry for diagnostics.
+    memoryAdmission:lastMemoryAdmission,
     playback:globalThis.stackchanPlaybackHealth||null,
     busy: !!chat || connecting,
     phase: state,
@@ -709,6 +712,15 @@ async function connect() {
     collectMemory()
     const preflightHeap=heapStatus()
     markHeap('chat-preflight',preflightHeap,trace)
+    const admission=voiceMemoryAdmission(preflightHeap,xiaozhiTransport)
+    lastMemoryAdmission={
+      ...admission,at:Date.now(),
+      mode:standalone?'transcription':recognitionOnly?'recognition-transport':'conversation',
+    }
+    trace('[voice-memory] admission='+admission.status+
+      ' mode='+lastMemoryAdmission.mode+
+      ' shortfallFree='+admission.shortfallFree+
+      ' shortfallLargest='+admission.shortfallLargest+'\n')
     checkVoiceMemory(preflightHeap,xiaozhiTransport)
     if (conversationProviderSeen !== provider) {
       greetingPending = true
