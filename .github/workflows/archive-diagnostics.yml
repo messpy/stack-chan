@@ -7,6 +7,8 @@ on:
       - fix/archive-issues-33-38-20261104
     paths:
       - 'firmware/host/app/archive-debug.js'
+      - 'firmware/host/app/archive-usb.c'
+      - 'firmware/host/app/archive-usb.js'
       - 'firmware/host/app/archive-direct-chat.js'
       - 'firmware/host/app/lan-archive.js'
       - 'firmware/host/app/archive-web.js'
