@@ -59,3 +59,12 @@ test('network and authentication details remain sanitized classes',()=>{
   assert.equal(memoryReasonCode('websocket timeout to example.test'),'network')
   assert.equal(memoryReasonCode('custom error SECRET'),'other')
 })
+
+test('memory pressure is not displayed as a network disconnect',()=>{
+  const direct=readFileSync(new URL('../../host/app/archive-direct-chat.js',import.meta.url),'utf8')
+  assert.match(direct,/const memoryBlocked = isMemoryPressure\(reason\)/)
+  assert.match(direct,/error = memoryBlocked[\s\S]*?内蔵RAMが不足しているため、音声会話を一時停止しています。/)
+  assert.match(direct,/Math\.max\(retryDelay,memoryBlocked\?10000:0\)/)
+  const policy=readFileSync(new URL('../../host/app/archive-memory-policy.js',import.meta.url),'utf8')
+  assert.match(policy,/112 : 80/)
+})
