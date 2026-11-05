@@ -1,6 +1,7 @@
 import {headDirectionFromText} from 'archive-head-motion'
 import {heapStatus,collectMemory} from 'archive-usb'
 import {checkVoiceMemory,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
+import {markHeap} from 'archive-diagnostics'
 import { ollamaChat, ollamaModel, validOllamaModel, geminiTextChat, DEFAULT_GEMINI_TEXT_MODEL, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
 import { VoiceRegistration, enrollmentInstructions, explicitSpeakerName, registrationName } from 'archive-speaker-registration'
 import { speakerButtons } from 'archive-button-schema'
@@ -524,7 +525,11 @@ export function setRecognitionMode(on){
   return directChatStatus();
 }
 let memoryCleanupTimer
-function scheduleMemoryCleanup(){if(memoryCleanupTimer!==undefined)return;memoryCleanupTimer=Timer.set(()=>{memoryCleanupTimer=undefined;collectMemory()},0)}
+function scheduleMemoryCleanup(){if(memoryCleanupTimer!==undefined)return;memoryCleanupTimer=Timer.set(()=>{
+  memoryCleanupTimer=undefined;
+  collectMemory();
+  try{markHeap('chat-cleanup',heapStatus(),trace)}catch(_){}
+},0)}
 function closeChat() {
   if(chat || connecting)trace('[mode-session] closing native session\n')
   const speech=recognitionSpeech;recognitionSpeech=undefined;try{speech?.cancel()}catch(_){}
@@ -564,6 +569,7 @@ function failed(reason) {
   for (const secret of [getSettings().api?.gemini, getSettings().api?.ollama, cloudConfig()?.accessToken])
     if (secret) detail = detail.split(secret).join('[redacted]')
   detail = detail.slice(0, 160)
+  try{markHeap('chat-failure',heapStatus(),trace)}catch(_){}
   microphoneIndicator(false)
   conversationIndicator('off')
   state = 'retrying'
@@ -699,7 +705,9 @@ async function connect() {
   try {
     const provider = chatProvider(),standalone=recognitionMode(),recognitionOnly=standalone||usesXiaoZhiRecognition(provider),xiaozhiTransport=provider==='xiaozhi'||recognitionOnly
     collectMemory()
-    checkVoiceMemory(heapStatus(),xiaozhiTransport)
+    const preflightHeap=heapStatus()
+    markHeap('chat-preflight',preflightHeap,trace)
+    checkVoiceMemory(preflightHeap,xiaozhiTransport)
     if (conversationProviderSeen !== provider) {
       greetingPending = true
       conversationProviderSeen = provider
