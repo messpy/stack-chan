@@ -468,7 +468,7 @@ export function startArchive(robot) {
     finally{usbBusy=false;}
   },5);
 
-  try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},args=>photo(robot,{...args,analyze:true},true),on=>{if(on){
+  try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},args=>photo(robot,{...args,analyze:args?.analyze!==false},true),on=>{if(on){
     // Preserve the user's ON choice while boot/offline speech owns the audio device.
     // The regular chat retry loop will connect after the audio lease is released.
     if(offlineStatus().playing)return;
