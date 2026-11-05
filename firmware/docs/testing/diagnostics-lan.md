@@ -61,6 +61,16 @@ For the *existing* servo symptom, stop the head first and add `--motor-once` to 
 **4. Interpretation and rollback.** A successful build or flash is not a physical acceptance PASS. If network access is lost, the sampler records `unavailable`. If the device fails after flashing, restore the checksummed 16MiB ESP32 backup via the same updater's `restore /absolute/path/backup.bin` mode with explicit user confirmation. The ESP32 flash backup does **not** include the SD card.
 
 
+## Voice-memory admission evidence (Issue #40)
+
+On the Issue #40 stacked branch, every actual voice-connection attempt records the **last** preflight decision as `chat.lastMemoryAdmission` in the authenticated `GET /diagnostics` snapshot. It is populated only when the connection code reaches `checkVoiceMemory`; an OFF mode, busy audio lease or disconnected Wi-Fi may not create a new attempt.
+
+Fields are: `status=pass|blocked|unmeasured`, `mode=conversation|transcription|recognition-transport`, `at` (device wall-clock timestamp), `internalFree`, `internalLargest`, `requiredFree`, `requiredLargest`, `shortfallFree` and `shortfallLargest`. They are **the most recent admission decision, not the current heap**; inspect `heap` separately for current free memory. This metadata persists in RAM until a later attempt or reboot, and does not expose conversations, keys or addresses.
+
+The original Opus/XiaoZhi safety threshold remains **112 KiB total internal free** plus **24 KiB largest contiguous free**. Memory figures of 42–48 KiB measured *after successful connection* do not prove a preflight failure. `status=blocked` with positive shortfall is evidence that a specific **new session** was prevented. `status=pass` proves only the preflight condition passed, not that cloud connection, speech recognition or TTS succeeded.
+
+To investigate an AI conversation, explicitly switch the robot's UI to conversation mode; confirm the snapshot contains `chat.enabled=true` and `chat.recognitionMode=false` rather than only `state=listening`. **Do not change persistent settings via diagnostic RPC**. The sampler remains read-only and may be run with a small sample count.
+
 ## Interpretation
 
 - `heap.internalFree` and `heap.internalLargest` distinguish total internal RAM from the largest allocatable contiguous block. Compare values before/after chat/camera/monitor events; do not reduce the 112-KiB XiaoZhi guard as a workaround.
