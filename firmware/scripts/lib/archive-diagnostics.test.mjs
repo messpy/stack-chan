@@ -13,7 +13,7 @@ const {heapSummary,servoReasonCode,memoryReasonCode,markHeap,diagnosticSnapshot}
 test('read-only snapshot excludes tokens, identifiers, free-text, and servo polling',()=>{
   const actual=diagnosticSnapshot({
     heap:{internalFree:76659,internalLargest:31744,psramFree:100000,secret:'DO_NOT_COPY'},
-    chat:{state:'retrying',provider:'xiaozhi',enabled:true,detail:'内蔵RAM不足 token=SECRET'},
+    chat:{state:'retrying',provider:'xiaozhi',enabled:true,detail:'内蔵RAM不足 token=SECRET',memoryAdmission:{status:'blocked',mode:'conversation',at:1793859000000,internalFree:76659,internalLargest:31744,requiredFree:114688,requiredLargest:24576,shortfallFree:38029,shortfallLargest:0,token:'PRIVATE_KEY'}},
     photo:{phase:'error',errorStage:'sd-save',saved:false,image:'PRIVATE_IMAGE'},
     debug:{queued:4,dropped:2,secret:'PRIVATE_LOG'},
     servo:{lastReadFailure:'timeout',reason:'SECRET_NATIVE'},
@@ -23,6 +23,11 @@ test('read-only snapshot excludes tokens, identifiers, free-text, and servo poll
   assert.equal(actual.heap.internalFree,76659)
   assert.equal(actual.heap.internalLargest,31744)
   assert.equal(actual.chat.failureClass,'memory-pressure')
+  assert.equal(actual.chat.lastMemoryAdmission.status,'blocked')
+  assert.equal(actual.chat.lastMemoryAdmission.mode,'conversation')
+  assert.equal(actual.chat.lastMemoryAdmission.shortfallFree,38029)
+  assert.equal(actual.chat.lastMemoryAdmission.internalLargest,31744)
+  assert.equal(actual.chat.lastMemoryAdmission.at,1793859000000)
   assert.equal(diagnosticSnapshot({chat:{state:'retrying',detail:'内蔵RAMが不足'}}).chat.failureClass,'memory-pressure')
   assert.equal(diagnosticSnapshot({chat:{state:'listening',detail:'websocket timeout'}}).chat.failureClass,'none')
   assert.equal(actual.photo.errorStage,'sd-save')
@@ -35,6 +40,20 @@ test('read-only snapshot excludes tokens, identifiers, free-text, and servo poll
   assert.ok(!JSON.stringify(actual).includes('DO_NOT_COPY'))
   assert.ok(!JSON.stringify(actual).includes('token'))
   assert.ok(!('motor' in actual))
+})
+
+test('admission snapshot cannot echo arbitrary session labels or secrets',()=>{
+  const snap=diagnosticSnapshot({chat:{state:'waiting',memoryAdmission:{
+    status:'token',mode:'secret',at:NaN,internalFree:-5,internalLargest:35000,
+    requiredFree:114688,requiredLargest:24576,shortfallFree:0,shortfallLargest:0,
+    token:'PRIVATE'
+  }}})
+  assert.equal(snap.chat.lastMemoryAdmission.status,'unknown')
+  assert.equal(snap.chat.lastMemoryAdmission.mode,'unknown')
+  assert.equal(snap.chat.lastMemoryAdmission.internalFree,null)
+  assert.equal(snap.chat.lastMemoryAdmission.internalLargest,35000)
+  assert.ok(!JSON.stringify(snap).includes('PRIVATE'))
+  assert.equal(diagnosticSnapshot({chat:{state:'off'}}).chat.lastMemoryAdmission,null)
 })
 
 test('servo failures are classified without embedding native error strings',()=>{
