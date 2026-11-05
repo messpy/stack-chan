@@ -561,8 +561,10 @@ function failed(reason) {
   if (failures >= 2 && shouldRenewCloudIdentity(reason)) forceProvision = true
   const failedChat = chat,
     failedGeneration = generation
-  error =
-    chatProvider() === 'gemini' && String(reason).startsWith('Gemini')
+  const memoryBlocked = isMemoryPressure(reason)
+  error = memoryBlocked
+    ? '内蔵RAMが不足しているため、音声会話を一時停止しています。'
+    : chatProvider() === 'gemini' && String(reason).startsWith('Gemini')
       ? String(reason).slice(0, 180)
       : '会話の接続が切れました。自動で再接続します。'
   detail = String(reason || 'connection closed')
@@ -573,7 +575,7 @@ function failed(reason) {
   microphoneIndicator(false)
   conversationIndicator('off')
   state = 'retrying'
-  retryAt = Date.now() + Math.max(retryDelay,isMemoryPressure(reason)?10000:0)
+  retryAt = Date.now() + Math.max(retryDelay,memoryBlocked?10000:0)
   retryDelay = Math.min(60000, retryDelay * 2)
   Timer.set(() => {
     if (generation === failedGeneration && chat === failedChat) {
