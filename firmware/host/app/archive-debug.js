@@ -100,8 +100,8 @@ export function diagnosticSnapshot({heap, chat, photo, debug, servo, resetCode, 
       failureClass: ['retrying', 'failed', 'error'].includes(c.state) ? memoryReasonCode(c.detail) : 'none',
       // A prior preflight is intentionally retained across reconnects; this is not live heap.
       lastMemoryAdmission:c.memoryAdmission ? {
-        status:tag(c.memoryAdmission.status),
-        mode:tag(c.memoryAdmission.mode),
+        status:['pass','blocked','unmeasured'].includes(c.memoryAdmission.status)?c.memoryAdmission.status:'unknown',
+        mode:['conversation','transcription','recognition-transport'].includes(c.memoryAdmission.mode)?c.memoryAdmission.mode:'unknown',
         at:count(c.memoryAdmission.at),
         internalFree:count(c.memoryAdmission.internalFree),
         internalLargest:count(c.memoryAdmission.internalLargest),
