@@ -24,6 +24,7 @@ class LanDiagnosticsTests(unittest.TestCase):
         value = {"schema": 1,
                  "heap": {"internalFree": 76659, "internalLargest": 31744,
                           "token": "SECRET"},
+                 "servo": {"lastReadFailure": "timeout", "reason": "PRIVATE"},
                  "chat": {"state": "retrying", "provider": "xiaozhi",
                           "failureClass": "memory-pressure",
                           "detail": "PRIVATE CHAT"},
@@ -34,6 +35,7 @@ class LanDiagnosticsTests(unittest.TestCase):
         self.assertEqual(cleaned["heap"]["internalFree"], 76659)
         self.assertEqual(cleaned["chat"]["failureClass"], "memory-pressure")
         self.assertEqual(cleaned["debug"]["dropped"], 1)
+        self.assertEqual(cleaned["servo"]["lastReadFailure"], "timeout")
         rendered = json.dumps(cleaned)
         for secret in ("SECRET", "PRIVATE", "token", "lines"):
             self.assertNotIn(secret, rendered)
