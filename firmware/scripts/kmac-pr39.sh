@@ -116,7 +116,7 @@ try:
 except (OSError, ValueError, KeyError, TypeError) as exc:
     print("[ERROR] STEP=MANIFEST 設定/ソースを読み取れません: " + type(exc).__name__)
     sys.exit(1)
-required = set(re.findall(r"(?m)^import\\s+\\w+\\s+from\\s+['\"]([^'\"]+)['\"]", page))
+required = set(re.findall(r"(?m)^import\s+\w+\s+from\s+['\"]([^'\"]+)['\"]", page))
 missing = sorted(name for name in required if name not in modules)
 if missing:
     print("[ERROR] STEP=MANIFEST private manifestに未登録のWebモジュール: " + ", ".join(missing))
