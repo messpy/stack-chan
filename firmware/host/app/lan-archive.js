@@ -10,6 +10,7 @@ import {startTimerUI} from 'archive-timer-ui';
 import {createAlarmDance} from 'archive-alarm-motion';
 import {captureFrame,screenCommand,showScreen} from 'archive-screen';
 import {startDebugDrain,armDebugDrain,debugLogStatus} from 'archive-debug';
+import {diagnosticSnapshot,markHeap,servoReasonCode} from 'archive-diagnostics';
 import {startChecks,checkStatus} from 'archive-checks';
 import {Emotion} from 'face-state';
 import {OfflinePolicy} from 'archive-offline-policy';
@@ -35,7 +36,7 @@ import {startSettings,openSettings,closeSettings,getSettingsStatus,vaultSelfTest
 import {startDeviceTools,setAlarmDisplay,setAlarmMotion,callDeviceTool,listDeviceTools,reminderStatus} from 'archive-tools';
 import Time from 'time';
 import {getM5StackChanDriver} from 'm5stackchan-servo-driver';
-import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG} from 'archive-usb';
+import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG,heapStatus} from 'archive-usb';
 import Base64 from 'base64';
 import config from 'mc/config';
 import {HttpServerService, Response} from 'http-server-service';
@@ -270,11 +271,11 @@ export function startArchive(robot) {
       if(offlineStatus().playing||reminderStatus().ringing||(busy&&!directChatStatus().busy))throw new Error('本体で処理中です');
       const paused=pauseDirectChat();
       if(busy){if(paused)resumeDirectChat();throw new Error('本体で処理中です');}
-      closeOffline();busy=true;trace('[monitor] started\n');
+      closeOffline();busy=true;try{markHeap('monitor-start',heapStatus(),trace)}catch(_){}trace('[monitor] started\n');
     },
-    release(){busy=false;resumeDirectChat();trace('[monitor] stopped\n');},
+    release(){busy=false;try{markHeap('monitor-stop',heapStatus(),trace)}catch(_){}resumeDirectChat();trace('[monitor] stopped\n');},
     log:message=>trace('[head-jog] '+message+'\n'),
-    readHeadRotation:()=>new Promise((resolve,reject)=>{const driver=getM5StackChanDriver();if(!driver){reject(new Error('Motor unavailable'));return}driver.getRotation(result=>result.success?resolve({...result.value}):reject(new Error('Position unavailable')))}),
+    readHeadRotation:()=>new Promise((resolve,reject)=>{const driver=getM5StackChanDriver();if(!driver){reject(new Error('Motor unavailable'));return}driver.getRotation(result=>{if(result.success){resolve({...result.value});return}const code=servoReasonCode(result.reason);trace('[servo-read] result=failed reasonClass='+code+'\n');reject(new Error('Position unavailable: '+code))})}),
     createInput:options=>new AudioIn(options),
     convertPCM:(raw,channels)=>prepareRecognitionPCM(raw,0,raw.byteLength,channels),jpeg:encodeJPEG,
     cancelSpeech:()=>monitorVoice?.cancel(),
@@ -288,7 +289,7 @@ export function startArchive(robot) {
     }
   });
   async function execute(request){
-    if(monitor.active&&!request.op.startsWith('/monitor/')&&!['/status','/volume','/chat/status','/photo/status','/files','/files/page','/network/status','/speaker/list','/settings/status','/reminders','/debug/status','/motor-status','/media/trash'].includes(request.op))throw new Error('動作確認を終了してから操作してください');
+    if(monitor.active&&!request.op.startsWith('/monitor/')&&!['/status','/volume','/chat/status','/photo/status','/files','/files/page','/network/status','/speaker/list','/settings/status','/reminders','/debug/status','/diagnostics/status','/motor-status','/media/trash'].includes(request.op))throw new Error('動作確認を終了してから操作してください');
     const capture=['/face/save','/face/restore','/alarm-sound/preview','/motor/test','/motor/recover','/image/finish','/photo','/record','/audio','/chat-record'].includes(request.op);
     const paused=capture?pauseDirectChat():false;
     try{
@@ -316,6 +317,7 @@ export function startArchive(robot) {
       }
       else if(request.op==='/screen/show'){if(busy||directChatStatus().enabled||reminderStatus().ringing)throw new Error('本体の操作が終わってから画面を確認してください');if(request.args?.scene!=='balloon-test')closeOffline();result=showScreen(robot,request.args?.scene);await new Promise(resolve=>Timer.set(resolve,150));}
       else if(request.op==='/debug/status')result=debugLogStatus();
+      else if(request.op==='/diagnostics/status')result=diagnosticSnapshot({heap:heapStatus(),chat:directChatStatus(),photo:photoStatus(),debug:debugLogStatus(),now:Date.now()});
       else if(request.op==='/offline/auto')result=autoOffline(request.args?.enabled);
       else if(request.op==='/offline/status')result=offlineStatus();
       else if(request.op==='/offline/open')result=openOffline();
