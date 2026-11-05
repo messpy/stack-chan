@@ -6,7 +6,7 @@ on:
       - stackchan-super
       - fix/archive-issues-33-38-20261104
     paths:
-      - 'firmware/host/app/archive-diagnostics.js'
+      - 'firmware/host/app/archive-debug.js'
       - 'firmware/host/app/archive-direct-chat.js'
       - 'firmware/host/app/lan-archive.js'
       - 'firmware/host/app/archive-web.js'
@@ -34,3 +34,28 @@ jobs:
           python3 -m unittest discover -s firmware/scripts -p 'test_archive_lan_diagnostics.py' -v
       - name: Run original camera and voice guard regressions
         run: node --experimental-vm-modules --test firmware/scripts/lib/archive-issues-33-36.test.mjs
+
+  cores3-clean-archive-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Create throwaway private manifest (never commit secrets)
+        working-directory: ./firmware
+        run: npm run init:archive
+      - name: Full clean CoreS3 firmware build, without flashing
+        working-directory: ./firmware
+        shell: bash
+        run: |
+          source "$HOME/.local/share/xs-dev-export.sh"
+          node scripts/clean.mjs
+          npm run build:archive
+      - name: Confirm the built firmware and source manifest
+        working-directory: ./firmware
+        run: |
+          test -s dist/bin/esp32/m5stack_cores3/release/stack-chan-host/xs_esp32.bin
+          grep -q '"archive-debug"' host/app/manifest_archive_private.json
+          echo '[CHECK] CoreS3 Archive clean build with existing manifest succeeded'
