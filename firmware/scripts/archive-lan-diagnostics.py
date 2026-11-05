@@ -67,6 +67,20 @@ def clean_snapshot(value: object) -> dict:
     debug = counters(value.get("debug"), ("queued", "dropped", "truncated", "usbRetries"))
     servo = value.get("servo") if isinstance(value.get("servo"), dict) else {}
     chat = value.get("chat") if isinstance(value.get("chat"), dict) else {}
+    raw_admission = chat.get("lastMemoryAdmission")
+    admission = None
+    if isinstance(raw_admission, dict):
+        at = raw_admission.get("at")
+        admission = counters(raw_admission, (
+            "internalFree", "internalLargest", "requiredFree", "requiredLargest",
+            "shortfallFree", "shortfallLargest"))
+        admission["at"] = at if type(at) is int and 0 <= at < 10**14 else None
+        admission["status"] = (raw_admission.get("status")
+            if raw_admission.get("status") in ("pass", "blocked", "unmeasured")
+            else "unknown")
+        admission["mode"] = (raw_admission.get("mode")
+            if raw_admission.get("mode") in ("conversation", "transcription", "recognition-transport")
+            else "unknown")
     photo = value.get("photo") if isinstance(value.get("photo"), dict) else {}
     reason = boot.get("resetReasonCode")
     safe_reason = reason if type(reason) is int and 0 <= reason <= 100 else None
@@ -78,7 +92,8 @@ def clean_snapshot(value: object) -> dict:
                  "provider": safe_tag(chat.get("provider")),
                  "enabled": chat.get("enabled") is True,
                  "recognitionMode": chat.get("recognitionMode") is True,
-                 "failureClass": safe_tag(chat.get("failureClass"))},
+                 "failureClass": safe_tag(chat.get("failureClass")),
+                 "lastMemoryAdmission": admission},
         "photo": {"phase": safe_tag(photo.get("phase")),
                   "errorStage": None if photo.get("errorStage") is None
                                 else safe_tag(photo.get("errorStage")),
