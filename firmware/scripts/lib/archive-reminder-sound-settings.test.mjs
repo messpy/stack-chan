@@ -95,6 +95,8 @@ test('invalid WAV and invalid target do not overwrite settings; cancellation rem
  h.settings.alarmSound={file:'existing.wav',label:'old'};
  const buffer=wav(100);
  api.alarmSoundCommand('begin',{role:'audio',size:buffer.length});
+ assert.throws(()=>api.alarmSoundCommand('finish',{target:'bogus'}),/Sound upload incomplete/);
+ assert.equal(api.alarmSoundCommand('chunk',{offset:0,data:Buffer.from(buffer).toString('base64')}).offset,buffer.length);
  assert.throws(()=>api.alarmSoundCommand('finish',{target:'bogus'}),/Invalid sound target/);
  assert.equal(api.alarmSoundCommand('cancel').cancelled,true);
  assert.equal(api.selectedReminderSound('alarm').file,'existing.wav');
