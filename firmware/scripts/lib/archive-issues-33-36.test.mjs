@@ -177,3 +177,125 @@ test('archive volume uses a bounded preview queue rather than an unbounded chain
   assert.match(volume, /previewQueue\?\.request\(volume\)/)
   assert.doesNotMatch(volume, /preview=preview\.then/)
 })
+
+
+// Integration of ASR final transcript -> local photo -> SD-linked history.
+// Unlike parser-only tests, these exercise the actual onInputTranscript callback
+// under both transcription-only and XiaoZhi-STT-to-text-LLM mode flags.
+const transcriptStart = direct.indexOf('        onInputTranscript(text, more) {')
+const transcriptEnd = direct.indexOf('        onOutputTranscript(text, more) {', transcriptStart)
+assert.ok(transcriptStart >= 0 && transcriptEnd > transcriptStart, 'ASR callback exists')
+const transcriptSource = direct.slice(transcriptStart, transcriptEnd).trim()
+  .replace(/^onInputTranscript\(text, more\) \{/, 'function inputTranscript(text, more) {')
+  .replace(/},\s*$/, '}')
+function voicePhotoHarness({standalone, recognitionOnly}) {
+  const records = [], photos = [], balloons = [], scheduled = []
+  const instance = {}
+  const context = {
+    chat: instance, instance, input: '', introText: '',
+    standalone, recognitionOnly, state:'listening',retryAt:0,closed:0,
+    closeChat(){ context.chat=undefined; context.closed++ },
+    enrollment: {active: false},
+    audioStats: {recognizedEvents: 0,lastTranscriptAt: 0},
+    lastInputId: '', trace() {}, conversationIndicator() {},
+    archive(role,text,eventId,image) { records.push({role,text,image}); return {id:'new-input'} },
+    showConversationBalloon(message) { balloons.push(message) },
+    currentSpeaker() { return {id:'known-speaker'} },
+    modeCommandFromText() { return null },
+    explicitVisualRequest: cameraIntent.explicitVisualRequest,
+    directPhotoRequest: cameraIntent.directPhotoRequest,
+    volumeRequest() { return false },
+    volumeCommandFromText() { return null },
+    headDirectionFromText() { return null },
+    headHandled: undefined, visualAllowedUntil: 0,
+    photoTurn: undefined, volumeTurn: undefined, volumeAllowedUntil: 0,
+    async photoHandler(args) {
+      photos.push(args)
+      return {image: 'photo-new.jpg'}
+    },
+    running() { return true },
+    Timer: {set(fn) { scheduled.push(fn); return scheduled.length }},
+    Date, Promise,
+  }
+  const run=vm.runInNewContext(transcriptSource + '\ninputTranscript', context)
+  return {context, run, records, photos, balloons, scheduled}
+}
+
+test('direct photo saves locally and records linked history in all voice modes', async () => {
+  for(const mode of [
+    {standalone:true,recognitionOnly:true},
+    {standalone:false,recognitionOnly:true},
+    {standalone:false,recognitionOnly:false},
+  ]) {
+    const h=voicePhotoHarness(mode)
+    h.run('写真を撮ってください',false)
+    assert.equal(h.records.filter(row=>row.role==='input').length,1)
+    assert.ok(h.context.photoTurn, 'direct voice capture should be queued')
+    await h.context.photoTurn.promise
+    await new Promise(resolve=>setImmediate(resolve))
+    assert.equal(h.photos.length,1,'no duplicate captures')
+    assert.equal(h.photos[0].analyze,false,'photo-only request must not upload to AI')
+    assert.equal(h.records.filter(row=>row.role==='output'&&row.image==='photo-new.jpg').length,1)
+    assert.equal(h.scheduled.length,0,'direct photo must not launch another LLM turn')
+    assert.ok(h.balloons.some(x=>x.includes('SDカードに保存')))
+    assert.equal(h.context.closed,mode.recognitionOnly?1:0,'XiaoZhi ASR transport must be released')
+    if(mode.recognitionOnly){
+      assert.equal(h.context.state,'waiting')
+      assert.ok(h.context.retryAt>Date.now(),'ASR reconnect must be scheduled')
+    }
+  }
+})
+
+test('negative and casual photo mentions never trigger local capture', async () => {
+  for(const line of ['写真を撮らないで','写真について教えて','こんにちは','この写真を見て']) {
+    const h=voicePhotoHarness({standalone:true,recognitionOnly:true})
+    h.run(line,false)
+    await Promise.resolve()
+    assert.equal(h.photos.length,0,line)
+    assert.equal(h.context.photoTurn,undefined,line)
+  }
+})
+
+test('XiaoZhi STT with a text LLM may authorize vision without auto-capturing', () => {
+  const h=voicePhotoHarness({standalone:false,recognitionOnly:true})
+  h.run('カメラで見てください',false)
+  assert.equal(h.photos.length,0,'description request must wait for authorized tool call')
+  assert.ok(h.context.visualAllowedUntil>Date.now())
+  assert.equal(h.scheduled.length,1,'text LLM receives non-direct visual request')
+})
+
+test('local photo handler keeps analysis opt-out and skips a second vision upload', async () => {
+  assert.match(lan, /args=>photo\(robot,\{\.\.\.args,analyze:args\?\.analyze!==false\},true\)/)
+  const expiry=Date.now()+1000
+  const saved=dispatchHarness(expiry,{expires:expiry,promise:Promise.resolve({image:'only-saved.jpg'})})
+  const result=await saved.execute('camera_describe',{})
+  assert.equal(result.photo,'only-saved.jpg')
+  assert.equal(result.saved,true)
+  assert.equal(result.analysisStatus,'skipped')
+  assert.match(result.error,/画像解析は実行していません/)
+  assert.equal(saved.context.captures,0)
+})
+
+
+test('failed photo still restores recognition transport and displays a failure', async () => {
+  const h=voicePhotoHarness({standalone:true,recognitionOnly:true})
+  h.context.photoHandler=async()=>{throw Error('native camera unavailable')}
+  h.run('写真撮って',false)
+  await assert.rejects(h.context.photoTurn.promise,/native camera unavailable/)
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(h.context.closed,1)
+  assert.equal(h.context.state,'waiting')
+  assert.ok(h.context.retryAt>Date.now())
+  assert.ok(h.balloons.some(text=>text.includes('撮影できませんでした')))
+  assert.equal(h.records.filter(row=>row.role==='output').length,0)
+})
+
+
+test('physical E2E expectation requires an explicit local photo in transcription-only mode', () => {
+  const cases = JSON.parse(readFileSync(new URL('../voice-e2e-cases.json',import.meta.url),'utf8'))
+  const row=cases.cases.find(item=>item.id==='mode_recognition_only_no_tool')
+  assert.ok(row,'transcription photo E2E case exists')
+  assert.ok(row.required.includes('photo'))
+  assert.ok(!row.required.includes('no_photo'))
+  assert.ok(row.required.includes('no_llm'))
+})

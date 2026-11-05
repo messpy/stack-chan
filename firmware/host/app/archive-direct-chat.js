@@ -67,7 +67,7 @@ function explicitVisualRequest(text) {
 }
 function directPhotoRequest(text) {
   const normalized=String(text||'').replace(/[\s、。！？!?]/g,'');
-  return /^(?:写真|カメラ)(?:を|で)?(?:撮って|とって|撮影して)(?:ください|お願い|ね|よ)?$/.test(normalized);
+  return /^(?:(?:写真|カメラ)(?:を|で)?(?:撮って|とって|撮影して)|撮影して)(?:ください|お願い|ね|よ)?$/.test(normalized);
 }
 // Only imperative user requests can authorize a cloud-driven volume change.
 function volumeRequest(text) {
@@ -792,9 +792,15 @@ async function connect() {
     async function executeTool(name, args) {
       if (chat !== instance&&!recognitionTurnCurrent()) throw new Error('会話が切り替わりました')
       if (name === 'camera_describe') {
-        if (!photoHandler) throw new Error('Camera unavailable')
+        if (!photoHandler) {
+          trace('[vision] camera tool rejected reason=unavailable\n')
+          throw new Error('Camera unavailable')
+        }
         const now=Date.now();
-        if(now>visualAllowedUntil)throw new Error('ユーザーによる撮影依頼がありません');
+        if(now>visualAllowedUntil) {
+          trace('[vision] camera tool rejected reason=no-explicit-request\n')
+          throw new Error('ユーザーによる撮影依頼がありません')
+        }
         const result=photoTurn && now<=photoTurn.expires
           ? await photoTurn.promise
           : await photoHandler(args);
@@ -802,7 +808,9 @@ async function connect() {
         trace('[vision] camera result='+String(result.analysis?.status||'unknown')+'\n');
         return result.analysis?.status === 'complete'
           ? { photo: result.image, description: result.analysis.text }
-          : { photo: result.image, error: result.analysis?.error || '画像認識できませんでした' }
+          : { photo: result.image, saved: !!result.image, analysisStatus: result.analysis?.status || 'skipped',
+              error: result.analysis?.error || ((!result.analysis || result.analysis.status === 'skipped')
+                ? '写真は保存しましたが、画像解析は実行していません。' : '画像認識できませんでした') }
       }
       if (name === 'volume_get') return getVolume();
       if (name === 'volume_set') {
@@ -997,8 +1005,11 @@ async function connect() {
               }
               return
             }
-            // Authorize at most one camera result for this recognized turn.
-            visualAllowedUntil=(!standalone&&!recognitionOnly&&explicitVisualRequest(recognized))
+            // Recognition-only transport still allows explicitly authorized local actions.
+            // The transcription-only mode accepts ONLY an exact local photo command.
+            const visualRequested=explicitVisualRequest(recognized)
+            const directCapture=visualRequested&&directPhotoRequest(recognized)
+            visualAllowedUntil=(!standalone&&visualRequested)
               ? Date.now()+12000 : 0;
             photoTurn=undefined;
             volumeTurn=undefined;
@@ -1016,25 +1027,56 @@ async function connect() {
                 trace('[volume] direct command failed\n');
               }
             }
-            if(visualAllowedUntil && directPhotoRequest(recognized) && photoHandler) {
-              const promise=Promise.resolve().then(()=>photoHandler({question:recognized}));
-              photoTurn={expires:visualAllowedUntil,promise};
-              promise.then(
-                result=>{
-                  const saved=!!result?.image;
-                  const status=String(result?.analysis?.status||'skipped').replace(/[^a-zA-Z0-9_-]/g,'').slice(0,30);
-                  trace('[vision] explicit photo saved='+saved+' analysis='+status+'\n');
-                  if(chat!==instance||!running())return;
-                  if(saved)showConversationBalloon(status==='complete'
-                    ?'撮影してSDカードに保存しました。画像解析も完了しました。'
-                    :'撮影してSDカードに保存しました。画像解析は完了していません。');
-                },
-                error=>{
-                  const reason=String(error?.name||'Error').replace(/[^A-Za-z0-9_]/g,'').slice(0,30);
-                  trace('[vision] explicit photo failed type='+reason+'\n');
-                  if(chat===instance&&running())showConversationBalloon('写真を撮影できませんでした。カメラとSDカードの状態を確認してください。');
+            // A literal photo command is local and does not require LLM tool selection.
+            // Keep image analysis opt-in: merely saving a photo must not upload it.
+            if(directCapture) {
+              if(!photoHandler) {
+                trace('[vision] direct photo rejected reason=unavailable\n');
+                showConversationBalloon('カメラを利用できません。');
+              } else {
+                trace('[vision] direct photo dispatch mode='+
+                  (standalone?'transcription':recognitionOnly?'recognition-transport':'conversation')+'\n');
+                // Recognition-only XiaoZhi aborts its stream at final STT. Free
+                // Opus/audio ownership before camera allocation, then reconnect.
+                let pausedRecognition=false;
+                const promise=Promise.resolve().then(()=>{
+                  if(recognitionOnly&&chat===instance){
+                    closeChat();
+                    state='waiting';
+                    retryAt=Date.now()+120000;
+                    pausedRecognition=true;
+                    trace('[vision] recognition transport released for capture\n');
+                  }
+                  return photoHandler({question:recognized,analyze:false});
+                });
+                photoTurn={expires:Date.now()+12000,promise};
+                function finishLocalPhoto(){
+                  if(!pausedRecognition||!running()||chat)return;
+                  state='waiting';
+                  retryAt=Date.now()+1000;
+                  trace('[vision] recognition reconnect scheduled\n');
                 }
-              );
+                promise.then(
+                  result=>{
+                    const saved=!!result?.image;
+                    trace('[vision] direct photo saved='+saved+' analysis=skipped\n');
+                    // Link the saved photo to the normal conversation history, without
+                    // storing a raw image or posting it to an external vision service.
+                    if(saved)archive('output','写真を撮影してSDカードに保存しました。',undefined,result.image);
+                    if((chat===instance||pausedRecognition)&&running())
+                      showConversationBalloon(saved?'写真を撮影してSDカードに保存しました。':
+                        '写真を撮影できませんでした。');
+                    finishLocalPhoto();
+                  },
+                  error=>{
+                    const reason=String(error?.name||'Error').replace(/[^A-Za-z0-9_]/g,'').slice(0,30);
+                    trace('[vision] direct photo failed type='+reason+'\n');
+                    if((chat===instance||pausedRecognition)&&running())
+                      showConversationBalloon('写真を撮影できませんでした。カメラとSDカードの状態を確認してください。');
+                    finishLocalPhoto();
+                  }
+                );
+              }
             }
             // A short, explicit physical command should not depend on whether
             // the cloud chooses a function call or only speaks an acknowledgement.
@@ -1046,7 +1088,9 @@ async function connect() {
                 promise.catch(error=>trace('[head-motion] voice command failed: '+String(error?.message||error).slice(0,120)+'\n'))
               }
             }
-            if(recognitionOnly)Timer.set(()=>recognitionTurn(recognized),0)
+            // Local direct capture already handles the command: avoid a second
+            // cloud reply or tool call while the camera is capturing.
+            if(recognitionOnly&&!directCapture)Timer.set(()=>recognitionTurn(recognized),0)
           }
         },
         onOutputTranscript(text, more) {
