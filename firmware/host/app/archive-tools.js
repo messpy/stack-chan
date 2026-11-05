@@ -67,7 +67,7 @@ async function notify(item){
     try{robot.lightRainbow?.('head');}catch(_){trace('[tools] rainbow LED unavailable\n');}
     let visible=false;try{visible=alarmDisplay?.show(item)===true;}catch(_){trace('[tools] alarm screen unavailable\n');}if(!visible)robot.showBalloon(item.title);
     try{dance=alarmMotion?.(()=>stopped);motionDone=dance?.finished.catch(()=>trace('[tools] alarm motion failed\n'));}catch(_){trace('[tools] alarm motion unavailable\n');}
-    let custom=false;try{custom=await playAlarmSound(robot,()=>stopped);}catch(_){trace('[tools] custom sound unavailable; tone fallback\n');}
+    let custom=false;try{custom=await playAlarmSound(robot,()=>stopped,0,item.kind);}catch(_){trace('[tools] custom sound unavailable; tone fallback\n');}
     if(!custom)for(let i=0;i<12&&!stopped;i++){
       await robot.audio.tone(i%2?660:880,180,Math.min(robot.audio.volume,0.45));
       await wait(180);

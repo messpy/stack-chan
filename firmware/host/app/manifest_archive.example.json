@@ -40,6 +40,7 @@
     "archive-web": "./archive-web",
     "archive-checks": "./archive-checks",
     "archive-web-page": "./archive-web-page",
+    "archive-alarm-upload-page": "./archive-alarm-upload-page",
     "archive-direct-chat": "./archive-direct-chat",
     "archive-offline": "./archive-offline",
     "archive-offline-policy": "./archive-offline-policy",
