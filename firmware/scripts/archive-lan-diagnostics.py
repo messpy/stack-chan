@@ -67,6 +67,9 @@ def clean_snapshot(value: object) -> dict:
     debug = counters(value.get("debug"), ("queued", "dropped", "truncated", "usbRetries"))
     servo = value.get("servo") if isinstance(value.get("servo"), dict) else {}
     chat = value.get("chat") if isinstance(value.get("chat"), dict) else {}
+    raw_recovery = chat.get("memoryRecovery")
+    recovery = counters(raw_recovery, ("failures", "limit"))
+    recovery["stopped"] = isinstance(raw_recovery, dict) and raw_recovery.get("stopped") is True
     raw_admission = chat.get("lastMemoryAdmission")
     admission = None
     if isinstance(raw_admission, dict):
@@ -100,6 +103,7 @@ def clean_snapshot(value: object) -> dict:
                  "enabled": chat.get("enabled") is True,
                  "recognitionMode": chat.get("recognitionMode") is True,
                  "failureClass": safe_tag(chat.get("failureClass")),
+                 "memoryRecovery": recovery,
                  "lastMemoryAdmission": admission},
         "photo": {"phase": safe_tag(photo.get("phase")),
                   "errorStage": None if photo.get("errorStage") is None

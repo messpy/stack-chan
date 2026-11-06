@@ -87,16 +87,6 @@ test('successful XiaoZhi and recognition-only connections clear old error detail
   assert.match(direct,/error = ''\s+detail = ''\s+retryDelay = 3000\s+failures = 0/)
 })
 
-test('memory pressure is not displayed as a network disconnect',()=>{
-  const direct=readFileSync(new URL('../../host/app/archive-direct-chat.js',import.meta.url),'utf8')
-  assert.match(direct,/const memoryBlocked = isMemoryPressure\(reason\)/)
-  assert.match(direct,/error = memoryBlocked[\s\S]*?内蔵RAMが不足しているため、音声会話を一時停止しています。/)
-  assert.match(direct,/Math\.max\(retryDelay,memoryBlocked\?10000:0\)/)
-  const policy=readFileSync(new URL('../../host/app/archive-memory-policy.js',import.meta.url),'utf8')
-  assert.match(policy,/112 : 80/)
-})
-
-
 test('audio pipeline snapshot separates PCM, upload, ASR and playback without raw content',()=>{
  const snap=diagnosticSnapshot({chat:{audioPhase:'thinking',reconnectCount:2,audio:{lastTranscriptAt:1100},pipeline:{provider:'xiaozhi',worker:'running',input:'running',output:'closed',uploadEnabled:false,lastInputAt:1200,lastSentAt:1000,overrunBytes:1920,lastError:'audio',token:'SECRET',transcript:'PRIVATE'},playback:{active:false,sampleRate:24000,underruns:3,bufferedMs:0,queuedMs:0}}});
  assert.equal(snap.audio.uploadEnabled,false);assert.equal(snap.audio.lastASRAt,1100);assert.equal(snap.audio.lastInputAt,1200);assert.equal(snap.audio.sampleRate,24000);assert.equal(snap.audio.underruns,3);assert.equal(snap.audio.reconnectCount,2);assert.equal(snap.audio.overrunBytes,1920);assert.equal(snap.audio.phase,'thinking');assert.equal(snap.audio.playbackActive,false);
@@ -108,4 +98,14 @@ test('audio progress failures remain distinct from network and memory pressure',
  assert.equal(memoryReasonCode('Microphone upload stalled'),'audio-upload-stalled');
  assert.equal(memoryReasonCode('Microphone PCM stalled'),'audio-input-stalled');
  assert.equal(diagnosticSnapshot({chat:{state:'retrying',detail:'Microphone upload stalled'}}).chat.failureClass,'audio-upload-stalled');
+});
+
+
+test('persistent RAM stop is visible without copying arbitrary recovery fields',()=>{
+ const snap=diagnosticSnapshot({chat:{state:'failed',detail:'内蔵RAM不足',memoryRecovery:{failures:3,stopped:true,limit:3,token:'SECRET'}}});
+ assert.equal(snap.chat.failureClass,'memory-pressure');
+ assert.equal(snap.chat.memoryRecovery.stopped,true);
+ assert.equal(snap.chat.memoryRecovery.failures,3);
+ assert.equal(snap.chat.memoryRecovery.limit,3);
+ assert.ok(!JSON.stringify(snap).includes('SECRET'));
 });

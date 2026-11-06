@@ -25,6 +25,13 @@ class LanDiagnosticsTests(unittest.TestCase):
         self.assertEqual(audio["overrunBytes"], 1920)
         self.assertNotIn("SECRET", json.dumps(audio))
 
+    def test_memory_recovery_snapshot(self):
+        cleaned = module.clean_snapshot({"schema": 1, "chat": {"memoryRecovery": {
+            "failures": 3, "limit": 3, "stopped": True, "token": "SECRET"}}})
+        self.assertEqual(cleaned["chat"]["memoryRecovery"],
+                         {"failures": 3, "limit": 3, "stopped": True})
+        self.assertNotIn("SECRET", json.dumps(cleaned))
+
     def test_lan_only(self):
         self.assertEqual(module.private_ip("192.168.2.102"), "192.168.2.102")
         for value in ("8.8.8.8", "127.0.0.1", "169.254.1.2",

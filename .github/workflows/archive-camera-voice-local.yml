@@ -6,6 +6,7 @@ on:
       - fix/archive-photo-local-voice-dispatch-20261105
   pull_request:
     branches:
+      - fix/audio-integrity-20261105
       - fix/archive-pr45-startup-private-manifest-20261105
       - fix/archive-photo-local-voice-dispatch-20261105
     paths:
@@ -17,6 +18,8 @@ on:
       - 'firmware/scripts/lib/archive-audio-*.test.mjs'
       - 'firmware/scripts/lib/archive-playback-buffer.test.mjs'
       - 'firmware/scripts/lib/archive-diagnostics.test.mjs'
+      - 'firmware/scripts/lib/archive-memory-*.test.mjs'
+      - 'firmware/scripts/lib/archive-auto-offline-persistence.test.mjs'
       - 'firmware/scripts/test_async_audio_output.py'
       - 'firmware/scripts/*archive_lan_diagnostics.py'
       - 'firmware/scripts/archive-lan-diagnostics.py'
@@ -54,6 +57,9 @@ jobs:
             firmware/scripts/lib/archive-audio-integrity.test.mjs \
             firmware/scripts/lib/archive-audio-transport-health.test.mjs \
             firmware/scripts/lib/archive-playback-buffer.test.mjs \
+            firmware/scripts/lib/archive-auto-offline-persistence.test.mjs \
+            firmware/scripts/lib/archive-memory-recovery.test.mjs \
+            firmware/scripts/lib/archive-memory-policy.test.mjs \
             firmware/scripts/lib/archive-diagnostics.test.mjs
       - name: Native audio queue and private audio diagnostics
         run: |
