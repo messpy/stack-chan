@@ -172,3 +172,40 @@ production ring構造体とpure関数をホストでコンパイルして検証�
 これは「右側に有効音声があるのに左のみを送る」コード上の不具合の修正である。
 実機で今回どのチャンネルに発話があったかは未測定であり、ASR0の唯一の原因とは断定しない。
 修正後の実機の送信/ASR/聴感は未確認。本体書込みはまだ行わない。
+
+## 承認後の書込み・実機数値検証（2026-11-06 18時台 JST）
+
+ユーザーの「書き込んでテストして」により、書込みと短い呼びかけを実施した。
+旧app版はバックアップのapp descriptorから `f3794923` と確認。
+16MiB全flashを `core-s3-20261106-184311-before-pr49-fb61291a.bin` に保存した。
+SHA256は `0f2d41a9dec557fbd9ec9ccdec13ab68192737a54800ddae27c3b21b47196a63`。
+新旧パーティション配置が一致することを確認してから、npmの `deploy:archive` を使用した。
+SDを消去・移行する処理は行っていない。SDは全flash backupには含まれない。
+
+書込対象コードは `fb61291ad88d80c4836653b22db6d477804d0c4e`。
+app version `fb61291a`、appサイズ7,231,712B、SHA256
+`95a191f2e63d931bd8ac5f81bbe1cca16f50a3c7217f790c1e13b864314f6e27`。
+esptoolのデータhash検証とdeploy終了コード0を確認した。書込み後の通常reset以外の再起動操作は行っていない。
+元からinactiveだったHubはinactiveのまま。サーボ・電源・音量操作なし。
+
+音量を読み取り、元の10%のまま、18:48:26頃にPCの指定フレーズを1回再生した。
+試験開始時点ですでにASR1回/出力14回が存在していたため、総数を今回の成功回数と混同しない。
+今回の測定ではASRは1→2、音声出力イベントは14→31に増え、再生完了 `drained=true`、
+input=running/output=closed/uploadEnabled=true、socket音声受付時刻の継続更新、待機復帰を確認した。
+20～30秒程度の応答遅延があり、履歴照合は対象イベントを得られず、指定文そのものの認識一致は未検証。
+会話本文を新規ログへ保存していない。
+
+接続中のfreeは概ね46～51KB、TTS中は約30KB、終了後は約46～50KBへ回復した。
+最大連続領域はTTS中15,360B、終了後31,744B。今回起動中の内蔵RAM最低値は11,160Bで、
+メモリに十分余裕があるとは主張しない。確認区間uptimeは80,887→214,169msと増加し、試験中の再起動なし。
+最後の再生healthではunderruns=0、overrun数/bytes=0、lastError=none、queue empty/drained=true。
+一方、reconnectCountは0→1になり、Wi-Fi切断ログも残った。最大pump gapは2,806ms。
+USBログ再送カウンタは102で、別の読取りセッション開始直後に文脈のないstarvation語の断片も受信した。
+これを確定したDMA underrunとして数えず、現在healthの0だけから過去の音声異常も否定しない。
+
+PCローカル証拠：`/tmp/stackchan-pr49-flash-receipt.json`、
+`/tmp/stackchan-pr49-acceptance-20261106-184814.jsonl`、
+`/tmp/stackchan-green-stall-20261106-184954.jsonl`。
+返答の実際の聴感・がたつき・LEDの目視確認はユーザー回答待ち。
+書込み成功と送受信/再生状態の数値進捗は確認できたが、聴感・長時間安定性・全機能合格ではない。
+PRはDraft、Issue #50/#40/#36はOpenを維持する。
