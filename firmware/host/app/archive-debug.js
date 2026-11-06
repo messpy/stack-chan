@@ -100,6 +100,7 @@ export function diagnosticSnapshot({heap, chat, photo, debug, servo, resetCode, 
       state: tag(c.state), provider: tag(c.provider),
       enabled: c.enabled === true, recognitionMode: c.recognitionMode === true,
       failureClass: ['retrying', 'failed', 'error'].includes(c.state) ? memoryReasonCode(c.detail) : 'none',
+      memoryRecovery:{failures:count(c.memoryRecovery?.failures),stopped:c.memoryRecovery?.stopped===true,limit:count(c.memoryRecovery?.limit)},
       // A prior preflight is intentionally retained across reconnects; this is not live heap.
       lastMemoryAdmission:c.memoryAdmission ? {
         status:['pass','blocked','unmeasured'].includes(c.memoryAdmission.status)?c.memoryAdmission.status:'unknown',

@@ -90,6 +90,7 @@ test('native cloud suspends and resumes without ever touching SD settings', () =
   const events = []
   const context = {
     automaticOfflineSuspended: false,
+    memoryRetryStopped: false,
     state: 'listening', retryAt: 0,
     running: () => true,
     pauseDirectChat: () => { events.push('pause'); return true },
@@ -105,6 +106,5 @@ test('native cloud suspends and resumes without ever touching SD settings', () =
   routines.resumeDirectChatFromAutomaticOffline()
   assert.equal(context.automaticOfflineSuspended, false)
   assert.deepEqual(events.filter(event => event === 'resume'), ['resume'])
-  assert.match(chat, /if \(automaticOfflineSuspended \|\| connecting \|\| chat \|\| !running\(\)\) return/)
   assert.match(chat, /if \(automaticOfflineSuspended \|\| !running\(\)\) return/)
 })

@@ -31,6 +31,8 @@ import {
   saveUser,
   history,
 } from 'archive-memory'
+const MEMORY_FAILURE_LIMIT=3
+
 let robot,
   archive,
   claim,
@@ -43,6 +45,8 @@ let robot,
   connectDeadline = 0,
   forceProvision = false,
   failures = 0,
+  memoryFailures = 0,
+  memoryRetryStopped = false,
   lastProvisionAttempt = 0,
   lastMemoryAdmission = null,
   state = 'off',
@@ -268,6 +272,7 @@ const labels = {
   listening: '会話中・マイク音声を送信しています',
   speaking: 'StackChanが話しています',
   retrying: '再接続を待っています',
+  failed: '音声処理を停止しています',
   unconfigured: '会話の初期登録が必要です',
 }
 let chatSaveFailedOff=false,recognitionSaveFailedOff=false
@@ -390,6 +395,7 @@ export function directChatStatus() {
     memory: typeof heapStatus==='function'?heapStatus():null,
     // Last admission attempt, not live free RAM; survives a retry for diagnostics.
     memoryAdmission:lastMemoryAdmission,
+    memoryRecovery:{failures:memoryFailures,stopped:memoryRetryStopped,limit:MEMORY_FAILURE_LIMIT},
     playback:globalThis.stackchanPlaybackHealth||null,
     pipeline:globalThis.stackchanAudioHealth||null,
     reconnectCount,
@@ -481,6 +487,7 @@ export function setChatMode(on) {
     greetingPending=true
     resetTranscripts()
   }
+  memoryFailures=0;memoryRetryStopped=false
   retryAt = 0
   retryDelay = 3000
   error = ''
@@ -525,6 +532,7 @@ export function setRecognitionMode(on){
     throw e
   }
   enrollment.reset();closeChat();resetTranscripts();greetingPending=false;
+  memoryFailures=0;memoryRetryStopped=false
   retryAt=0;retryDelay=3000;error='';detail='';state=running()?'waiting':'off';
   refreshRecognition?.();refreshAITalk?.();
   if(saveError){error=saveError;detail='Settings save failed'}
@@ -563,7 +571,7 @@ function closeChat() {
   scheduleMemoryCleanup()
 }
 function failed(reason) {
-  if (state === 'retrying') return
+  if (state === 'retrying' || memoryRetryStopped) return
   if(globalThis.stackchanAudioHealth&&/^Microphone (upload|PCM) stalled$/.test(String(reason)))
     globalThis.stackchanAudioHealth.lastError=String(reason).includes('upload')?'upload-stalled':'input-stalled'
   failures++
@@ -571,11 +579,16 @@ function failed(reason) {
   const failedChat = chat,
     failedGeneration = generation
   const memoryBlocked = isMemoryPressure(reason)
+  // Two deferred retries allow native task teardown/GC; persistent pressure must stop.
+  // Count consecutive memory failures; connection success or manual mode operations reset it.
+  memoryFailures=memoryBlocked?memoryFailures+1:0
+  memoryRetryStopped=memoryBlocked&&memoryFailures>=MEMORY_FAILURE_LIMIT
   error = memoryBlocked
     ? '内蔵RAMが不足しているため、音声会話を一時停止しています。'
     : chatProvider() === 'gemini' && String(reason).startsWith('Gemini')
       ? String(reason).slice(0, 180)
       : '会話の接続が切れました。自動で再接続します。'
+  if(memoryRetryStopped)error='内蔵RAM不足が続くため、音声処理を停止しました。他の処理を終了し、会話または文字起こしをOFF→ONにしてください。'
   detail = String(reason || 'connection closed')
   for (const secret of [getSettings().api?.gemini, getSettings().api?.ollama, cloudConfig()?.accessToken])
     if (secret) detail = detail.split(secret).join('[redacted]')
@@ -583,8 +596,8 @@ function failed(reason) {
   try{markHeap('chat-failure',heapStatus(),trace)}catch(_){}
   microphoneIndicator(false)
   conversationIndicator('off')
-  state = 'retrying'
-  retryAt = Date.now() + Math.max(retryDelay,memoryBlocked?10000:0)
+  state = memoryRetryStopped?'failed':'retrying'
+  retryAt = memoryRetryStopped?Infinity:Date.now() + Math.max(retryDelay,memoryBlocked?10000:0)
   retryDelay = Math.min(60000, retryDelay * 2)
   Timer.set(() => {
     if (generation === failedGeneration && chat === failedChat) {
@@ -592,7 +605,7 @@ function failed(reason) {
       if (enrollment.phase === 'listening') openSpeakerChooser()
     }
   }, 0)
-  trace('[direct-chat] reconnect scheduled\n')
+  trace(memoryRetryStopped?'[voice-memory] retries stopped failures='+memoryFailures+'\n':'[direct-chat] reconnect scheduled\n')
 }
 async function provision() {
   const cfg = cloudConfig()
@@ -700,7 +713,7 @@ async function provision() {
   trace('[direct-chat] cloud configuration renewed\n')
 }
 async function connect() {
-  if (automaticOfflineSuspended || connecting || chat || !running()) return
+  if (memoryRetryStopped || automaticOfflineSuspended || connecting || chat || !running()) return
   if (enrollment.phase === 'confirming') return
   if (!getSettingsStatus().connected) {
     state = 'waiting'
@@ -905,7 +918,7 @@ async function connect() {
             return
           }
           if(recognitionOnly&&value===ChatState.CONNECTED){
-            state='listening';microphoneAt=Date.now();error='';detail='';retryDelay=3000;failures=0
+            state='listening';microphoneAt=Date.now();error='';detail='';retryDelay=3000;failures=0;memoryFailures=0
             trace('[mode-session] connected mode='+(standalone?'transcription':'recognition-transport')+'\n')
             if(!standalone&&greetingPending&&!enrollment.active){greetingPending=false;Timer.set(()=>recognitionTurn(null),0)}
             return
@@ -943,6 +956,7 @@ async function connect() {
             detail = ''
             retryDelay = 3000
             failures = 0
+            memoryFailures = 0
           }
           if (value === ChatState.LISTENING || value === ChatState.WAITING) {state = 'speaking';microphoneIndicator(false)}
           trace('[direct-chat] state=' + value + '\n')
@@ -1196,13 +1210,14 @@ export function pauseDirectChat() {
   return false
 }
 export function resumeDirectChat() {
+  if (memoryRetryStopped) {state='failed';return}
   if (running()) retryAt = 0
 }
 export function suspendDirectChatForAutomaticOffline(){
   if(automaticOfflineSuspended)return
   automaticOfflineSuspended=true
   pauseDirectChat()
-  state=running()?'waiting':'off'
+  state=memoryRetryStopped?'failed':running()?'waiting':'off'
   trace('[offline-mode] temporary suspension; saved preference untouched\n')
 }
 export function resumeDirectChatFromAutomaticOffline(){
