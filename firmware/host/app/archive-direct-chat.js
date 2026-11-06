@@ -1,6 +1,6 @@
 import {headDirectionFromText} from 'archive-head-motion'
 import {heapStatus,collectMemory} from 'archive-usb'
-import {checkVoiceMemory,voiceMemoryAdmission,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
+import {checkVoiceMemory,voiceMemoryAdmission,isMemoryPressure,shouldRenewCloudIdentity,voiceReconnectPlan} from 'archive-memory-policy'
 import {markHeap} from 'archive-debug'
 import { ollamaChat, ollamaModel, validOllamaModel, geminiTextChat, DEFAULT_GEMINI_TEXT_MODEL, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
 import { VoiceRegistration, enrollmentInstructions, explicitSpeakerName, registrationName } from 'archive-speaker-registration'
@@ -40,6 +40,7 @@ let robot,
   connecting = false,
   retryAt = 0,
   retryDelay = 3000,
+  connectedAt = 0,
   connectDeadline = 0,
   forceProvision = false,
   failures = 0,
@@ -258,7 +259,7 @@ export function microphoneIndicator(active){
   conversationIndicator(active?'recording':'off')
   trace('[microphone] '+(active?'recording':'stopped')+'\n')
 }
-const audioStats = { recognizedEvents:0,lastTranscriptAt:0,inputEvents: 0, inputPeak: 0, outputEvents: 0, outputPeak: 0, lastInputAt: 0, lastOutputAt: 0 }
+const audioStats = { recognizedEvents:0,lastTranscriptAt:0,inputEvents: 0, inputPeak: 0, outputEvents: 0, outputPeak: 0, lastInputAt: 0, lastOutputAt: 0, xiaozhiUploadTicks:0, lastXiaozhiUploadAt:0 }
 const labels = {
   identity: '話す人を画面で選んでください',
   off: '会話モード OFF',
@@ -543,6 +544,7 @@ function closeChat() {
   setXiaoZhiVision(null)
   generation++
   connecting = false
+  connectedAt = 0
   const old = chat
   chat = undefined
   try {
@@ -565,6 +567,8 @@ function failed(reason) {
   const failedChat = chat,
     failedGeneration = generation
   const memoryBlocked = isMemoryPressure(reason)
+  const reconnect = voiceReconnectPlan(retryDelay,connectedAt,Date.now())
+  if(reconnect.stable)failures=1
   error = memoryBlocked
     ? '内蔵RAMが不足しているため、音声会話を一時停止しています。'
     : chatProvider() === 'gemini' && String(reason).startsWith('Gemini')
@@ -578,15 +582,15 @@ function failed(reason) {
   microphoneIndicator(false)
   conversationIndicator('off')
   state = 'retrying'
-  retryAt = Date.now() + Math.max(retryDelay,memoryBlocked?10000:0)
-  retryDelay = Math.min(60000, retryDelay * 2)
+  retryAt = Date.now() + Math.max(reconnect.waitMs,memoryBlocked?10000:0)
+  retryDelay = reconnect.nextDelayMs
   Timer.set(() => {
     if (generation === failedGeneration && chat === failedChat) {
       closeChat()
       if (enrollment.phase === 'listening') openSpeakerChooser()
     }
   }, 0)
-  trace('[direct-chat] reconnect scheduled\n')
+  trace('[direct-chat] reconnect scheduled delayMs='+reconnect.waitMs+' stable='+reconnect.stable+'\n')
 }
 async function provision() {
   const cfg = cloudConfig()
@@ -703,6 +707,7 @@ async function connect() {
   }
   if (!claim()) return
   owned = true
+  connectedAt = 0
   const ticket = ++generation
   connecting = true
   state = 'connecting'
@@ -897,7 +902,7 @@ async function connect() {
             return
           }
           if(recognitionOnly&&value===ChatState.CONNECTED){
-            state='listening';microphoneAt=Date.now();error='';detail='';retryDelay=3000;failures=0
+            state='listening';microphoneAt=Date.now();error='';detail='';if(!connectedAt)connectedAt=Date.now()
             trace('[mode-session] connected mode='+(standalone?'transcription':'recognition-transport')+'\n')
             if(!standalone&&greetingPending&&!enrollment.active){greetingPending=false;Timer.set(()=>recognitionTurn(null),0)}
             return
@@ -933,8 +938,7 @@ async function connect() {
             }
             error = ''
             detail = ''
-            retryDelay = 3000
-            failures = 0
+            if(!connectedAt)connectedAt=Date.now()
           }
           if (value === ChatState.LISTENING || value === ChatState.WAITING) {state = 'speaking';microphoneIndicator(false)}
           trace('[direct-chat] state=' + value + '\n')
@@ -1321,7 +1325,7 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
   archive = saveTranscript
   claim = acquire
   release = done
-  globalThis.stackchanMicrophoneActivity=()=>{if(chat&&running()){microphoneAt=Date.now();microphoneIndicator(true)}}
+  globalThis.stackchanMicrophoneActivity=(source)=>{if(chat&&running()){const now=Date.now();microphoneAt=now;if(source==='xiaozhi-upload'){audioStats.xiaozhiUploadTicks++;audioStats.lastXiaozhiUploadAt=now}microphoneIndicator(true)}}
   const controller=robot.ui.application.behavior, faceTouch=controller.onFaceTouch, launch=controller.launchMiniApp
   controller.launchMiniApp=function(...args){if(speakerStrip){robot.ui.removeEffect(speakerStrip);speakerStrip=undefined}return launch.apply(this,args)}
   controller.onFaceTouch=function(){faceTouch?.call(this);if(enabled())showSpeakerStrip()}

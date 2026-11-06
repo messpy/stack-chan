@@ -38,6 +38,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
     this.encoderTimer = undefined
     this.sessionID = ''
     this.uploading = false
+    this.lastUploadActivityAt = 0
     this.listeningMode = 'auto'
     this.features = {}
     this.helloExtension = {}
@@ -151,6 +152,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
     this.outputSampleRate = 0
     this.sessionID = ''
     this.uploading = false
+    this.lastUploadActivityAt = 0
     this.pendingMcpCalls = Object.create(null)
   }
 
@@ -239,6 +241,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
       this.resetEncodeStats()
       this.resetDecodeStats()
       this.uploading = true
+      this.lastUploadActivityAt = 0
       this.postMessage({
         id: 'configureAudio',
         inputSampleRate: INPUT_SAMPLE_RATE,
@@ -306,17 +309,25 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
   flushEncodedAudio() {
     if (!this.encoder || !this.uploading) return
     try {
+      let forwarded = 0
       for (;;) {
         const packetBytes = this.encoder.read(this.encoderPacket)
-        if (!packetBytes) return
+        if (!packetBytes) break
         const packet = new Uint8Array(packetBytes)
         packet.set(new Uint8Array(this.encoderPacket, 0, packetBytes))
         this.write(packet, binary)
+        forwarded++
         this.encodePackets += 1
         this.encodePCMBytes += this.encoder.inputBytes
         this.encodeCompressedBytes += packetBytes
         this.encodeUs += this.encoder.encodeUs
         if (this.encodeMaxUs < this.encoder.encodeUs) this.encodeMaxUs = this.encoder.encodeUs
+      }
+      // At most one lightweight UI heartbeat per second. Unlike AudioIn callbacks,
+      // this only fires after encoded packets were passed to the WebSocket writer.
+      if (forwarded && Date.now() - this.lastUploadActivityAt >= 1000) {
+        this.lastUploadActivityAt = Date.now()
+        this.postMessage({ id: 'audioUploadActivity' })
       }
     } catch (error) {
       this.fail(String(error?.message ?? error))

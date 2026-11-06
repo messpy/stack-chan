@@ -42,3 +42,25 @@ assert.equal(model.suppressReply,false,'a tool continuation within the same reco
 model.replyDeadline=Date.now()-1;model.tts({state:'start'});
 assert.equal(model.suppressReply,true,'the same turn must not authorize an idle farewell after expiry');
 console.log('PASS: tool continuation speech remains allowed while idle farewell expires');
+
+
+// A green microphone indicator must represent packets forwarded to the transport,
+// not raw AudioIn callbacks when the worker is not uploading.
+{
+ const forwarded=[],before=events.filter(e=>e.id==='audioUploadActivity').length;
+ let reads=0;
+ model.encoder.read=()=>{if(reads++===0)return 12;return 0};
+ model.encoder.inputBytes=1920;model.encoder.encodeUs=120;
+ model.encoderPacket=new SharedArrayBuffer(1275);
+ model.write=(packet)=>forwarded.push(packet.byteLength);
+ model.uploading=true;model.lastUploadActivityAt=0;
+ model.flushEncodedAudio();
+ assert.deepEqual(forwarded,[12]);
+ assert.equal(events.filter(e=>e.id==='audioUploadActivity').length,before+1);
+ model.flushEncodedAudio();
+ assert.equal(events.filter(e=>e.id==='audioUploadActivity').length,before+1,'no activity without encoded packet');
+ model.uploading=false;
+ model.flushEncodedAudio();
+ assert.equal(events.filter(e=>e.id==='audioUploadActivity').length,before+1,'no false-green activity while upload is stopped');
+}
+console.log('PASS: XiaoZhi activity reports only forwarded Opus packets and is bounded');
