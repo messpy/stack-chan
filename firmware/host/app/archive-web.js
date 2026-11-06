@@ -125,5 +125,7 @@ export function startWeb(context,callbacks,token){
   }});
   for(const key of ['archiveVolume','directChatMode','offlineMode','alarmSettings','toggleFace','cycleEmotion','toggleSpeech','speakStackchan','handAnimation','cameraPreview','toggleLookAround','servoTest','toggleLED','playTone','recordPlayback','toggleColor'])robot.drawer.removeDrawerButton(key);
   robot.drawer.addDrawerButton({key:'networkSettings',label:'設定',callback:()=>{robot.ui.application.behavior.closeDrawer?.();launch('archive-settings');}});
-  Timer.repeat(()=>{if(server)return;const s=getSettingsStatus();if(!s.connected&&!s.setupActive)return;try{startServer();lastStartError=false;}catch(error){if(!lastStartError){trace('[control] web start failed: '+String(error?.name||'Error')+'\n');lastStartError=true;}}},1000);
+  // Only startup/recovery is polled; an opened HTTP server stays active.
+  // A LAN/AP transition may take up to 3 seconds to expose the control page.
+  Timer.repeat(()=>{if(server)return;const s=getSettingsStatus();if(!s.connected&&!s.setupActive)return;try{startServer();lastStartError=false;}catch(error){if(!lastStartError){trace('[control] web start failed: '+String(error?.name||'Error')+'\n');lastStartError=true;}}},3000);
 }
