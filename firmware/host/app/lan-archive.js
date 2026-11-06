@@ -9,7 +9,7 @@ import {startHistoryUI} from 'archive-history-ui';
 import {startTimerUI} from 'archive-timer-ui';
 import {createAlarmDance} from 'archive-alarm-motion';
 import {captureFrame,screenCommand,showScreen} from 'archive-screen';
-import {startDebugDrain,armDebugDrain,debugLogStatus,diagnosticSnapshot,markHeap,servoReasonCode} from 'archive-debug';
+import {startDebugDrain,armDebugDrain,debugLogStatus,diagnosticSnapshot,createHealthLogger,markHeap,servoReasonCode} from 'archive-debug';
 import {startChecks,checkStatus} from 'archive-checks';
 import {Emotion} from 'face-state';
 import {OfflinePolicy} from 'archive-offline-policy';
@@ -260,6 +260,16 @@ export function startArchive(robot) {
   let monitor,monitorVoice;
   try{bootResetCode=resetReason();trace('[boot-reset] reasonCode='+bootResetCode+'\n')}catch(_){bootResetCode=null}
   startDebugDrain();
+  const sampleHealth=()=>{
+    const ui={};
+    robot.ui.application.distribute('onStatusBarDiagnostics',ui);
+    return {heap:heapStatus(),chat:directChatStatus(),photo:photoStatus(),
+      debug:debugLogStatus(),servo:{lastReadFailure:lastServoReadFailure},ui,
+      network:{connected:getSettingsStatus().connected},resetCode:bootResetCode,
+      uptime:uptimeMs(),now:Date.now()};
+  };
+  const logHealth=createHealthLogger({sample:sampleHealth,emit:line=>trace(line)});
+  Timer.repeat(logHealth,10000);
   try{markHeap('archive-start',heapStatus(),trace)}catch(_){}
   startLocalClock();
   startCustomFace(robot);
@@ -329,7 +339,7 @@ export function startArchive(robot) {
       }
       else if(request.op==='/screen/show'){if(busy||directChatStatus().enabled||reminderStatus().ringing)throw new Error('本体の操作が終わってから画面を確認してください');if(request.args?.scene!=='balloon-test')closeOffline();result=showScreen(robot,request.args?.scene);await new Promise(resolve=>Timer.set(resolve,150));}
       else if(request.op==='/debug/status')result=debugLogStatus();
-      else if(request.op==='/diagnostics/status')result=diagnosticSnapshot({heap:heapStatus(),chat:directChatStatus(),photo:photoStatus(),debug:debugLogStatus(),servo:{lastReadFailure:lastServoReadFailure},resetCode:bootResetCode,uptime:uptimeMs(),now:Date.now()});
+      else if(request.op==='/diagnostics/status')result=diagnosticSnapshot(sampleHealth());
       else if(request.op==='/offline/auto')result=autoOffline(request.args?.enabled);
       else if(request.op==='/offline/status')result=offlineStatus();
       else if(request.op==='/offline/open')result=openOffline();

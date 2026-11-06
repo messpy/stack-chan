@@ -84,6 +84,11 @@ def clean_snapshot(value: object) -> dict:
         admission["mode"] = (raw_admission.get("mode")
             if raw_admission.get("mode") in ("conversation", "transcription", "recognition-transport")
             else "unknown")
+    raw_ui = value.get("ui") if isinstance(value.get("ui"), dict) else {}
+    ui = {key: raw_ui.get(key) is True for key in (
+        "available", "visible", "actionsVisible", "clockVisible", "batteryVisible", "wifiVisible")}
+    ui["mode"] = raw_ui.get("mode") if raw_ui.get("mode") in ("face", "app") else "unknown"
+    raw_network = value.get("network") if isinstance(value.get("network"), dict) else {}
     photo = value.get("photo") if isinstance(value.get("photo"), dict) else {}
     reason = boot.get("resetReasonCode")
     safe_reason = reason if type(reason) is int and 0 <= reason <= 100 else None
@@ -96,7 +101,7 @@ def clean_snapshot(value: object) -> dict:
         audio[key] = safe_tag(raw_audio.get(key))
     for key in ("uploadEnabled", "playbackActive"):
         audio[key] = raw_audio.get(key) is True
-    return {"audio": audio, "boot": {"resetReasonCode": safe_reason, "uptimeMs": safe_uptime}, "heap": heap, "debug": debug,
+    return {"ui": ui, "network": {"connected": raw_network.get("connected") is True}, "audio": audio, "boot": {"resetReasonCode": safe_reason, "uptimeMs": safe_uptime}, "heap": heap, "debug": debug,
         "servo": {"lastReadFailure": safe_tag(servo.get("lastReadFailure"))},
         "chat": {"state": safe_tag(chat.get("state")),
                  "provider": safe_tag(chat.get("provider")),

@@ -32,6 +32,14 @@ class LanDiagnosticsTests(unittest.TestCase):
                          {"failures": 3, "limit": 3, "stopped": True})
         self.assertNotIn("SECRET", json.dumps(cleaned))
 
+    def test_ui_network_allowlist(self):
+        cleaned = module.clean_snapshot({"schema": 1, "ui": {"available": True,
+            "visible": True, "batteryVisible": True, "mode": "face", "title": "SECRET"},
+            "network": {"connected": True, "ssid": "SECRET"}})
+        self.assertTrue(cleaned["ui"]["batteryVisible"])
+        self.assertTrue(cleaned["network"]["connected"])
+        self.assertNotIn("SECRET", json.dumps(cleaned))
+
     def test_lan_only(self):
         self.assertEqual(module.private_ip("192.168.2.102"), "192.168.2.102")
         for value in ("8.8.8.8", "127.0.0.1", "169.254.1.2",

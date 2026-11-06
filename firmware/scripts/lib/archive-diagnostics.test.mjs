@@ -109,3 +109,49 @@ test('persistent RAM stop is visible without copying arbitrary recovery fields',
  assert.equal(snap.chat.memoryRecovery.limit,3);
  assert.ok(!JSON.stringify(snap).includes('SECRET'));
 });
+
+test('bounded health history records states, heartbeat, UI and RAM without private data',()=>{
+ let now=0,state='listening',samples=0;
+ const lines=[];
+ const log=mod.namespace.createHealthLogger({now:()=>now,emit:s=>lines.push(s),sample:()=>{
+  samples++;
+  return {heap:{internalFree:45000,psramFree:6000000},chat:{state,provider:'xiaozhi',detail:'PRIVATE',pipeline:{input:'running',uploadEnabled:true,token:'SECRET'}},
+   ui:{available:true,visible:true,mode:'face',actionsVisible:false,batteryVisible:true,wifiVisible:true,title:'SECRET'},network:{connected:true,ssid:'SECRET'},now:12345,uptime:100};
+ }});
+ assert.equal(log(),true);
+ for(let i=0;i<100;i++)log();
+ assert.equal(samples,1);
+ now=10000;assert.equal(log(),false);
+ now=30000;assert.equal(log(),true);
+ state='retrying';now=40000;assert.equal(log(),true);
+ assert.equal(lines.length,3);
+ for(const line of lines){
+  assert.ok(line.length<=2000);
+  assert.ok(!/PRIVATE|SECRET/.test(line));
+  const value=JSON.parse(line.slice('[health] '.length));
+  assert.equal(value.heap.internalFree,45000);
+  assert.equal(value.ui.batteryVisible,true);
+  assert.equal(value.ui.actionsVisible,false);
+ }
+})
+
+test('health sampling failure does not escape or flood retry logs',()=>{
+ let now=0,calls=0;
+ const log=mod.namespace.createHealthLogger({now:()=>now,sample:()=>{calls++;throw Error('SECRET')},emit:()=>assert.fail('no raw error logging')});
+ assert.equal(log(),false);assert.equal(log(),false);assert.equal(calls,1);
+ now=10000;assert.equal(log(),false);assert.equal(calls,2);
+})
+
+test('health JSON remains complete within native slots at maximum diagnostic values',()=>{
+ const n=Number.MAX_SAFE_INTEGER,tag='x'.repeat(40),lines=[];
+ const sample={heap:Object.fromEntries(['internalFree','internalLargest','internalMinimum','psramFree','psramLargest','psramMinimum','nativeStackMinimumFree'].map(k=>[k,n])),
+  chat:{state:tag,provider:tag,detail:'memory',audioPhase:tag,reconnectCount:n,
+   pipeline:{provider:tag,input:tag,output:tag,worker:tag,lastError:tag,lastInputAt:n,lastSentAt:n,overruns:n,overrunBytes:n},
+   memoryRecovery:{failures:n,limit:n,stopped:true},
+   memoryAdmission:{status:'blocked',mode:'recognition-transport',at:n,internalFree:n,internalLargest:n,requiredFree:n,requiredLargest:n,shortfallFree:n,shortfallLargest:n},
+   playback:{sampleRate:n,underruns:n,bufferedMs:n,queuedMs:n},audio:{lastTranscriptAt:n}},
+  debug:{queued:n,dropped:n,truncated:n,usbRetries:n},photo:{phase:tag,errorStage:tag},servo:{lastReadFailure:tag},uptime:n,now:n};
+ assert.equal(mod.namespace.createHealthLogger({sample:()=>sample,emit:line=>lines.push(line)})(),true);
+ assert.ok(lines.length>=1&&lines.length<=2);
+ for(const line of lines){assert.ok(Buffer.byteLength(line)<2048);assert.doesNotThrow(()=>JSON.parse(line.slice(line.indexOf(' ')+1)));}
+})

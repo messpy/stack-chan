@@ -6,11 +6,14 @@ on:
       - fix/archive-photo-local-voice-dispatch-20261105
   pull_request:
     branches:
+      - fix/issue40-memory-recovery-20261107
       - fix/audio-integrity-20261105
       - fix/archive-pr45-startup-private-manifest-20261105
       - fix/archive-photo-local-voice-dispatch-20261105
     paths:
       - 'firmware/host/app/archive-*.js'
+      - 'firmware/host/modules/ui/components/status-bar/**'
+      - 'firmware/scripts/lib/archive-status-layout.test.mjs'
       - 'firmware/host/modules/audio/async-output/**'
       - 'firmware/host/modules/audio/platforms/m5stackchan-cores3/esp32-opus-encoder.c'
       - 'firmware/scripts/test_pcm_ring_channel.py'
@@ -60,6 +63,8 @@ jobs:
             firmware/scripts/lib/archive-auto-offline-persistence.test.mjs \
             firmware/scripts/lib/archive-memory-recovery.test.mjs \
             firmware/scripts/lib/archive-memory-policy.test.mjs \
+            firmware/scripts/lib/archive-status-layout.test.mjs \
+            firmware/scripts/lib/archive-debug.test.mjs \
             firmware/scripts/lib/archive-diagnostics.test.mjs
       - name: Native audio queue and private audio diagnostics
         run: |
