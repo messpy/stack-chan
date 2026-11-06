@@ -5,6 +5,8 @@ import {TTS as MonitorTTS} from 'archive-offline-tts';
 import {prepareRecognitionPCM} from 'archive-usb';
 import {bootSpeechEnabled} from 'archive-offline-speech';
 import {startCustomFace,faceCommand} from 'archive-custom-face';
+import {startIdleFace} from 'archive-idle-face';
+import {idleFaceAllowed} from 'archive-idle-policy';
 import {startHistoryUI} from 'archive-history-ui';
 import {startTimerUI} from 'archive-timer-ui';
 import {createAlarmDance} from 'archive-alarm-motion';
@@ -27,7 +29,7 @@ import {analyzeJPEG,visionStatus} from 'archive-vision';
 import {startAlarmSettings,openAlarmSettings,showRingingAlarm,hideRingingAlarm} from 'archive-alarm-ui';
 import {alarmSoundCommand,playAlarmSound} from 'archive-alarm-sound';
 import {startWeb,openControl,controlStatus} from 'archive-web';
-import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat,suspendDirectChatForAutomaticOffline,resumeDirectChatFromAutomaticOffline} from 'archive-direct-chat';
+import {microphoneIndicator,startDirectChat,directChatStatus,chatIdleStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat,suspendDirectChatForAutomaticOffline,resumeDirectChatFromAutomaticOffline} from 'archive-direct-chat';
 import {recordMemory,history,deviceHistory,currentSpeaker,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
 import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
 import {acceptAudioChunk} from 'archive-audio-upload';
@@ -84,6 +86,7 @@ function save(name,parts) {
 const id=()=>`${Date.now()}-${sequence++}`;
 export function archiveTranscript(role,text,eventId,image,speakerId) {
   if(!text)return;
+  if(role==='input')globalThis.stackchanIdleActivity?.('input-transcript');
   try {
     const event={id:typeof eventId==='string'&&/^[a-z0-9-]{1,100}$/.test(eventId)?eventId:id(),role:role==='input'?'user':'assistant',text:String(text).slice(-4096),created:Date.now()};
     event.speakerId=speakerId===undefined?(directChatStatus().speaker?.id??null):speakerId;
@@ -118,6 +121,7 @@ async function cameraPreview(robot) {
 }
 async function photo(robot,args={},fromConversation=false) {
   if(photoActive || (busy&&!fromConversation))throw new Error('Camera busy');
+  globalThis.stackchanIdleActivity?.('camera');
   photoActive=true;
   try{markHeap('photo-start',heapStatus(),trace)}catch(_){}
   const photoStartedAt=Date.now();
@@ -264,7 +268,7 @@ export function startArchive(robot) {
     const ui={};
     robot.ui.application.distribute('onStatusBarDiagnostics',ui);
     return {heap:heapStatus(),chat:directChatStatus(),photo:photoStatus(),
-      debug:debugLogStatus(),servo:{lastReadFailure:lastServoReadFailure},ui,
+      debug:debugLogStatus(),servo:{lastReadFailure:lastServoReadFailure},ui,idle:globalThis.stackchanIdleStatus?.(),
       network:{connected:getSettingsStatus().connected},resetCode:bootResetCode,
       uptime:uptimeMs(),now:Date.now()};
   };
@@ -273,6 +277,12 @@ export function startArchive(robot) {
   try{markHeap('archive-start',heapStatus(),trace)}catch(_){}
   startLocalClock();
   startCustomFace(robot);
+  startIdleFace(robot,()=>{
+    const ui={};robot.ui.application.distribute('onStatusBarDiagnostics',ui);
+    return idleFaceAllowed({faceMode:globalThis.stackchanFaceMode||'simple',
+      customFace:globalThis.stackchanCustomFaceEnabled,busy,photo:photoActive,
+      monitor:monitor?.active,offline:offlineStatus().playing,chat:chatIdleStatus(),ui});
+  });
   startOffline(robot,{stopCloud:()=>{if(directChatStatus().recognitionMode)setRecognitionMode(false);if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings,startCloud:()=>setChatMode(true),openAI:()=>robot.ui.application.behavior.launchMiniApp('archive-ai-settings')});
   startHistoryUI(robot,{read:args=>{importLegacy();return deviceHistory(args);},people:()=>users({limit:50}).users.filter(p=>p.kind==='person'),current:currentSpeaker});
   startVolume(robot);
@@ -293,7 +303,7 @@ export function startArchive(robot) {
       if(offlineStatus().playing||reminderStatus().ringing||(busy&&!directChatStatus().busy))throw new Error('本体で処理中です');
       const paused=pauseDirectChat();
       if(busy){if(paused)resumeDirectChat();throw new Error('本体で処理中です');}
-      closeOffline();busy=true;try{markHeap('monitor-start',heapStatus(),trace)}catch(_){}trace('[monitor] started\n');
+      globalThis.stackchanIdleActivity?.('monitor');closeOffline();busy=true;try{markHeap('monitor-start',heapStatus(),trace)}catch(_){}trace('[monitor] started\n');
     },
     release(){busy=false;try{markHeap('monitor-stop',heapStatus(),trace)}catch(_){}resumeDirectChat();trace('[monitor] stopped\n');},
     log:message=>trace('[head-jog] '+message+'\n'),

@@ -358,6 +358,8 @@ function providerNotice() {
   if (chatProvider() === 'ollama') return 'Ollama Cloudで返答生成。音声はGemini / Googleへ送信します。'
   return (chatProvider() === 'gemini' ? 'Gemini / Google' : 'XiaoZhi') + 'へON中はマイク音声を送信します。OFFで停止。'
 }
+// Lightweight idle-face gate: no settings/profile/heap reads on the 1Hz UI timer.
+export function chatIdleStatus(){return {state,audioPhase:conversationLight,busy:!!chat||connecting}}
 export function directChatStatus() {
   const provider = chatProvider()
   return {
@@ -445,6 +447,7 @@ export function configureDirectChat(value) {
   return { configured: true }
 }
 export function setChatMode(on) {
+  globalThis.stackchanIdleActivity?.('mode-change')
   trace('[action] chat_mode requested='+(on?'on':'off')+'\n')
   if(on&&chatProvider()==='gemini'&&!getSettings().api?.gemini)throw new Error('Gemini APIキーを保存してください')
   if (on && chatProvider() === 'ollama' && (!getSettings().api?.ollama || (!usesXiaoZhiRecognition()&&!getSettings().api?.gemini)))
@@ -508,6 +511,7 @@ export function setChatMode(on) {
   return directChatStatus()
 }
 export function setRecognitionMode(on){
+  globalThis.stackchanIdleActivity?.('mode-change')
   trace('[action] recognition_mode requested='+(on?'on':'off')+'\n')
   if(typeof on!=='boolean')throw new Error('文字起こしのON/OFFを指定してください')
   const previousMode={chatMode:getSettings().chatMode,transcriptionMode:getSettings().transcriptionMode}
@@ -958,7 +962,7 @@ async function connect() {
             failures = 0
             memoryFailures = 0
           }
-          if (value === ChatState.LISTENING || value === ChatState.WAITING) {state = 'speaking';microphoneIndicator(false)}
+          if (value === ChatState.LISTENING || value === ChatState.WAITING) {globalThis.stackchanIdleActivity?.('chat-output');state = 'speaking';microphoneIndicator(false)}
           trace('[direct-chat] state=' + value + '\n')
         },
         onMcpNotification(payload) {
@@ -981,6 +985,7 @@ async function connect() {
         },
         onInputTranscript(text, more) {
           if (chat !== instance) return
+          if (text) globalThis.stackchanIdleActivity?.('input-transcript')
           if (text) conversationIndicator(more ? 'transcribing' : 'thinking')
           else if (!more && input) conversationIndicator('thinking')
           input = (input + (text || '')).slice(-4096)
@@ -1231,6 +1236,7 @@ export async function provisionDirectChat() {
   return { configured: true }
 }
 export function requestListening(){
+  globalThis.stackchanIdleActivity?.('listen-request')
   robot.hideBalloon()
   lastSubtitle=''
   if(!enabled())setChatMode(true)
