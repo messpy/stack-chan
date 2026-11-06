@@ -7,14 +7,14 @@
  *   it under the terms of the GNU Lesser General Public License as published by
  *   the Free Software Foundation, either version 3 of the License, or
  *   (at your option) any later version.
- *  
+ *
  *   The Moddable SDK Runtime is distributed in the hope that it will be useful,
  *   but WITHOUT ANY WARRANTY; without even the implied warranty of
  *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *   GNU Lesser General Public License for more details.
  *
  *   You should have received a copy of the GNU Lesser General Public License
- *   along with the Moddable SDK Runtime.  If not, see <http://www.gnu.org/licenses/>.  
+ *   along with the Moddable SDK Runtime.  If not, see <http://www.gnu.org/licenses/>.
  *
  */
 
@@ -63,10 +63,10 @@ struct AudioOutElementRecord {
 	xsSlot				*completion;
 	xsSlot				*buffer;
 	void				*data;		// NULL if relocatable
-	
+
 	uint32_t			position;
 	uint32_t			bytesAvailable;
-	
+
 	esp_err_t			err;
 };
 
@@ -99,7 +99,7 @@ struct AudioOutRecord {
 
 	double				volumeDouble;
 	int16_t				volumeFixed;
-	
+
 	AudioOutElement		elements;
 	volatile TaskHandle_t		task;
 
@@ -160,7 +160,7 @@ void xs_stackchan_audioout_destructor_(void *data)
 {
 	AudioOut audioOut = data;
 	if (!audioOut) return;
-	
+
 	audioOutRelease(audioOut);
 	c_free(audioOut);
 }
@@ -244,7 +244,7 @@ void xs_stackchan_audioout_constructor_(xsMachine *the)
 	audioOut->bitsPerSample = (uint8_t)bitsPerSample;
 
 	audioOut->onWritable = onWritable;
-	
+
 	audioOut->volumeDouble = 1.0;
 	audioOut->volumeFixed = 256;
 
@@ -388,14 +388,14 @@ void xs_stackchan_audioout_constructor_(xsMachine *the)
 		modMessagePostToMachine(audioOut->the, C_NULL, 0, audiooutDeliver, audioOut);
 	}
 }
- 
+
 void xs_stackchan_audioout_close_(xsMachine *the)
 {
 	AudioOut audioOut = xsmcGetHostData(xsThis);
 	if (audioOut && xsmcGetHostDataValidate(xsThis, (void *)&xsAudioOutHooks)) {
 		audioOut->closed = true;
 		xsForget(audioOut->obj);
-		
+
 #if !mxUseGCCAtomics
 		uint8_t useCount = --audioOut->useCount;
 #else
@@ -408,7 +408,7 @@ void xs_stackchan_audioout_close_(xsMachine *the)
 		xsmcSetHostDestructor(xsThis, C_NULL);
 	}
 }
- 
+
 void xs_stackchan_audioout_start_(xsMachine *the)
 {
 	AudioOut audioOut = xsmcGetHostDataValidate(xsThis, (void *)&xsAudioOutHooks);
@@ -434,7 +434,7 @@ void xs_stackchan_audioout_start_(xsMachine *the)
 		modMessagePostToMachine(audioOut->the, C_NULL, 0, audiooutDeliver, audioOut);
 	}
 }
- 
+
 void xs_stackchan_audioout_stop_(xsMachine *the)
 {
 	AudioOut audioOut = xsmcGetHostDataValidate(xsThis, (void *)&xsAudioOutHooks);
@@ -447,7 +447,7 @@ void xs_stackchan_audioout_stop_(xsMachine *the)
 	audioOut->bytesWritable = audioOut->total_dma_buf_size;
 	audioOut->stagingOffset = 0;
 }
- 
+
 void xs_stackchan_audioout_writeSync_(xsMachine *the)
 {
 	AudioOut audioOut = xsmcGetHostDataValidate(xsThis, (void *)&xsAudioOutHooks);
@@ -468,7 +468,7 @@ void xs_stackchan_audioout_writeSync_(xsMachine *the)
 	if (err)
 		xsUnknownError("write failed %d", (int)err);
 }
- 
+
  void xs_stackchan_audioout_writeAsync_(xsMachine *the)
  {
 	AudioOut audioOut = xsmcGetHostDataValidate(xsThis, (void *)&xsAudioOutHooks);
@@ -484,7 +484,7 @@ void xs_stackchan_audioout_writeSync_(xsMachine *the)
 		if (!audioOut->task)
 			xsUnknownError("can't create task");
 	}
-	
+
 	buffer = xsmcToReference(xsArg(0));
 	if (xsmcArgc > 1)
 		completion = xsmcToReference(xsArg(1));
@@ -492,7 +492,7 @@ void xs_stackchan_audioout_writeSync_(xsMachine *the)
 	element = c_calloc(1, sizeof(AudioOutElementRecord));
 	if (!element)
 		xsUnknownError("no memory");
-	
+
 	element->completion = completion;
 	element->buffer = buffer;
 	element->data = data;
@@ -517,38 +517,38 @@ void xs_stackchan_audioout_get_format_(xsMachine *the)
 	AudioOut audioOut = xsmcGetHostDataValidate(xsThis, (void *)&xsAudioOutHooks);
 	builtinGetFormat(the, kIOFormatBuffer);
 }
- 
+
 void xs_stackchan_audioout_set_format_(xsMachine *the)
 {
 	AudioOut audioOut = xsmcGetHostDataValidate(xsThis, (void *)&xsAudioOutHooks);
 	if (kIOFormatBuffer != builtinSetFormat(the))
 		xsRangeError("invalid format");
 }
- 
+
 void xs_stackchan_audioout_get_bitsPerSample_(xsMachine *the)
 {
 	AudioOut audioOut = xsmcGetHostDataValidate(xsThis, (void *)&xsAudioOutHooks);
 	xsmcSetInteger(xsResult, audioOut->bitsPerSample);
 }
- 
+
 void xs_stackchan_audioout_get_numChannels_(xsMachine *the)
 {
 	AudioOut audioOut = xsmcGetHostDataValidate(xsThis, (void *)&xsAudioOutHooks);
 	xsmcSetInteger(xsResult, audioOut->numChannels);
 }
- 
+
 void xs_stackchan_audioout_get_sampleRate_(xsMachine *the)
 {
 	AudioOut audioOut = xsmcGetHostDataValidate(xsThis, (void *)&xsAudioOutHooks);
 	xsmcSetInteger(xsResult, audioOut->sampleRate);
 }
- 
+
 void xs_stackchan_audioout_get_volume_(xsMachine *the)
 {
 	AudioOut audioOut = xsmcGetHostDataValidate(xsThis, (void *)&xsAudioOutHooks);
 	xsmcSetNumber(xsResult, audioOut->volumeDouble);
 }
- 
+
 void xs_stackchan_audioout_set_volume_(xsMachine *the)
 {
 	AudioOut audioOut = xsmcGetHostDataValidate(xsThis, (void *)&xsAudioOutHooks);
@@ -558,7 +558,7 @@ void xs_stackchan_audioout_set_volume_(xsMachine *the)
 	audioOut->volumeDouble = volume;
 	__atomic_store_n(&audioOut->volumeFixed, (int16_t)(volume * 256), __ATOMIC_SEQ_CST);
 }
- 
+
 void xs_stackchan_audioout_mark_(xsMachine* the, void* it, xsMarkRoot markRoot)
 {
 	AudioOut audioOut = it;
