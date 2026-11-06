@@ -7,8 +7,17 @@ on:
   pull_request:
     branches:
       - fix/archive-pr45-startup-private-manifest-20261105
+      - fix/archive-photo-local-voice-dispatch-20261105
     paths:
-      - 'firmware/host/app/archive-direct-chat.js'
+      - 'firmware/host/app/archive-*.js'
+      - 'firmware/host/modules/audio/async-output/**'
+      - 'firmware/host/modules/conversation/chat-audioio/**'
+      - 'firmware/scripts/lib/archive-audio-*.test.mjs'
+      - 'firmware/scripts/lib/archive-playback-buffer.test.mjs'
+      - 'firmware/scripts/lib/archive-diagnostics.test.mjs'
+      - 'firmware/scripts/test_async_audio_output.py'
+      - 'firmware/scripts/*archive_lan_diagnostics.py'
+      - 'firmware/scripts/archive-lan-diagnostics.py'
       - 'firmware/host/app/lan-archive.js'
       - 'firmware/scripts/lib/archive-issues-33-36.test.mjs'
       - 'firmware/scripts/voice-e2e-cases.json'
@@ -39,7 +48,15 @@ jobs:
           node --experimental-vm-modules --test \
             firmware/scripts/lib/archive-issues-33-36.test.mjs \
             firmware/scripts/lib/archive-voice-volume.test.mjs \
-            firmware/scripts/lib/archive-xiaozhi-recognition.test.mjs
+            firmware/scripts/lib/archive-xiaozhi-recognition.test.mjs \
+            firmware/scripts/lib/archive-audio-integrity.test.mjs \
+            firmware/scripts/lib/archive-audio-transport-health.test.mjs \
+            firmware/scripts/lib/archive-playback-buffer.test.mjs \
+            firmware/scripts/lib/archive-diagnostics.test.mjs
+      - name: Native audio queue and private audio diagnostics
+        run: |
+          python3 firmware/scripts/test_async_audio_output.py
+          python3 -m unittest discover -s firmware/scripts -p 'test_archive_lan_diagnostics.py' -v
       - name: Read-only photo LAN and legacy manifest regressions
         run: |
           python3 -m unittest discover -s firmware/scripts -p 'test_archive_photo_lan.py' -v

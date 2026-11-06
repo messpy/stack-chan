@@ -243,6 +243,7 @@ function conversationInstructions() {
   )
 }
 
+let reconnectCount=0,connectionAttempts=0
 let micLit=false,microphoneAt=0,conversationLight='off'
 export function conversationIndicator(stage){
   if(conversationLight===stage)return
@@ -390,6 +391,9 @@ export function directChatStatus() {
     // Last admission attempt, not live free RAM; survives a retry for diagnostics.
     memoryAdmission:lastMemoryAdmission,
     playback:globalThis.stackchanPlaybackHealth||null,
+    pipeline:globalThis.stackchanAudioHealth||null,
+    reconnectCount,
+    audioPhase:conversationLight,
     busy: !!chat || connecting,
     phase: state,
   }
@@ -702,6 +706,7 @@ async function connect() {
     return
   }
   if (!claim()) return
+  if(connectionAttempts++>0)reconnectCount++
   owned = true
   const ticket = ++generation
   connecting = true
@@ -892,6 +897,7 @@ async function connect() {
       callbacks: {
         onStateChanged(value, reason) {
           if (chat !== instance) return
+          if(value===ChatState.CONNECTED)try{markHeap('chat-connected',heapStatus(),trace)}catch(_){}
           if (value === ChatState.FAILED || value === ChatState.DISCONNECTED) {
             failed(reason)
             return
@@ -1321,7 +1327,7 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
   archive = saveTranscript
   claim = acquire
   release = done
-  globalThis.stackchanMicrophoneActivity=()=>{if(chat&&running()){microphoneAt=Date.now();microphoneIndicator(true)}}
+  globalThis.stackchanMicrophoneActivity=active=>{if(chat&&running()){if(active!==false)microphoneAt=Date.now();microphoneIndicator(active!==false)}}
   const controller=robot.ui.application.behavior, faceTouch=controller.onFaceTouch, launch=controller.launchMiniApp
   controller.launchMiniApp=function(...args){if(speakerStrip){robot.ui.removeEffect(speakerStrip);speakerStrip=undefined}return launch.apply(this,args)}
   controller.onFaceTouch=function(){faceTouch?.call(this);if(enabled())showSpeakerStrip()}
