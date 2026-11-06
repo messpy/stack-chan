@@ -466,7 +466,9 @@ export function startArchive(robot) {
       writeUSB(JSON.stringify({id:request.id,result}));
     }catch(e){lastError=String(e);writeUSB(JSON.stringify({id:request.id,error:lastError}));}
     finally{usbBusy=false;}
-  },5);
+  // USB command pickup may wait up to 20 ms; avoid 200 idle polls per second.
+  // Keep the audio playback pump and USB debug drain on their own schedules.
+  },20);
 
   try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},args=>photo(robot,{...args,analyze:args?.analyze!==false},true),on=>{if(on){
     // Preserve the user's ON choice while boot/offline speech owns the audio device.
