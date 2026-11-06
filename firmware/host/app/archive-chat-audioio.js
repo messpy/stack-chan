@@ -227,7 +227,8 @@ export default class ChatAudioIO extends ChatAudioIOBase {
       postMessage: (message) => {
         if (message.id === 'sendAudio') {
           message = { ...message, channels: this.input?.channels ?? 1 }
-          globalThis.stackchanMicrophoneActivity?.()
+          // Enqueueing microphone PCM is not evidence of XiaoZhi network upload.
+          if(!usesNativePcmRing)globalThis.stackchanMicrophoneActivity?.()
         }
         if (message.id !== 'sendAudio' || !usesNativePcmRing) {
           worker.postMessage(message)
@@ -267,6 +268,10 @@ export default class ChatAudioIO extends ChatAudioIOBase {
     })
     this.ensureInput()
     } catch(error) { this.close(); throw error }
+  }
+
+  audioUploadActivity() {
+    if(!this.closed)globalThis.stackchanMicrophoneActivity?.('xiaozhi-upload')
   }
 
   startListening(mode = 'auto') {

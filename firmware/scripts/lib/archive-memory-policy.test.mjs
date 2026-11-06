@@ -25,3 +25,12 @@ assert.equal(policy.voiceMemoryAdmission({internalFree:80*1024,internalLargest:2
 // Never silently lower the admission threshold.
 assert.throws(()=>policy.checkVoiceMemory({internalFree:112*1024-1,internalLargest:24*1024}),/内蔵RAM/);
 console.log('PASS: insufficient or fragmented internal RAM blocks audio; resource/network failures never trigger identity renewal');
+
+
+// A successful handshake lasting only a moment must not reset reconnect backoff.
+assert.deepEqual(policy.voiceReconnectPlan(3000,0,5000),{waitMs:3000,nextDelayMs:6000,stable:false});
+assert.deepEqual(policy.voiceReconnectPlan(6000,1000,5000),{waitMs:6000,nextDelayMs:12000,stable:false});
+assert.deepEqual(policy.voiceReconnectPlan(60000,1000,5000),{waitMs:60000,nextDelayMs:60000,stable:false});
+assert.deepEqual(policy.voiceReconnectPlan(48000,1000,31000),{waitMs:3000,nextDelayMs:6000,stable:true});
+assert.equal(policy.voiceReconnectPlan(48000,1000,30999).stable,false);
+console.log('PASS: flapping connections retain exponential backoff; stable sessions reset it');

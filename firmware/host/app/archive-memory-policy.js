@@ -25,6 +25,16 @@ export function voiceMemoryAdmission(heap, usesOpus = true) {
   }
 }
 
+// A brief CONNECTED state is not proof that a voice session is healthy.
+// Exponential backoff survives short reconnect flaps and resets only after
+// thirty seconds of continuous connection. Keep RAM admission separate.
+export function voiceReconnectPlan(previousDelay, connectedAt, now) {
+  const stable = Number.isFinite(connectedAt) && connectedAt > 0 &&
+    Number.isFinite(now) && now - connectedAt >= 30000
+  const waitMs = stable ? 3000 : Math.min(60000, Math.max(3000, Number.isFinite(previousDelay) ? previousDelay : 3000))
+  return { waitMs, nextDelayMs: Math.min(60000, waitMs * 2), stable }
+}
+
 export function checkVoiceMemory(heap, usesOpus = true) {
   const result = voiceMemoryAdmission(heap, usesOpus)
   if (result.status === 'blocked')
