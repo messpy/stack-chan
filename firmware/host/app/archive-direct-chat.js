@@ -1218,8 +1218,9 @@ export function requestListening(){
   if(chat && state==='listening'){
     chat.setMicrophoneEnabled(true)
     chat.startListening('auto')
+    // Do not claim XiaoZhi is uploading until an encoded packet is forwarded.
     microphoneIndicator(false)
-    microphoneIndicator(true)
+    if(chatProvider()!=='xiaozhi'&&!usesXiaoZhiRecognition(chatProvider()))microphoneIndicator(true)
     // Green LED is the cue; keep the mouth clear while listening.
   }else{
     // Restart a stalled/busy session without registering the person again or
