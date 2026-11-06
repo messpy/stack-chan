@@ -11,6 +11,8 @@ on:
     paths:
       - 'firmware/host/app/archive-*.js'
       - 'firmware/host/modules/audio/async-output/**'
+      - 'firmware/host/modules/audio/platforms/m5stackchan-cores3/esp32-opus-encoder.c'
+      - 'firmware/scripts/test_pcm_ring_channel.py'
       - 'firmware/host/modules/conversation/chat-audioio/**'
       - 'firmware/scripts/lib/archive-audio-*.test.mjs'
       - 'firmware/scripts/lib/archive-playback-buffer.test.mjs'
@@ -56,6 +58,8 @@ jobs:
       - name: Native audio queue and private audio diagnostics
         run: |
           python3 firmware/scripts/test_async_audio_output.py
+          python3 firmware/scripts/test_pcm_ring_channel.py
+          python3 firmware/scripts/test_recognition_pcm.py
           python3 -m unittest discover -s firmware/scripts -p 'test_archive_lan_diagnostics.py' -v
       - name: Read-only photo LAN and legacy manifest regressions
         run: |
