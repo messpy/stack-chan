@@ -89,13 +89,19 @@ export function markHeap(stage, heap, emit) {
   return summary;
 }
 
-export function diagnosticSnapshot({heap, chat, photo, debug, servo, resetCode, uptime, now}) {
+export function diagnosticSnapshot({heap, chat, photo, debug, servo, ui, idle, network, resetCode, uptime, now}) {
   const c = chat || {}, p = photo || {}, d = debug || {};
   return {
     schema: 1,
     boot: {resetReasonCode: count(resetCode), uptimeMs: Number.isFinite(uptime) && uptime >= 0 ? Math.floor(uptime) : null},
     at: Number.isSafeInteger(now) && now > 0 ? now : null,
     heap: heapSummary(heap),
+    idle:{stage:['awake','drowsy','deep'].includes(idle?.stage)?idle.stage:'unknown',displayed:['awake','drowsy','deep'].includes(idle?.displayed)?idle.displayed:'unknown',idleMs:count(idle?.idleMs),resetCount:count(idle?.resetCount)},
+    network:{connected:network?.connected===true},
+    ui:{available:ui?.available===true,visible:ui?.visible===true,
+      mode:['face','app'].includes(ui?.mode)?ui.mode:'unknown',
+      actionsVisible:ui?.actionsVisible===true,clockVisible:ui?.clockVisible===true,
+      batteryVisible:ui?.batteryVisible===true,wifiVisible:ui?.wifiVisible===true},
     chat: {
       state: tag(c.state), provider: tag(c.provider),
       enabled: c.enabled === true, recognitionMode: c.recognitionMode === true,
@@ -134,5 +140,32 @@ export function diagnosticSnapshot({heap, chat, photo, debug, servo, resetCode, 
       queued: count(d.queued), dropped: count(d.dropped),
       truncated: count(d.truncated), usbRetries: count(d.usbRetries),
     },
+  };
+}
+
+// One bounded record, sampled at most every 10s. No retained snapshot history.
+export function createHealthLogger({sample,emit,now=()=>Date.now()}) {
+  let lastSample=-Infinity,lastEmit=-Infinity,previous='';
+  return ()=>{
+    const at=now();
+    if(at-lastSample<10000)return false;
+    lastSample=at;
+    try {
+      // Re-sanitize even when supplied by a caller: never serialize raw status.
+      const s=diagnosticSnapshot(sample());
+      const signature=JSON.stringify([s.chat.state,s.chat.provider,s.chat.failureClass,
+        s.chat.memoryRecovery.stopped,s.audio.input,s.audio.output,s.audio.worker,
+        s.audio.uploadEnabled,s.audio.lastError,s.network.connected,s.ui,s.idle.stage,s.idle.displayed,s.photo.phase]);
+      if(signature===previous&&at-lastEmit<30000)return false;
+      const line='[health] '+JSON.stringify(s)+'\n';
+      if(line.length<=2000)emit(line);
+      else {
+        // Keep each ASCII JSON record within one native slot, including worst-case counters.
+        const {audio,...core}=s;
+        emit('[health] '+JSON.stringify(core)+'\n');
+        emit('[health-audio] '+JSON.stringify({at:s.at,boot:s.boot,audio})+'\n');
+      }
+      previous=signature;lastEmit=at;return true;
+    }catch(_){return false;}
   };
 }
