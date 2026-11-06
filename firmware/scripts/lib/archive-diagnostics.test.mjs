@@ -102,3 +102,10 @@ test('audio pipeline snapshot separates PCM, upload, ASR and playback without ra
  assert.equal(snap.audio.uploadEnabled,false);assert.equal(snap.audio.lastASRAt,1100);assert.equal(snap.audio.lastInputAt,1200);assert.equal(snap.audio.sampleRate,24000);assert.equal(snap.audio.underruns,3);assert.equal(snap.audio.reconnectCount,2);assert.equal(snap.audio.overrunBytes,1920);assert.equal(snap.audio.phase,'thinking');assert.equal(snap.audio.playbackActive,false);
  assert.ok(!JSON.stringify(snap).includes('SECRET'));assert.ok(!JSON.stringify(snap).includes('PRIVATE'));
 });
+
+
+test('audio progress failures remain distinct from network and memory pressure',()=>{
+ assert.equal(memoryReasonCode('Microphone upload stalled'),'audio-upload-stalled');
+ assert.equal(memoryReasonCode('Microphone PCM stalled'),'audio-input-stalled');
+ assert.equal(diagnosticSnapshot({chat:{state:'retrying',detail:'Microphone upload stalled'}}).chat.failureClass,'audio-upload-stalled');
+});

@@ -66,6 +66,8 @@ export function servoReasonCode(reason) {
 
 export function memoryReasonCode(detail) {
   const value = String(detail || '').slice(0,220);
+  if (/Microphone upload stalled/i.test(value)) return 'audio-upload-stalled';
+  if (/Microphone PCM stalled/i.test(value)) return 'audio-input-stalled';
   if (/内蔵RAM|memory|allocat|opus encoder/i.test(value)) return 'memory-pressure';
   if (/\b401\b|\b403\b|unauthori[sz]ed|authentication/i.test(value)) return 'authentication';
   if (/timeout|network|dns|websocket|socket|connect/i.test(value)) return 'network';

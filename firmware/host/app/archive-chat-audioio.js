@@ -16,6 +16,13 @@ function pcmPeak(samples, stride = 1) {
   return peak
 }
 
+// Used only after the existing no-progress deadline has expired.
+export function audioStallReason(health, now) {
+  return health?.provider === 'xiaozhi' && health.lastInputAt > 0 && now >= health.lastInputAt && now - health.lastInputAt <= 20000
+    ? 'Microphone upload stalled'
+    : 'Microphone PCM stalled'
+}
+
 export default class ChatAudioIO extends ChatAudioIOBase {
   constructor(options = {}) {
     const providerID =
@@ -43,17 +50,40 @@ export default class ChatAudioIO extends ChatAudioIOBase {
     super.configureAudio(message)
   }
 
+  notifyMicrophoneActivity(active) {
+    // An old session must not repaint the current session's LED.
+    if (globalThis.stackchanAudioHealth === this.audioHealth) globalThis.stackchanMicrophoneActivity?.(active)
+  }
+
+  refreshMicrophoneActivity() {
+    if (this.closed) return
+    const health=this.audioHealth, now=Date.now()
+    const capturedAt=health?.lastInputAt??0, sentAt=health?.lastSentAt??0
+    const capturing=!!this.input&&!!this.microphone&&health?.input==='running'&&this.state===ChatAudioIO.SPEAKING&&capturedAt>0&&now>=capturedAt&&now-capturedAt<3000
+    this.notifyMicrophoneActivity(capturing&&(health.provider!=='xiaozhi'||(health.uploadEnabled&&sentAt>0&&now>=sentAt&&now-sentAt<3000)))
+  }
+
+  clearInputHealthMonitor() {
+    if(this.inputHealthTimer!==undefined){Timer.clear(this.inputHealthTimer);this.inputHealthTimer=undefined}
+  }
+
+  changeMicrophone(value) {
+    super.changeMicrophone(value)
+    this.refreshMicrophoneActivity()
+  }
+
   uploadState(message) {
     const health = this.audioHealth
     if (!health) return
     health.uploadEnabled = message.enabled === true
     if (Number.isSafeInteger(message.sentAt)) health.lastSentAt = message.sentAt
     if (Number.isSafeInteger(message.droppedBytes)) health.overrunBytes = message.droppedBytes
-    if (!health.uploadEnabled) globalThis.stackchanMicrophoneActivity?.(false)
+    this.refreshMicrophoneActivity()
   }
 
   ensureInput() {
     if (this.closed || this.input) return
+    this.clearInputHealthMonitor()
     this.closePlayback()
     this.output?.close()
     this.output = null
@@ -62,8 +92,13 @@ export default class ChatAudioIO extends ChatAudioIOBase {
       onReadable: () => this.captureInput(input),
     })
     this.input = input
-    if(this.audioHealth){this.audioHealth.input='running';this.audioHealth.output='closed'}
+    if(this.audioHealth){this.audioHealth.input='running';this.audioHealth.output='closed';this.audioHealth.lastInputAt=0}
     input.start()
+    // Expire green even if PCM callbacks stop altogether. One bounded timer,
+    // disposed before input replacement/output/close; no additional reconnect.
+    this.inputHealthTimer=Timer.repeat(()=>{
+      if(this.input===input)this.refreshMicrophoneActivity()
+    },1000)
   }
 
   captureInput(input) {
@@ -106,9 +141,10 @@ export default class ChatAudioIO extends ChatAudioIOBase {
     this.releaseAudio();this.state=ChatAudioIO.DISCONNECTED;this.onStateChanged(this.state)
   }
   releaseAudio(){
+    this.clearInputHealthMonitor()
     this.closePlayback()
     if(this.audioHealth){this.audioHealth.input='closed';this.audioHealth.output='closed';this.audioHealth.uploadEnabled=false}
-    globalThis.stackchanMicrophoneActivity?.(false)
+    this.notifyMicrophoneActivity(false)
     const input=this.input,output=this.output;this.input=null;this.output=null;this.ready=false
     try{input?.close()}finally{output?.close()}
   }
@@ -137,9 +173,10 @@ export default class ChatAudioIO extends ChatAudioIOBase {
 
   ensureOutput() {
     if (this.output) return
+    this.clearInputHealthMonitor()
     this.input?.close();this.input=null;this.ready=false
     if(this.audioHealth)this.audioHealth.input='closed'
-    globalThis.stackchanMicrophoneActivity?.(false)
+    this.notifyMicrophoneActivity(false)
     const rate=this.outputSampleRate||24000
     // Async inherits the SDK base class, bypassing CoreS3's synchronous wrapper.
     if(globalThis.amp)globalThis.amp.sampleRate=rate
@@ -256,11 +293,7 @@ export default class ChatAudioIO extends ChatAudioIOBase {
       postMessage: (message) => {
         if (message.id === 'sendAudio') {
           message = { ...message, channels: this.input?.channels ?? 1 }
-          const h=this.audioHealth
-          // XiaoZhi readiness requires recent worker-confirmed encoded upload,
-          // not just a successful write into the local PCM ring.
-          const transmitting=!usesNativePcmRing||(h.uploadEnabled&&h.lastSentAt>0&&Date.now()-h.lastSentAt<3000)
-          globalThis.stackchanMicrophoneActivity?.(transmitting)
+          this.refreshMicrophoneActivity()
         }
         if (message.id !== 'sendAudio' || !usesNativePcmRing) {
           worker.postMessage(message)

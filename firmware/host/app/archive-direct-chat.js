@@ -12,7 +12,7 @@ import Timer from 'timer'
 import { URL } from 'url'
 import { ChatService, createXiaozhiV1Connection, ChatState } from 'chat'
 import { DEFAULT_GEMINI_MODEL } from 'archive-gemini-protocol'
-import ArchiveChatAudioIO, {XiaoZhiRecognitionIO} from 'archive-chat-audioio'
+import ArchiveChatAudioIO, {XiaoZhiRecognitionIO,audioStallReason} from 'archive-chat-audioio'
 import {TTS as RecognitionTTS} from 'archive-offline-tts'
 import { Container, Label, Text, Skin, Style } from 'piu/MC'
 import { ActionButton } from 'ui-controls'
@@ -564,6 +564,8 @@ function closeChat() {
 }
 function failed(reason) {
   if (state === 'retrying') return
+  if(globalThis.stackchanAudioHealth&&/^Microphone (upload|PCM) stalled$/.test(String(reason)))
+    globalThis.stackchanAudioHealth.lastError=String(reason).includes('upload')?'upload-stalled':'input-stalled'
   failures++
   if (failures >= 2 && shouldRenewCloudIdentity(reason)) forceProvision = true
   const failedChat = chat,
@@ -1221,8 +1223,7 @@ export function requestListening(){
     chat.setMicrophoneEnabled(true)
     chat.startListening('auto')
     microphoneIndicator(false)
-    microphoneIndicator(true)
-    // Green LED is the cue; keep the mouth clear while listening.
+    // Wait for the input monitor and actual upload progress before lighting green.
   }else{
     // Restart a stalled/busy session without registering the person again or
     // generating a greeting over their first words.
@@ -1422,7 +1423,7 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
         failed('Native connection timed out')
         return
       }
-      if(state==='listening'&&microphoneAt&&Date.now()-microphoneAt>20000){failed('Microphone PCM stalled');return}
+      if(state==='listening'&&microphoneAt&&Date.now()-microphoneAt>20000){failed(audioStallReason(globalThis.stackchanAudioHealth,Date.now()));return}
       if (lastVolume !== robot.audio.volume) {
         lastVolume = robot.audio.volume
         chat.setVolume(lastVolume)
