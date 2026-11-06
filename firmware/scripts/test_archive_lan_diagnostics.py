@@ -13,6 +13,18 @@ spec.loader.exec_module(module)
 
 
 class LanDiagnosticsTests(unittest.TestCase):
+    def test_audio_snapshot(self):
+        audio = module.clean_snapshot({"schema": 1, "audio": {"provider": "xiaozhi", "input": "running",
+            "output": "closed", "worker": "running", "uploadEnabled": False,
+            "lastInputAt": 1200, "lastSentAt": 1000, "lastASRAt": 900,
+            "sampleRate": 24000, "underruns": 2, "overrunBytes": 1920,
+            "reconnectCount": 1, "lastError": "audio", "transcript": "SECRET"}})["audio"]
+        self.assertEqual(audio["lastSentAt"], 1000)
+        self.assertEqual(audio["underruns"], 2)
+        self.assertFalse(audio["uploadEnabled"])
+        self.assertEqual(audio["overrunBytes"], 1920)
+        self.assertNotIn("SECRET", json.dumps(audio))
+
     def test_lan_only(self):
         self.assertEqual(module.private_ip("192.168.2.102"), "192.168.2.102")
         for value in ("8.8.8.8", "127.0.0.1", "169.254.1.2",

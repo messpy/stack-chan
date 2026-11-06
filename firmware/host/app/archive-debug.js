@@ -66,6 +66,8 @@ export function servoReasonCode(reason) {
 
 export function memoryReasonCode(detail) {
   const value = String(detail || '').slice(0,220);
+  if (/Microphone upload stalled/i.test(value)) return 'audio-upload-stalled';
+  if (/Microphone PCM stalled/i.test(value)) return 'audio-input-stalled';
   if (/内蔵RAM|memory|allocat|opus encoder/i.test(value)) return 'memory-pressure';
   if (/\b401\b|\b403\b|unauthori[sz]ed|authentication/i.test(value)) return 'authentication';
   if (/timeout|network|dns|websocket|socket|connect/i.test(value)) return 'network';
@@ -110,6 +112,16 @@ export function diagnosticSnapshot({heap, chat, photo, debug, servo, resetCode, 
         shortfallFree:count(c.memoryAdmission.shortfallFree),
         shortfallLargest:count(c.memoryAdmission.shortfallLargest),
       } : null,
+    },
+    audio: {
+      phase: tag(c.audioPhase), provider: tag(c.pipeline?.provider), input: tag(c.pipeline?.input), output: tag(c.pipeline?.output),
+      worker: tag(c.pipeline?.worker), uploadEnabled: c.pipeline?.uploadEnabled === true,
+      lastInputAt: count(c.pipeline?.lastInputAt), lastSentAt: count(c.pipeline?.lastSentAt),
+      lastASRAt: count(c.audio?.lastTranscriptAt), overrunBytes: count(c.pipeline?.overrunBytes), overruns: count(c.pipeline?.overruns),
+      sampleRate: count(c.playback?.sampleRate), underruns: count(c.playback?.underruns),
+      bufferedMs: count(c.playback?.bufferedMs), queuedMs: count(c.playback?.queuedMs),
+      playbackActive: c.playback?.active === true, reconnectCount: count(c.reconnectCount),
+      lastError: tag(c.pipeline?.lastError),
     },
     photo: {
       phase: tag(p.phase), saved: p.saved === true,

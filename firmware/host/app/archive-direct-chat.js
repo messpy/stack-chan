@@ -12,7 +12,7 @@ import Timer from 'timer'
 import { URL } from 'url'
 import { ChatService, createXiaozhiV1Connection, ChatState } from 'chat'
 import { DEFAULT_GEMINI_MODEL } from 'archive-gemini-protocol'
-import ArchiveChatAudioIO, {XiaoZhiRecognitionIO} from 'archive-chat-audioio'
+import ArchiveChatAudioIO, {XiaoZhiRecognitionIO,audioStallReason} from 'archive-chat-audioio'
 import {TTS as RecognitionTTS} from 'archive-offline-tts'
 import { Container, Label, Text, Skin, Style } from 'piu/MC'
 import { ActionButton } from 'ui-controls'
@@ -243,6 +243,7 @@ function conversationInstructions() {
   )
 }
 
+let reconnectCount=0,connectionAttempts=0
 let micLit=false,microphoneAt=0,conversationLight='off'
 export function conversationIndicator(stage){
   if(conversationLight===stage)return
@@ -390,6 +391,9 @@ export function directChatStatus() {
     // Last admission attempt, not live free RAM; survives a retry for diagnostics.
     memoryAdmission:lastMemoryAdmission,
     playback:globalThis.stackchanPlaybackHealth||null,
+    pipeline:globalThis.stackchanAudioHealth||null,
+    reconnectCount,
+    audioPhase:conversationLight,
     busy: !!chat || connecting,
     phase: state,
   }
@@ -560,6 +564,8 @@ function closeChat() {
 }
 function failed(reason) {
   if (state === 'retrying') return
+  if(globalThis.stackchanAudioHealth&&/^Microphone (upload|PCM) stalled$/.test(String(reason)))
+    globalThis.stackchanAudioHealth.lastError=String(reason).includes('upload')?'upload-stalled':'input-stalled'
   failures++
   if (failures >= 2 && shouldRenewCloudIdentity(reason)) forceProvision = true
   const failedChat = chat,
@@ -702,6 +708,7 @@ async function connect() {
     return
   }
   if (!claim()) return
+  if(connectionAttempts++>0)reconnectCount++
   owned = true
   const ticket = ++generation
   connecting = true
@@ -892,6 +899,7 @@ async function connect() {
       callbacks: {
         onStateChanged(value, reason) {
           if (chat !== instance) return
+          if(value===ChatState.CONNECTED)try{markHeap('chat-connected',heapStatus(),trace)}catch(_){}
           if (value === ChatState.FAILED || value === ChatState.DISCONNECTED) {
             failed(reason)
             return
@@ -1215,8 +1223,7 @@ export function requestListening(){
     chat.setMicrophoneEnabled(true)
     chat.startListening('auto')
     microphoneIndicator(false)
-    microphoneIndicator(true)
-    // Green LED is the cue; keep the mouth clear while listening.
+    // Wait for the input monitor and actual upload progress before lighting green.
   }else{
     // Restart a stalled/busy session without registering the person again or
     // generating a greeting over their first words.
@@ -1321,7 +1328,7 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
   archive = saveTranscript
   claim = acquire
   release = done
-  globalThis.stackchanMicrophoneActivity=()=>{if(chat&&running()){microphoneAt=Date.now();microphoneIndicator(true)}}
+  globalThis.stackchanMicrophoneActivity=active=>{if(chat&&running()){if(active!==false)microphoneAt=Date.now();microphoneIndicator(active!==false)}}
   const controller=robot.ui.application.behavior, faceTouch=controller.onFaceTouch, launch=controller.launchMiniApp
   controller.launchMiniApp=function(...args){if(speakerStrip){robot.ui.removeEffect(speakerStrip);speakerStrip=undefined}return launch.apply(this,args)}
   controller.onFaceTouch=function(){faceTouch?.call(this);if(enabled())showSpeakerStrip()}
@@ -1416,7 +1423,7 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
         failed('Native connection timed out')
         return
       }
-      if(state==='listening'&&microphoneAt&&Date.now()-microphoneAt>20000){failed('Microphone PCM stalled');return}
+      if(state==='listening'&&microphoneAt&&Date.now()-microphoneAt>20000){failed(audioStallReason(globalThis.stackchanAudioHealth,Date.now()));return}
       if (lastVolume !== robot.audio.volume) {
         lastVolume = robot.audio.volume
         chat.setVolume(lastVolume)

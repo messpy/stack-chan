@@ -86,7 +86,14 @@ def clean_snapshot(value: object) -> dict:
     safe_reason = reason if type(reason) is int and 0 <= reason <= 100 else None
     uptime = boot.get("uptimeMs")
     safe_uptime = uptime if type(uptime) in (int, float) and 0 <= uptime < 1e14 else None
-    return {"boot": {"resetReasonCode": safe_reason, "uptimeMs": safe_uptime}, "heap": heap, "debug": debug,
+    raw_audio = value.get("audio") if isinstance(value.get("audio"), dict) else {}
+    audio = counters(raw_audio, ("lastInputAt", "lastSentAt", "lastASRAt", "overrunBytes",
+                                "sampleRate", "underruns", "overruns", "bufferedMs", "queuedMs", "reconnectCount"))
+    for key in ("provider", "input", "output", "worker", "lastError", "phase"):
+        audio[key] = safe_tag(raw_audio.get(key))
+    for key in ("uploadEnabled", "playbackActive"):
+        audio[key] = raw_audio.get(key) is True
+    return {"audio": audio, "boot": {"resetReasonCode": safe_reason, "uptimeMs": safe_uptime}, "heap": heap, "debug": debug,
         "servo": {"lastReadFailure": safe_tag(servo.get("lastReadFailure"))},
         "chat": {"state": safe_tag(chat.get("state")),
                  "provider": safe_tag(chat.get("provider")),

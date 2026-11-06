@@ -95,3 +95,17 @@ test('memory pressure is not displayed as a network disconnect',()=>{
   const policy=readFileSync(new URL('../../host/app/archive-memory-policy.js',import.meta.url),'utf8')
   assert.match(policy,/112 : 80/)
 })
+
+
+test('audio pipeline snapshot separates PCM, upload, ASR and playback without raw content',()=>{
+ const snap=diagnosticSnapshot({chat:{audioPhase:'thinking',reconnectCount:2,audio:{lastTranscriptAt:1100},pipeline:{provider:'xiaozhi',worker:'running',input:'running',output:'closed',uploadEnabled:false,lastInputAt:1200,lastSentAt:1000,overrunBytes:1920,lastError:'audio',token:'SECRET',transcript:'PRIVATE'},playback:{active:false,sampleRate:24000,underruns:3,bufferedMs:0,queuedMs:0}}});
+ assert.equal(snap.audio.uploadEnabled,false);assert.equal(snap.audio.lastASRAt,1100);assert.equal(snap.audio.lastInputAt,1200);assert.equal(snap.audio.sampleRate,24000);assert.equal(snap.audio.underruns,3);assert.equal(snap.audio.reconnectCount,2);assert.equal(snap.audio.overrunBytes,1920);assert.equal(snap.audio.phase,'thinking');assert.equal(snap.audio.playbackActive,false);
+ assert.ok(!JSON.stringify(snap).includes('SECRET'));assert.ok(!JSON.stringify(snap).includes('PRIVATE'));
+});
+
+
+test('audio progress failures remain distinct from network and memory pressure',()=>{
+ assert.equal(memoryReasonCode('Microphone upload stalled'),'audio-upload-stalled');
+ assert.equal(memoryReasonCode('Microphone PCM stalled'),'audio-input-stalled');
+ assert.equal(diagnosticSnapshot({chat:{state:'retrying',detail:'Microphone upload stalled'}}).chat.failureClass,'audio-upload-stalled');
+});
