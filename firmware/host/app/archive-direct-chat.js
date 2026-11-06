@@ -447,6 +447,7 @@ export function configureDirectChat(value) {
   return { configured: true }
 }
 export function setChatMode(on) {
+  globalThis.stackchanIdleActivity?.('mode-change')
   trace('[action] chat_mode requested='+(on?'on':'off')+'\n')
   if(on&&chatProvider()==='gemini'&&!getSettings().api?.gemini)throw new Error('Gemini APIキーを保存してください')
   if (on && chatProvider() === 'ollama' && (!getSettings().api?.ollama || (!usesXiaoZhiRecognition()&&!getSettings().api?.gemini)))
@@ -510,6 +511,7 @@ export function setChatMode(on) {
   return directChatStatus()
 }
 export function setRecognitionMode(on){
+  globalThis.stackchanIdleActivity?.('mode-change')
   trace('[action] recognition_mode requested='+(on?'on':'off')+'\n')
   if(typeof on!=='boolean')throw new Error('文字起こしのON/OFFを指定してください')
   const previousMode={chatMode:getSettings().chatMode,transcriptionMode:getSettings().transcriptionMode}

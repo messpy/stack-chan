@@ -121,6 +121,7 @@ async function cameraPreview(robot) {
 }
 async function photo(robot,args={},fromConversation=false) {
   if(photoActive || (busy&&!fromConversation))throw new Error('Camera busy');
+  globalThis.stackchanIdleActivity?.('camera');
   photoActive=true;
   try{markHeap('photo-start',heapStatus(),trace)}catch(_){}
   const photoStartedAt=Date.now();
@@ -302,7 +303,7 @@ export function startArchive(robot) {
       if(offlineStatus().playing||reminderStatus().ringing||(busy&&!directChatStatus().busy))throw new Error('本体で処理中です');
       const paused=pauseDirectChat();
       if(busy){if(paused)resumeDirectChat();throw new Error('本体で処理中です');}
-      closeOffline();busy=true;try{markHeap('monitor-start',heapStatus(),trace)}catch(_){}trace('[monitor] started\n');
+      globalThis.stackchanIdleActivity?.('monitor');closeOffline();busy=true;try{markHeap('monitor-start',heapStatus(),trace)}catch(_){}trace('[monitor] started\n');
     },
     release(){busy=false;try{markHeap('monitor-stop',heapStatus(),trace)}catch(_){}resumeDirectChat();trace('[monitor] stopped\n');},
     log:message=>trace('[head-jog] '+message+'\n'),
