@@ -155,3 +155,9 @@ test('health JSON remains complete within native slots at maximum diagnostic val
  assert.ok(lines.length>=1&&lines.length<=2);
  for(const line of lines){assert.ok(Buffer.byteLength(line)<2048);assert.doesNotThrow(()=>JSON.parse(line.slice(line.indexOf(' ')+1)));}
 })
+
+
+test('idle diagnostics retain only stage and counters',()=>{
+ const value=diagnosticSnapshot({idle:{stage:'drowsy',displayed:'drowsy',idleMs:600000,resetCount:2,lastActivityReason:'SECRET'}});
+ assert.equal(value.idle.stage,'drowsy');assert.equal(value.idle.idleMs,600000);assert.ok(!JSON.stringify(value).includes('SECRET'));
+});

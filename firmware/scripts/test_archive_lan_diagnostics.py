@@ -40,6 +40,14 @@ class LanDiagnosticsTests(unittest.TestCase):
         self.assertTrue(cleaned["network"]["connected"])
         self.assertNotIn("SECRET", json.dumps(cleaned))
 
+    def test_idle_allowlist(self):
+        cleaned = module.clean_snapshot({"schema": 1, "idle": {
+            "stage": "deep", "displayed": "deep", "idleMs": 1800000, "resetCount": 3,
+            "lastActivityReason": "SECRET"}})
+        self.assertEqual(cleaned["idle"]["stage"], "deep")
+        self.assertEqual(cleaned["idle"]["idleMs"], 1800000)
+        self.assertNotIn("SECRET", json.dumps(cleaned))
+
     def test_lan_only(self):
         self.assertEqual(module.private_ip("192.168.2.102"), "192.168.2.102")
         for value in ("8.8.8.8", "127.0.0.1", "169.254.1.2",

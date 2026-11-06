@@ -358,6 +358,8 @@ function providerNotice() {
   if (chatProvider() === 'ollama') return 'Ollama Cloudで返答生成。音声はGemini / Googleへ送信します。'
   return (chatProvider() === 'gemini' ? 'Gemini / Google' : 'XiaoZhi') + 'へON中はマイク音声を送信します。OFFで停止。'
 }
+// Lightweight idle-face gate: no settings/profile/heap reads on the 1Hz UI timer.
+export function chatIdleStatus(){return {state,audioPhase:conversationLight,busy:!!chat||connecting}}
 export function directChatStatus() {
   const provider = chatProvider()
   return {
@@ -958,7 +960,7 @@ async function connect() {
             failures = 0
             memoryFailures = 0
           }
-          if (value === ChatState.LISTENING || value === ChatState.WAITING) {state = 'speaking';microphoneIndicator(false)}
+          if (value === ChatState.LISTENING || value === ChatState.WAITING) {globalThis.stackchanIdleActivity?.('chat-output');state = 'speaking';microphoneIndicator(false)}
           trace('[direct-chat] state=' + value + '\n')
         },
         onMcpNotification(payload) {
@@ -981,6 +983,7 @@ async function connect() {
         },
         onInputTranscript(text, more) {
           if (chat !== instance) return
+          if (text) globalThis.stackchanIdleActivity?.('input-transcript')
           if (text) conversationIndicator(more ? 'transcribing' : 'thinking')
           else if (!more && input) conversationIndicator('thinking')
           input = (input + (text || '')).slice(-4096)
@@ -1231,6 +1234,7 @@ export async function provisionDirectChat() {
   return { configured: true }
 }
 export function requestListening(){
+  globalThis.stackchanIdleActivity?.('listen-request')
   robot.hideBalloon()
   lastSubtitle=''
   if(!enabled())setChatMode(true)
