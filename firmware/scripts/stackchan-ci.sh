@@ -164,7 +164,18 @@ if command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet "$
   systemctl --user stop "$SERVICE" || fatal "USB管理サービス停止失敗"
   HUB_STOPPED=1
 fi
-BACKUP="$BACKUPS/core-s3-$(date +%Y%m%d-%H%M%S)-$$.bin"
+if command -v fuser >/dev/null 2>&1; then
+  PORT_USERS=$(fuser "$PORT" 2>/dev/null)
+  if [ -n "$PORT_USERS" ]; then
+    echo "[WARN] USBシリアルポートが他のプロセスによって使用されています"
+    fuser -v "$PORT" 2>&1
+    echo "[INFO] 対象プロセスを確認してください: ps -fp PID"
+    fatal "ポート占有を検出しました。バックアップ・書き込みは行いません"
+  fi
+else
+  echo "[WARN] fuserがないためポート占有の事前検査は省略します"
+fi
+BACKUP="$BACKUPS/core-s3-$(date +%Y%m%d-%H%M%S)-$.bin"
 [ ! -e "$BACKUP" ] || fatal "バックアップ名が衝突しました"
 "$ESPTOOL" --chip esp32s3 --port "$PORT" read_flash 0 0x1000000 "$BACKUP" ||
   fatal "16MiB読取失敗。書き込みは行いません"
