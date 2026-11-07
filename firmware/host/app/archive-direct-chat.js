@@ -702,6 +702,15 @@ async function connect() {
       if (chat !== instance&&!recognitionTurnCurrent()) throw new Error('会話が切り替わりました')
       if (name === 'camera_describe') {
         if (!photoHandler) throw new Error('Camera unavailable')
+        // The active Opus/TLS session keeps internal SRAM below what the
+        // camera driver needs.  Never allocate the native camera while voice
+        // is running: this previously failed during new ImageInCamera().
+        // Explicit photo commands take the separate audio-release path.
+        if (chat === instance) {
+          trace('[vision] camera_describe blocked during active voice; use local photo handoff\n')
+          traceConversation('CAMERA_BLOCKED', 'voice session active')
+          return {error:'音声会話中はカメラを安全に起動できません。写真撮影は「写真撮って」と短く話してください。'}
+        }
         const result = await photoHandler(args)
         return result.analysis?.status === 'complete'
           ? { photo: result.image, description: result.analysis.text }
