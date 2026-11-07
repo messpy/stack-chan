@@ -20,4 +20,10 @@ export interface RobotCamera {
   stop(): Promise<void> | void
   close?(): Promise<void> | void
   capture(options?: CameraCaptureOptions): Promise<CameraFrame | undefined>
+  /**
+   * Optional still-photo fast path. The processor runs synchronously on the
+   * camera capture completion callback, before a second async return boundary.
+   * The processor must not return a Promise or retain the disposable frame.
+   */
+  captureWithProcessor?<T>(options: CameraCaptureOptions, processor: (frame: CameraFrame) => T): Promise<T>
 }
