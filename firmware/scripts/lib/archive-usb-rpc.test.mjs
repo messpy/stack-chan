@@ -5,7 +5,7 @@ import {readFileSync} from 'node:fs'
 const source=readFileSync(new URL('../../host/app/archive-usb-rpc.js',import.meta.url),'utf8')
 const {createUSBRpcPump}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'))
 const policyText=readFileSync(new URL('../../host/app/archive-memory-policy.js',import.meta.url),'utf8')
-const {checkCameraMemory}=await import('data:text/javascript;base64,'+Buffer.from(policyText).toString('base64'))
+const {checkCameraMemory,waitForCameraMemory}=await import('data:text/javascript;base64,'+Buffer.from(policyText).toString('base64'))
 
 const settle=async()=>{for(let i=0;i<5;i++)await Promise.resolve()}
 function fixture(execute,options={}) {
@@ -103,6 +103,26 @@ test('camera SRAM preflight blocks voice-reserved RAM and fragmented memory',()=
   assert.throws(()=>checkCameraMemory({}),/確認できません/)
   assert.doesNotThrow(()=>checkCameraMemory({internalFree:143000,internalLargest:40960}))
 })
+test('bounded camera memory wait retries collection and fails closed if still low',async()=>{
+  let time=0,reads=0,collects=0
+  const heap=await waitForCameraMemory({
+    read:()=>++reads<3?{internalFree:64999,internalLargest:31744}:{internalFree:143000,internalLargest:40960},
+    collect:()=>collects++,
+    delay:async(ms)=>{time+=ms},
+    now:()=>time,timeoutMs:500,pollMs:100
+  })
+  assert.equal(heap.internalFree,143000)
+  assert.equal(reads,3)
+  assert.equal(collects,3)
+  assert.equal(time,200)
+  time=0
+  await assert.rejects(()=>waitForCameraMemory({
+    read:()=>({internalFree:64999,internalLargest:31744}),
+    delay:async ms=>{time+=ms},
+    now:()=>time,timeoutMs:200,pollMs:100
+  }),/内蔵RAM/)
+  assert.equal(time,200)
+})
 test('archive keeps both camera routes behind memory check and reports per-stage status',()=>{
   const archive=readFileSync(new URL('../../host/app/lan-archive.js',import.meta.url),'utf8')
   const direct=readFileSync(new URL('../../host/app/archive-direct-chat.js',import.meta.url),'utf8')
@@ -110,8 +130,8 @@ test('archive keeps both camera routes behind memory check and reports per-stage
   assert.match(manifest,/"archive-usb-rpc"/)
   assert.match(archive,/createUSBRpcPump\(/)
   assert.match(archive,/inspect:\(op,pending\)/)
-  assert.match(archive,/request\.op==='\/photo'[\s\S]*?checkCameraMemory\(heapStatus\(\)\)/)
-  assert.match(direct,/checkCameraMemory\(heapStatus\(\)\)[\s\S]*?photoHandler\(\{analyze:false\}\)/)
+  assert.match(archive,/request\.op==='\/photo'[\s\S]*?waitForCameraMemory\(\{/)
+  assert.match(direct,/waitForCameraMemory\(\{[\s\S]*?photoHandler\(\{analyze:false\}\)/)
   for(const phase of ['CAMERA_START','CAMERA_CAPTURE','JPEG_START','JPEG_DONE','SD_SAVE_START','CAMERA_SAVE','FRAME_RELEASE','CAMERA_CLOSE','CAMERA_CLOSED'])
     assert.match(archive,new RegExp("markPhotoPhase\\('"+phase+"'\\)"))
 })
