@@ -5,6 +5,7 @@ export const rebootUSB = native('xs_archive_usb_reboot');
 
 // Fail-safe for native camera/JPEG/SD hangs; 60s timer runs outside the JS VM.
 export const photoRecoveryWatchdog = native('xs_archive_photo_watchdog');
+export const photoRecoveryTriggered = native('xs_archive_photo_watchdog_triggered');
 
 export const convertRGB24 = native('xs_archive_rgb24');
 
