@@ -238,10 +238,28 @@ fi
 if command -v fuser >/dev/null 2>&1; then
   PORT_USERS=$(fuser "$PORT" 2>/dev/null)
   if [ -n "$PORT_USERS" ]; then
-    echo "[WARN] USBシリアルポートが他のプロセスによって使用されています"
+    echo "[WARN] USBシリアルポートの占有を検出"
     fuser -v "$PORT" 2>&1
-    echo "[INFO] 対象プロセスを確認してください: ps -fp PID"
-    fatal "ポート占有を検出しました。バックアップ・書き込みは行いません"
+    for PID in $PORT_USERS; do
+      CMD=$(ps -p "$PID" -o args= 2>/dev/null)
+      case "$CMD" in
+        *serial.tools.miniterm*)
+          echo "[CHECK] 終了可能なminiterm PID=$PID"
+          confirm "診断用miniterm PID=$PID を終了してバックアップに進みますか？"
+          kill -TERM "$PID" || fatal "miniterm PID=$PID の終了に失敗"
+          ;;
+        *)
+          echo "[ERROR] 未確認の占有プロセス PID=$PID: $CMD"
+          fatal "miniterm以外のプロセスを自動終了しません"
+          ;;
+      esac
+    done
+    sleep 2
+    if fuser "$PORT" >/dev/null 2>&1; then
+      fuser -v "$PORT" 2>&1
+      fatal "USBポート占有が解消されません。バックアップは未開始"
+    fi
+    echo "[CHECK] USBポート解放"
   fi
 else
   echo "[WARN] fuserがないためポート占有の事前検査は省略します"
