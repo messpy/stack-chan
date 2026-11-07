@@ -1,6 +1,6 @@
 import {headDirectionFromText} from 'archive-head-motion'
 import {directPhotoRequest} from 'archive-direct-photo'
-import {heapStatus,collectMemory,photoRecoveryCheckpoint} from 'archive-usb'
+import {heapStatus,collectMemory,photoRecoveryCheckpoint,photoRecoveryWatchdog} from 'archive-usb'
 import {traceConversation} from 'archive-debug'
 import {checkVoiceMemory,waitForCameraMemory,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
 import { ollamaChat, ollamaModel, validOllamaModel, geminiTextChat, DEFAULT_GEMINI_TEXT_MODEL, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
@@ -887,9 +887,14 @@ async function connect() {
                 return
               }
               Timer.set(async () => {
-                let released=false
+                let released=false,earlyGuard=false,photoStarted=false
                 try {
                   if (chat!==instance || !running()) return
+                  // The guard must cover synchronous closing of the active
+                  // voice session, not only native camera/JPEG work.
+                  photoRecoveryWatchdog(true)
+                  earlyGuard=true
+                  photoRecoveryCheckpoint(1)
                   beginCameraHandoff()
                   released=true
                   try {collectMemory()} catch(_) {}
@@ -898,6 +903,7 @@ async function connect() {
                     read:heapStatus,collect:collectMemory,now:()=>Time.ticks,
                     delay:ms=>new Promise(resolve=>Timer.set(resolve,ms))
                   })
+                  photoStarted=true
                   const photo=await photoHandler({analyze:false})
                   const saved=!!photo?.image
                   if (saved) archive('output','写真を撮影してSDカードに保存しました。',undefined,photo.image)
@@ -908,6 +914,9 @@ async function connect() {
                   traceConversation('LOCAL_PHOTO_ERROR', String(e?.name||'Error'))
                   robot.showBalloon('写真を撮影できませんでした。')
                 } finally {
+                  if(earlyGuard&&!photoStarted){
+                    try{photoRecoveryWatchdog(false)}catch(error){trace('[vision] early watchdog disarm failed\n')}
+                  }
                   if(released){
                     finishCameraHandoff()
                     trace('[vision] camera freed; voice reconnect scheduled\n')
