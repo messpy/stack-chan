@@ -3,6 +3,8 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import Mock, patch
+from urllib.error import HTTPError, URLError
 
 path = Path(__file__).with_name('archive-voice-photo-e2e.py')
 spec = importlib.util.spec_from_file_location('stackchan_voice_photo_e2e', path)
@@ -66,6 +68,59 @@ class VoicePhotoE2ETests(unittest.TestCase):
         self.assertIsNone(item['lastInputAt'])
         self.assertIsNone(item['lastSentAt'])
         self.assertIsNone(item['lastASRAt'])
+
+    def test_read_only_lan_retry_then_success(self):
+        class Reply:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self, size): return b'{"chat":{}}'
+        dev = mod.Device('192.168.2.102', 'TOKEN_PRIVATE')
+        fake = Mock()
+        fake.open.side_effect = [URLError(TimeoutError()), Reply()]
+        dev.opener = fake
+        with patch.object(mod.time,'sleep') as sleeper:
+            result = dev.request('/status')
+        self.assertEqual(result, {'chat': {}})
+        self.assertEqual(fake.open.call_count, 2)
+        sleeper.assert_called_once()
+
+    def test_lan_401_auth_failure_no_retry(self):
+        dev = mod.Device('192.168.2.102', 'TOKEN_PRIVATE')
+        fake = Mock()
+        fake.open.side_effect = HTTPError('http://192.168.2.102:8082/status', 401,
+                                          'Unauthorized', {}, None)
+        dev.opener = fake
+        with patch.object(mod.time,'sleep') as sleeper:
+            with self.assertRaises(mod.DeviceConnectionError) as ctx:
+                dev.request('/status')
+        self.assertIn('401',str(ctx.exception))
+        self.assertNotIn('TOKEN_PRIVATE',str(ctx.exception))
+        fake.open.assert_called_once()
+        sleeper.assert_not_called()
+
+    def test_lan_post_does_not_retry(self):
+        dev = mod.Device('192.168.2.102', 'TOKEN_PRIVATE')
+        fake = Mock()
+        fake.open.side_effect = URLError(ConnectionRefusedError())
+        dev.opener = fake
+        with patch.object(mod.time,'sleep') as sleeper:
+            with self.assertRaises(mod.DeviceConnectionError):
+                dev.request('/rpc', {'op':'/chat/start','args':{}})
+        fake.open.assert_called_once()
+        sleeper.assert_not_called()
+
+    def test_lan_get_retry_exhaustion(self):
+        dev = mod.Device('192.168.2.102', 'TOKEN_PRIVATE')
+        fake = Mock()
+        fake.open.side_effect = URLError(ConnectionRefusedError())
+        dev.opener = fake
+        with patch.object(mod.time,'sleep') as sleeper:
+            with self.assertRaises(mod.DeviceConnectionError) as ctx:
+                dev.request('/diagnostics')
+        self.assertIn('attempts=4',str(ctx.exception))
+        self.assertEqual(fake.open.call_count, 4)
+        self.assertEqual(sleeper.call_count, 3)
 
     def test_private_ipv4_only(self):
         self.assertEqual(mod.device_ip('192.168.2.102'),'192.168.2.102')
