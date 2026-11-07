@@ -23,9 +23,9 @@ export function checkCameraMemory(heap) {
   // native error propagation and the independent 60-second photo watchdog.
   const free=heap?.internalFree,largest=heap?.internalLargest,psram=heap?.psramFree;
   if(!Number.isFinite(free)||!Number.isFinite(largest)||!Number.isFinite(psram))
-    throw new Error('カメラのRAM状態を確認できません');
+    throw new Error('カメラの内蔵RAM/PSRAM状態を確認できません');
   if(free<96*1024||largest<30*1024||psram<1024*1024)
-    throw new Error('カメラ用RAMが不足しています（内部 '+free+' / 連続 '+largest+' / PSRAM '+psram+' バイト）。音声解放後も不足しているため撮影を中止します');
+    throw new Error('カメラ用の内蔵RAM/PSRAMが不足しています（内部 '+free+' / 連続 '+largest+' / PSRAM '+psram+' バイト）。音声解放後も不足しているため撮影を中止します');
 }
 
 export async function waitForCameraMemory({read,collect,delay,now=Date.now,timeoutMs=1500,pollMs=150}) {
