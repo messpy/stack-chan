@@ -126,6 +126,7 @@ export function diagnosticSnapshot({heap, chat, photo, debug, servo, resetCode, 
     photo: {
       phase: tag(p.phase), saved: p.saved === true,
       errorStage: p.errorStage == null ? null : tag(p.errorStage),
+      errorReasonClass: p.errorReasonClass == null ? null : tag(p.errorReasonClass),
       active: p.active === true,
     },
     servo: {lastReadFailure: tag(servo?.lastReadFailure || 'none')},
