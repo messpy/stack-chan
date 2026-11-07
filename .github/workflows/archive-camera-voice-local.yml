@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - fix/archive-photo-local-voice-dispatch-20261105
+      - fix/issue33-camera-audio-handoff-20261107
   pull_request:
     branches:
       - fix/archive-pr45-startup-private-manifest-20261105
       - fix/archive-photo-local-voice-dispatch-20261105
+      - fix/audio-integrity-20261105
     paths:
       - 'firmware/host/app/archive-*.js'
       - 'firmware/host/modules/audio/async-output/**'
