@@ -1,6 +1,6 @@
 import {headDirectionFromText} from 'archive-head-motion'
 import {directPhotoRequest} from 'archive-direct-photo'
-import {heapStatus,collectMemory} from 'archive-usb'
+import {heapStatus,collectMemory,photoRecoveryCheckpoint} from 'archive-usb'
 import {traceConversation} from 'archive-debug'
 import {checkVoiceMemory,waitForCameraMemory,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
 import { ollamaChat, ollamaModel, validOllamaModel, geminiTextChat, DEFAULT_GEMINI_TEXT_MODEL, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
@@ -473,7 +473,9 @@ function closeChat() {
   const old = chat
   chat = undefined
   try {
+    if(photoHandoffActive){photoRecoveryCheckpoint(4);trace('[vision] native voice close begin\n')}
     old?.close()
+    if(photoHandoffActive){photoRecoveryCheckpoint(5);trace('[vision] native voice close done\n')}
   } catch (_) {}
   try {
     unlock?.()
@@ -1031,7 +1033,11 @@ export function beginCameraHandoff() {
   if (photoHandoffActive) throw new Error('カメラ撮影中です')
   photoHandoffActive=true
   try {
+    photoRecoveryCheckpoint(2)
+    trace('[vision] camera audio release begin\n')
     pauseDirectChat()
+    photoRecoveryCheckpoint(6)
+    trace('[vision] camera audio release done\n')
     state=running()?'waiting':'off'
     retryAt=Date.now()+60000
     trace('[vision] camera handoff locked\n')
