@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 clear
 umask 077
-# Run from any directory: bash scripts/stackchan-ci.sh test|build|flash|status [--yes]
+# Run from any directory: bash scripts/stackchan-ci.sh test|build|flash|voicevox|status [--yes]
 STEP="PREFLIGHT"
 MODE="$1"
 AUTO_YES=0
@@ -19,6 +19,8 @@ if [ -n "$STACKCHAN_BACKUP_DIR" ]; then BACKUPS="$STACKCHAN_BACKUP_DIR"; fi
 SERVICE="stackchan-hub.service"
 if [ -n "$STACKCHAN_HUB_SERVICE" ]; then SERVICE="$STACKCHAN_HUB_SERVICE"; fi
 HUB_STOPPED=0
+VOICEVOX_SCRIPT="/home/kmac/work/camera-voicevox/speak.py"
+if [ -n "$STACKCHAN_VOICEVOX_SCRIPT" ]; then VOICEVOX_SCRIPT="$STACKCHAN_VOICEVOX_SCRIPT"; fi
 fatal() {
   echo "[FATAL] STEP=$STEP $1" >&2
   if [ -t 0 ]; then read -r -p "Enterで終了: " _; fi
@@ -37,19 +39,38 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+run_voicevox() {
+  STEP="VOICEVOX"
+  echo "[CHECK] STEP=$STEP kmacのVOICEVOX音声テスト"
+  if [ ! -f "$VOICEVOX_SCRIPT" ]; then
+    echo "[WARN] VOICEVOXスクリプトがありません: $VOICEVOX_SCRIPT" >&2
+    return 2
+  fi
+  command -v python3 >/dev/null 2>&1 || { echo "[ERROR] Python3がありません" >&2; return 3; }
+  echo "[ACTION] VOICEVOXで日本語を読み上げます（kmac側の音声出力）"
+  python3 "$VOICEVOX_SCRIPT" "スタックチャンの書き込みが完了しました。ボイスボックスの音声テストです。" || {
+    echo "[ERROR] VOICEVOX読み上げに失敗しました" >&2
+    return 1
+  }
+  echo "[CHECK] VOICEVOXコマンド正常終了。実際の音声は耳で確認してください"
+}
 
 case "$MODE" in
   help|-h|--help|'')
-    echo "Usage: bash scripts/stackchan-ci.sh {test|build|flash|status} [--yes]"
-    echo "test=単体テスト build=テスト+ビルド flash=16MiBバックアップ+書き込み status=結果確認"
+    echo "Usage: bash scripts/stackchan-ci.sh {test|build|flash|voicevox|status} [--yes]"
+    echo "test=単体テスト build=テスト+ビルド flash=16MiBバックアップ+書き込み+VOICEVOX voicevox=kmac単体音声テスト status=結果確認"
     exit 0
     ;;
-  test|build|flash|status) ;;
+  test|build|flash|voicevox|status) ;;
   *) fatal "不明なモード: $MODE";;
 esac
 [ -z "$3" ] || fatal "引数が多すぎます"
 if [ -n "$2" ] && [ "$2" != "--yes" ]; then fatal "第2引数は --yes のみ対応"; fi
 cd "$FW" || fatal "firmwareディレクトリがありません"
+if [ "$MODE" = "voicevox" ]; then
+  run_voicevox || fatal "VOICEVOXテスト失敗"
+  exit 0
+fi
 if [ "$MODE" = "status" ]; then
   STEP="STATUS"
   echo "[CHECK] 最新の実行結果"
@@ -175,7 +196,7 @@ if command -v fuser >/dev/null 2>&1; then
 else
   echo "[WARN] fuserがないためポート占有の事前検査は省略します"
 fi
-BACKUP="$BACKUPS/core-s3-$(date +%Y%m%d-%H%M%S)-$.bin"
+BACKUP="$BACKUPS/core-s3-$(date +%Y%m%d-%H%M%S)-$$.bin"
 [ ! -e "$BACKUP" ] || fatal "バックアップ名が衝突しました"
 "$ESPTOOL" --chip esp32s3 --port "$PORT" read_flash 0 0x1000000 "$BACKUP" ||
   fatal "16MiB読取失敗。書き込みは行いません"
@@ -191,3 +212,10 @@ export UPLOAD_PORT="$PORT"
 bash scripts/update-archive.sh --flash-only ||
   fatal "書き込み失敗。バックアップは $BACKUP です"
 echo "[CHECK] 書き込み処理成功。会話・カメラの実機検証は未完了"
+if [ -f "$VOICEVOX_SCRIPT" ]; then
+  if ! run_voicevox; then
+    echo "[WARN] VOICEVOXテストは失敗しましたが、ファームウェア書き込みは成功済みです"
+  fi
+else
+  echo "[WARN] VOICEVOXテストは未実行です。スクリプトがありません: $VOICEVOX_SCRIPT"
+fi
