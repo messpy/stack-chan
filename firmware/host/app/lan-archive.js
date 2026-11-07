@@ -97,11 +97,27 @@ async function photo(robot,args={},fromConversation=false) {
   frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});if(!frame)throw new Error('No camera frame');
   traceConversation('CAMERA_CAPTURE','ok '+frame.width+'x'+frame.height);
   const tag=id(),name='photo-'+tag+'.jpg',image=name;
-  jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');save(image,[jpeg]);
+  trace('[photo] jpeg encode begin\n');
+  traceConversation('JPEG_START',frame.width+'x'+frame.height);
+  jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
+  trace('[photo] jpeg encode done bytes='+jpeg.byteLength+'\n');
+  traceConversation('JPEG_DONE','bytes='+jpeg.byteLength);
+  trace('[photo] sd save begin\n');
+  traceConversation('SD_SAVE_START',image);
+  save(image,[jpeg]);
+  trace('[photo] sd save done\n');
   traceConversation('CAMERA_SAVE',image+' bytes='+jpeg.byteLength);
   result={name,image,width:frame.width,height:frame.height};
- }catch(e){traceConversation('CAMERA_ERROR',String(e?.name||'Error')+' '+String(e?.message||'').slice(0,180));throw e;}
- finally{try{frame?.close?.();}finally{try{robot.camera.close();}finally{busy=wasBusy;}}}
+ }catch(e){trace('[photo] failed type='+String(e?.name||'Error').slice(0,48)+'\n');traceConversation('CAMERA_ERROR',String(e?.name||'Error')+' '+String(e?.message||'').slice(0,180));throw e;}
+ finally{
+  trace('[photo] frame release begin\n');
+  try{frame?.close?.();trace('[photo] frame release done\n');}
+  finally{
+   trace('[photo] camera close begin\n');
+   try{await robot.camera.close();trace('[photo] camera close done\n');}
+   finally{busy=wasBusy;}
+  }
+ }
  if(args.analyze!==false)Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
  return result;
 }
