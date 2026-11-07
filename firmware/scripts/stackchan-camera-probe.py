@@ -24,18 +24,60 @@ def request(port, token, ident, op, args, timeout=20):
     port.write(("@SC " + json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"))
     port.flush()
     deadline = time.monotonic() + timeout
+    debug_count = 0
+    last_stage = "-"
     while time.monotonic() < deadline:
         raw = port.readline()
+        if not raw:
+            continue
         if not raw.startswith(b"@SC "):
+            # Only print recognized boot/reset indicators; never echo arbitrary serial data.
+            line = raw.decode("utf-8", errors="replace").strip()
+            if line.startswith(("rst:", "Guru Meditation", "Brownout detector")):
+                print("[WARN] STEP=BOOT " + line[:160], flush=True)
             continue
         try:
             response = json.loads(raw[4:])
         except (ValueError, UnicodeError):
             continue
-        if not isinstance(response, dict) or response.get("id") != ident:
+        if not isinstance(response, dict):
             continue
+        if response.get("event") == "debug":
+            debug_count += 1
+            lines = response.get("lines")
+            if not isinstance(lines, list):
+                continue
+            for line in lines[:8]:
+                if not isinstance(line, str):
+                    continue
+                # Never expose ASR transcripts or chat text from USB.
+                if line.startswith("[dialog] "):
+                    parts = line.split(" ", 4)
+                    kind = parts[2] if len(parts) >= 3 else "?"
+                    if kind in {
+                        "CAMERA_START", "CAMERA_CAPTURE", "JPEG_START",
+                        "JPEG_DONE", "SD_SAVE_START", "CAMERA_SAVE",
+                        "CAMERA_ERROR", "LOCAL_PHOTO_DONE", "LOCAL_PHOTO_ERROR",
+                    }:
+                        last_stage = kind
+                        print("[CHECK] STEP=CAMERA_EVENT " + kind, flush=True)
+                    continue
+                if line.startswith(("[camera]", "[runtime-camera]", "[photo]", "[TouchPanel]")):
+                    last_stage = line.split("]", 1)[0][1:] + ": " + line.split("]", 1)[1].strip()[:110]
+                    print("[INFO] " + line.replace("\r", " ").replace("\n", " ").strip()[:175], flush=True)
+            continue
+        if response.get("event") == "fatal":
+            reason = str(response.get("reason", "?")).replace("\n", " ")[:90]
+            detail = str(response.get("detail", "?")).replace("\n", " ")[:120]
+            print("[ERROR] STEP=FATAL reason=" + reason + " detail=" + detail, flush=True)
+            last_stage = "FATAL"
+            continue
+        if response.get("id") != ident:
+            continue
+        print(f"[CHECK] STEP=RPC op={op} response=yes debugEvents={debug_count}", flush=True)
         return response
-    fatal("USB", f"{op} の応答がありません。ポート・ファームウェアの状態を確認してください")
+    fatal("USB", f"{op} の応答がありません。debugEvents={debug_count} lastStage={last_stage}。"
+                 "本体が処理中または停止している可能性があります")
 
 def print_status(response, stage):
     if "error" in response:
