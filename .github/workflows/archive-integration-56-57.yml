@@ -6,6 +6,7 @@ on:
       - test/pr56-pr57-core-s3-20261107
     paths:
       - 'firmware/host/app/archive-*.js'
+      - 'firmware/host/app/lan-archive.js'
       - 'firmware/host/app/manifest_local.json'
       - 'firmware/host/app/archive-usb.c'
       - 'firmware/host/modules/camera/device/camera.ts'
