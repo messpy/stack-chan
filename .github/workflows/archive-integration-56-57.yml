@@ -11,6 +11,7 @@ on:
       - 'firmware/host/modules/camera/device/camera.ts'
       - 'firmware/host/app/runtime-camera.ts'
       - 'firmware/scripts/lib/archive-camera-lifecycle.test.mjs'
+      - 'firmware/scripts/lib/archive-usb-rpc.test.mjs'
       - 'firmware/scripts/lib/archive-camera-polling.test.mjs'
       - 'firmware/scripts/stackchan-ci.sh'
       - 'firmware/scripts/stackchan-camera-probe.py'
@@ -42,7 +43,8 @@ jobs:
             firmware/scripts/lib/archive-usb-psram.test.mjs \
             firmware/scripts/lib/archive-direct-photo.test.mjs \
             firmware/scripts/lib/archive-camera-polling.test.mjs \
-            firmware/scripts/lib/archive-camera-lifecycle.test.mjs
+            firmware/scripts/lib/archive-camera-lifecycle.test.mjs \
+            firmware/scripts/lib/archive-usb-rpc.test.mjs
       - name: Preserve admission guard
         run: node firmware/scripts/lib/archive-memory-policy.test.mjs
       - name: Check shell and Python syntax
