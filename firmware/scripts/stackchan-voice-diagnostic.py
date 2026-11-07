@@ -54,6 +54,12 @@ def summarize(data):
             heap=memory.get("internalFree", "?"),
         ), flush=True
     )
+    if chat.get("state") not in ("listening", "speaking"):
+        for key in ("error", "detail"):
+            value = chat.get(key)
+            if value:
+                normalized = str(value).replace("\r", " ").replace("\n", " ")[:160]
+                print(f"[WARN] connection_{key}={normalized}", flush=True)
 
 def main():
     ap = argparse.ArgumentParser()
