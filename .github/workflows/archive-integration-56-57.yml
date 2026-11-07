@@ -48,6 +48,8 @@ jobs:
             firmware/scripts/lib/archive-usb-rpc.test.mjs
       - name: Preserve admission guard
         run: node firmware/scripts/lib/archive-memory-policy.test.mjs
+      - name: Validate CoreS3 two-frame SDK camera patch
+        run: python3 firmware/scripts/lib/patch-core-s3-camera.test.py
       - name: Parse JavaScript modules and manifests
         run: |
           node --check firmware/host/app/archive-usb-rpc.js
@@ -58,7 +60,7 @@ jobs:
           python3 -m json.tool firmware/host/app/manifest_archive.example.json > /dev/null
       - name: Check shell and Python syntax
         run: |
-          bash -n firmware/scripts/stackchan-ci.sh
-          python3 -m py_compile firmware/scripts/stackchan-camera-probe.py firmware/scripts/stackchan-voice-diagnostic.py
+          bash -n firmware/scripts/stackchan-ci.sh firmware/scripts/update-archive.sh
+          python3 -m py_compile firmware/scripts/stackchan-camera-probe.py firmware/scripts/stackchan-voice-diagnostic.py firmware/scripts/patch-core-s3-camera.py
       - name: Check patch whitespace
         run: git diff --check HEAD^ HEAD
