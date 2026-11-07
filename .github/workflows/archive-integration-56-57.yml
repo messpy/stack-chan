@@ -13,6 +13,7 @@ on:
       - 'firmware/scripts/stackchan-ci.sh'
       - 'firmware/scripts/lib/archive-usb-psram.test.mjs'
       - 'firmware/scripts/lib/archive-conversation-log.test.mjs'
+      - 'firmware/scripts/lib/archive-direct-photo.test.mjs'
       - 'firmware/scripts/lib/archive-memory-policy.test.mjs'
       - '.github/workflows/archive-integration-56-57.yml'
   workflow_dispatch:
