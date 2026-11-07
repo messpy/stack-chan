@@ -43,17 +43,41 @@ trap cleanup EXIT
 run_voicevox() {
   STEP="VOICEVOX"
   echo "[CHECK] STEP=$STEP kmacのVOICEVOX音声テスト"
-  if [ ! -f "$VOICEVOX_SCRIPT" ]; then
-    echo "[WARN] VOICEVOXスクリプトがありません: $VOICEVOX_SCRIPT" >&2
-    return 2
-  fi
+  [ -f "$VOICEVOX_SCRIPT" ] || { echo "[ERROR] スクリプトなし: $VOICEVOX_SCRIPT" >&2; return 2; }
   command -v python3 >/dev/null 2>&1 || { echo "[ERROR] Python3がありません" >&2; return 3; }
-  echo "[ACTION] VOICEVOXで日本語を読み上げます（kmac側の音声出力）"
-  python3 "$VOICEVOX_SCRIPT" "スタックチャンの書き込みが完了しました。ボイスボックスの音声テストです。" || {
-    echo "[ERROR] VOICEVOX読み上げに失敗しました" >&2
+  AUDIO_DIR="$(dirname "$VOICEVOX_SCRIPT")/audio"
+  MARKER=$(mktemp) || { echo "[ERROR] 新規WAV検出の準備失敗" >&2; return 3; }
+  if command -v pactl >/dev/null 2>&1; then
+    echo "[INFO] PCの既定の出力先=$(pactl get-default-sink 2>/dev/null || echo unavailable)"
+  fi
+  echo "[ACTION] VOICEVOXで日本語を生成します（kmac側）"
+  if ! python3 "$VOICEVOX_SCRIPT" "スタックチャンの書き込みが完了しました。ボイスボックスの音声テストです。"; then
+    rm -f "$MARKER"
+    echo "[ERROR] VOICEVOXスクリプト失敗" >&2
     return 1
-  }
-  echo "[CHECK] VOICEVOXコマンド正常終了。実際の音声は耳で確認してください"
+  fi
+  WAV=""
+  if [ -d "$AUDIO_DIR" ]; then
+    WAV=$(find "$AUDIO_DIR" -maxdepth 1 -type f -name '*.wav' -newer "$MARKER" -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)
+  fi
+  rm -f "$MARKER"
+  if [ -z "$WAV" ] || [ ! -s "$WAV" ]; then
+    echo "[WARN] 新しいWAVが $AUDIO_DIR に見つかりません。speak.pyが実際に再生したかは確認できません" >&2
+    return 4
+  fi
+  echo "[CHECK] 新規WAV=$(basename "$WAV")"
+  for PLAYER in pw-play paplay aplay; do
+    if command -v "$PLAYER" >/dev/null 2>&1; then
+      echo "[ACTION] $PLAYER で新規WAVを明示再生"
+      if "$PLAYER" "$WAV"; then
+        echo "[CHECK] PC音声再生コマンド成功。実際に聞こえたかはPCの出力先を確認してください"
+        return 0
+      fi
+      echo "[WARN] $PLAYER 失敗。次のプレイヤーを試行"
+    fi
+  done
+  echo "[ERROR] 再生失敗。pw-play/paplay/aplayまたはPCの音声出力設定を確認" >&2
+  return 5
 }
 
 case "$MODE" in
