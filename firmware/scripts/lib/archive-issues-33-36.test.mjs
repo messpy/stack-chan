@@ -5,6 +5,7 @@ import vm from 'node:vm'
 
 const direct = readFileSync(new URL('../../host/app/archive-direct-chat.js', import.meta.url), 'utf8')
 const lan = readFileSync(new URL('../../host/app/lan-archive.js', import.meta.url), 'utf8')
+const deviceCamera = readFileSync(new URL('../../host/modules/camera/device/camera.ts', import.meta.url), 'utf8')
 const volume = readFileSync(new URL('../../host/app/archive-volume.js', import.meta.url), 'utf8')
 
 const intentions = direct.slice(
@@ -16,7 +17,11 @@ const cameraIntent = vm.runInNewContext(intentions + '\n({explicitVisualRequest,
 test('explicit photo commands are recognized, negated and casual mentions are rejected', () => {
   assert.equal(cameraIntent.explicitVisualRequest('写真撮って'), true)
   assert.equal(cameraIntent.directPhotoRequest('写真を撮ってください'), true)
-  for (const message of ['写真を撮らないで', 'カメラで見ないで', '写真について教えて', 'こんにちは', '撮影するな']) {
+  for (const message of ['スタックチャン、写真を撮って', '写真を1枚撮って', 'カメラで写真を撮って', 'ねえ、写真を撮って']) {
+    assert.equal(cameraIntent.explicitVisualRequest(message), true, message)
+    assert.equal(cameraIntent.directPhotoRequest(message), true, message)
+  }
+  for (const message of ['写真を撮らないで', 'カメラで見ないで', '写真について教えて', 'こんにちは', '撮影するな', '昨日写真を撮ってと言われた']) {
     assert.equal(cameraIntent.explicitVisualRequest(message), false, message)
     assert.equal(cameraIntent.directPhotoRequest(message), false, message)
   }
@@ -24,8 +29,25 @@ test('explicit photo commands are recognized, negated and casual mentions are re
   assert.equal(cameraIntent.directPhotoRequest('この写真を見て'), false)
 })
 
+const failureCode = lan.slice(lan.indexOf('function cameraFailureClass('),lan.indexOf('let lastError=',lan.indexOf('function cameraFailureClass(')))
+const cameraFailureClass=vm.runInNewContext(failureCode+'\ncameraFailureClass')
 const photoSource = lan.slice(lan.indexOf('async function photo('), lan.indexOf('async function describeImage(', lan.indexOf('async function photo(')))
 assert.ok(photoSource.startsWith('async function photo('), 'photo implementation exists')
+test('device camera closes the native object even when stop fails',()=>{
+  const section=deviceCamera.slice(deviceCamera.indexOf('  #closeCamera(): void {'),deviceCamera.indexOf('  #startCamera(): void {'))
+  assert.match(section,/try\s*\{\s*this\.\#stopCamera\(\)/)
+  assert.match(section,/catch \(error\)/)
+  assert.match(section,/camera\?\.close\(\)/)
+  assert.match(section,/this\.\#camera = undefined/)
+})
+
+test('camera errors are classified without exposing native messages',()=>{
+  assert.equal(cameraFailureClass(Error('alloc failed')),'memory')
+  assert.equal(cameraFailureClass(Error('SCCB bus error')),'sensor-bus')
+  assert.equal(cameraFailureClass(Error('Camera busy')),'busy')
+  assert.equal(cameraFailureClass(Error('camera timed out')),'timeout')
+  assert.equal(cameraFailureClass(Error('unexplained')),'unknown')
+})
 
 function photoHarness(options = {}) {
   const events = []
@@ -34,6 +56,7 @@ function photoHarness(options = {}) {
     photoActive: false,
     photoDiagnostics: {phase:'idle',saved:false},
     Date, trace: () => undefined, id: () => '42',
+    cameraFailureClass,
     encodeJPEG: () => new Uint8Array([1, 2, 3]),
     save: () => events.push('save'),
     describeImage: async () => ({ analysis: { status: 'complete', text: '確認' } }),
@@ -53,6 +76,7 @@ function photoHarness(options = {}) {
       return { buffer: new ArrayBuffer(4), width: 176, height: 144, imageType: 'rgb565le', close: () => events.push('close') }
     },
     async stop() { events.push('stop'); if (options.failStop) throw Error('stop failed') },
+    async close() { events.push('camera-close') },
   }}
   return { context, robot, events, resume, photo: vm.runInNewContext(photoSource + '\nphoto', context) }
 }
@@ -112,9 +136,11 @@ test('camera failures still try stop and release the lock', async () => {
     assert.equal(h.context.photoActive, false)
     assert.equal(h.context.busy, false)
     assert.ok(h.events.includes('stop'))
+    assert.ok(h.events.includes('camera-close'), 'failed camera must release its native resource')
     assert.equal(h.context.photoDiagnostics.phase,'error')
     assert.equal(h.context.photoDiagnostics.saved,option.failStop===true)
     assert.ok(h.context.photoDiagnostics.errorStage)
+    assert.equal(h.context.photoDiagnostics.errorReasonClass,'unknown')
   }
 })
 
@@ -193,8 +219,10 @@ function voicePhotoHarness({standalone, recognitionOnly}) {
   const instance = {}
   const context = {
     chat: instance, instance, input: '', introText: '',
-    standalone, recognitionOnly, state:'listening',retryAt:0,closed:0,
+    standalone, recognitionOnly, state:'listening',retryAt:0,closed:0,collected:0,
     closeChat(){ context.chat=undefined; context.closed++ },
+    collectMemory(){ context.collected++ },
+    markHeap(){},heapStatus(){return {internalFree:65536}},
     enrollment: {active: false},
     audioStats: {recognizedEvents: 0,lastTranscriptAt: 0},
     lastInputId: '', trace() {}, conversationIndicator() {},
@@ -210,7 +238,7 @@ function voicePhotoHarness({standalone, recognitionOnly}) {
     headHandled: undefined, visualAllowedUntil: 0,
     photoTurn: undefined, volumeTurn: undefined, volumeAllowedUntil: 0,
     async photoHandler(args) {
-      photos.push(args)
+      photos.push({...args, sessionActive:context.chat===instance})
       return {image: 'photo-new.jpg'}
     },
     running() { return true },
@@ -235,14 +263,14 @@ test('direct photo saves locally and records linked history in all voice modes',
     await new Promise(resolve=>setImmediate(resolve))
     assert.equal(h.photos.length,1,'no duplicate captures')
     assert.equal(h.photos[0].analyze,false,'photo-only request must not upload to AI')
+    assert.equal(h.photos[0].sessionActive,false,'native camera must not start with an audio session')
+    assert.equal(h.context.collected,1,'GC is requested after releasing Opus/WebSocket')
     assert.equal(h.records.filter(row=>row.role==='output'&&row.image==='photo-new.jpg').length,1)
     assert.equal(h.scheduled.length,0,'direct photo must not launch another LLM turn')
     assert.ok(h.balloons.some(x=>x.includes('SDカードに保存')))
-    assert.equal(h.context.closed,mode.recognitionOnly?1:0,'XiaoZhi ASR transport must be released')
-    if(mode.recognitionOnly){
-      assert.equal(h.context.state,'waiting')
-      assert.ok(h.context.retryAt>Date.now(),'ASR reconnect must be scheduled')
-    }
+    assert.equal(h.context.closed,1,'every direct-photo mode must release the native audio session')
+    assert.equal(h.context.state,'waiting')
+    assert.ok(h.context.retryAt>Date.now(),'ASR/chat reconnect must be scheduled')
   }
 })
 
@@ -277,17 +305,23 @@ test('local photo handler keeps analysis opt-out and skips a second vision uploa
 })
 
 
-test('failed photo still restores recognition transport and displays a failure', async () => {
-  const h=voicePhotoHarness({standalone:true,recognitionOnly:true})
-  h.context.photoHandler=async()=>{throw Error('native camera unavailable')}
-  h.run('写真撮って',false)
-  await assert.rejects(h.context.photoTurn.promise,/native camera unavailable/)
-  await new Promise(resolve=>setImmediate(resolve))
-  assert.equal(h.context.closed,1)
-  assert.equal(h.context.state,'waiting')
-  assert.ok(h.context.retryAt>Date.now())
-  assert.ok(h.balloons.some(text=>text.includes('撮影できませんでした')))
-  assert.equal(h.records.filter(row=>row.role==='output').length,0)
+test('failed direct photo restores audio in all modes and reports one local failure', async () => {
+  for(const mode of [
+    {standalone:true,recognitionOnly:true},
+    {standalone:false,recognitionOnly:true},
+    {standalone:false,recognitionOnly:false},
+  ]){
+    const h=voicePhotoHarness(mode)
+    h.context.photoHandler=async()=>{throw Error('native camera unavailable')}
+    h.run('写真撮って',false)
+    await assert.rejects(h.context.photoTurn.promise,/native camera unavailable/)
+    await new Promise(resolve=>setImmediate(resolve))
+    assert.equal(h.context.closed,1)
+    assert.equal(h.context.state,'waiting')
+    assert.ok(h.context.retryAt>Date.now())
+    assert.equal(h.balloons.filter(text=>text.includes('撮影できませんでした')).length,1)
+    assert.equal(h.records.filter(row=>row.role==='output').length,0)
+  }
 })
 
 

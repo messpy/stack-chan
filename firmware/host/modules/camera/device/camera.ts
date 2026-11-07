@@ -154,13 +154,34 @@ export default class Camera implements RobotCamera {
   }
 
   #closeCamera(): void {
-    if (this.#camera) trace('[camera] close\n')
-    this.#stopCamera()
-    if (this.#camera) trace('[camera] native close begin\n')
-    this.#camera?.close()
-    if (this.#camera) trace('[camera] native close done\n')
-    this.#camera = undefined
-    this.#running = false
+    const camera = this.#camera
+    if (camera) trace('[camera] close\n')
+    let failure: unknown
+    // A failing native stop must not prevent native close, otherwise a later
+    // photo may inherit the same half-initialized camera and scarce DMA memory.
+    try {
+      this.#stopCamera()
+    } catch (error) {
+      failure = error
+      trace('[camera] native stop failed during close\n')
+    }
+    try {
+      if (camera) trace('[camera] native close begin\n')
+      camera?.close()
+      if (camera) trace('[camera] native close done\n')
+    } catch (error) {
+      if (!failure) failure = error
+      trace('[camera] native close failed\n')
+    } finally {
+      // Drop references even when native cleanup failed, so no stale object
+      // will be reused on the next attempt.
+      const pending = this.#frame
+      this.#frame = undefined
+      this.#camera = undefined
+      this.#running = false
+      try { closeFrame(pending) } catch (error) { if (!failure) failure = error }
+    }
+    if (failure) throw failure
   }
 
   #startCamera(): void {

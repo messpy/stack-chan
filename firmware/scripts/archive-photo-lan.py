@@ -17,7 +17,7 @@ from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHand
 
 
 SAFE_FIELDS = ("phase", "startedAt", "finishedAt", "elapsedMs",
-               "active", "saved", "analysisStatus", "errorStage", "errorType",
+               "active", "saved", "analysisStatus", "errorStage", "errorType", "errorReasonClass",
                "width", "height", "frameBytes", "jpegBytes")
 
 

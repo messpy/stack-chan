@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - fix/archive-photo-local-voice-dispatch-20261105
+      - fix/issue33-camera-audio-handoff-20261107
   pull_request:
     branches:
       - fix/archive-pr45-startup-private-manifest-20261105
       - fix/archive-photo-local-voice-dispatch-20261105
+      - fix/audio-integrity-20261105
     paths:
       - 'firmware/host/app/archive-*.js'
       - 'firmware/host/modules/audio/async-output/**'
@@ -45,6 +47,7 @@ jobs:
         run: |
           node --check firmware/host/app/archive-direct-chat.js
           node --check firmware/host/app/lan-archive.js
+          bash -n firmware/scripts/kmac-pr55-acceptance.sh
       - name: Photo and voice-mode integration regression
         run: |
           node --experimental-vm-modules --test \
@@ -64,6 +67,10 @@ jobs:
       - name: Read-only photo LAN and legacy manifest regressions
         run: |
           python3 -m unittest discover -s firmware/scripts -p 'test_archive_photo_lan.py' -v
+          python3 -m unittest discover -s firmware/scripts -p 'test_archive_voice_photo_e2e.py' -v
+          python3 -m unittest discover -s firmware/scripts -p 'test_kmac_voicevox_mic_check.py' -v
+          python3 -m py_compile firmware/scripts/kmac-voicevox-mic-check.py
+          python3 -m py_compile firmware/scripts/archive-voice-photo-e2e.py
           python3 -m unittest discover -s firmware/scripts -p 'test_archive_private_manifest_preflight.py' -v
           bash -n firmware/scripts/kmac-pr39.sh
           python3 -m unittest discover -s firmware/scripts -p 'test_voice_e2e.py' -v

@@ -62,12 +62,16 @@ let robot,
 function explicitVisualRequest(text) {
   const normalized=String(text||'').replace(/[\s、。！？!?]/g,'');
   if(/(?:撮らない|撮るな|撮影しない|撮影するな|見ないで|写さない|映さない|やめて|禁止)/.test(normalized))return false;
+  // Authorization must end in a current imperative, not a quoted or historical
+  // mention such as "昨日写真を撮ってと言われた" (Issue #33 unsolicited camera).
   return /(?:写真|撮影|カメラ|画像|映像|目の前|これ|ここ)/.test(normalized)
-    && /(?:撮って|とって|撮影して|見て|確認して|映して|写して|見せて)/.test(normalized);
+    && /(?:撮って|とって|撮影して|見て|確認して|映して|写して|見せて)(?:ください|お願い)?(?:ね|よ)?$/.test(normalized);
 }
 function directPhotoRequest(text) {
   const normalized=String(text||'').replace(/[\s、。！？!?]/g,'');
-  return /^(?:(?:写真|カメラ)(?:を|で)?(?:撮って|とって|撮影して)|撮影して)(?:ください|お願い|ね|よ)?$/.test(normalized);
+  // The full utterance must be a positive command. Accept bounded address/quantity forms,
+  // never a quoted history sentence or arbitrary text containing camera keywords.
+  return /^(?:ねえ|ねぇ|スタックチャン|スタックちゃん)?(?:カメラで)?(?:(?:写真|カメラ)(?:を|で)?(?:1枚|一枚)?(?:撮って|とって|撮影して)|撮影して)(?:ください|お願い|ね|よ)?$/.test(normalized);
 }
 // Only imperative user requests can authorize a cloud-driven volume change.
 function volumeRequest(text) {
@@ -1044,22 +1048,27 @@ async function connect() {
               } else {
                 trace('[vision] direct photo dispatch mode='+
                   (standalone?'transcription':recognitionOnly?'recognition-transport':'conversation')+'\n');
-                // Recognition-only XiaoZhi aborts its stream at final STT. Free
-                // Opus/audio ownership before camera allocation, then reconnect.
-                let pausedRecognition=false;
+                // All direct voice photos must relinquish their native audio/WebSocket
+                // session before camera allocation. This used to happen only in
+                // recognition-only mode, leaving XiaoZhi conversation's Opus/TLS
+                // buffers live at camera-start (Issue #33).
+                let releasedForPhoto=false;
                 const promise=Promise.resolve().then(()=>{
-                  if(recognitionOnly&&chat===instance){
+                  if(chat===instance){
                     closeChat();
                     state='waiting';
+                    // Do not reconnect while the camera owns scarce internal RAM.
                     retryAt=Date.now()+120000;
-                    pausedRecognition=true;
-                    trace('[vision] recognition transport released for capture\n');
+                    releasedForPhoto=true;
+                    trace('[vision] audio session released for capture\n');
+                    try{collectMemory()}catch(_){trace('[vision] photo memory cleanup unavailable\n')}
+                    try{markHeap('photo-audio-released',heapStatus(),trace)}catch(_){}
                   }
                   return photoHandler({question:recognized,analyze:false});
                 });
                 photoTurn={expires:Date.now()+12000,promise};
                 function finishLocalPhoto(){
-                  if(!pausedRecognition||!running()||chat)return;
+                  if(!releasedForPhoto||!running()||chat)return;
                   state='waiting';
                   retryAt=Date.now()+1000;
                   trace('[vision] recognition reconnect scheduled\n');
@@ -1071,7 +1080,7 @@ async function connect() {
                     // Link the saved photo to the normal conversation history, without
                     // storing a raw image or posting it to an external vision service.
                     if(saved)archive('output','写真を撮影してSDカードに保存しました。',undefined,result.image);
-                    if((chat===instance||pausedRecognition)&&running())
+                    if((chat===instance||releasedForPhoto)&&running())
                       showConversationBalloon(saved?'写真を撮影してSDカードに保存しました。':
                         '写真を撮影できませんでした。');
                     finishLocalPhoto();
@@ -1079,7 +1088,7 @@ async function connect() {
                   error=>{
                     const reason=String(error?.name||'Error').replace(/[^A-Za-z0-9_]/g,'').slice(0,30);
                     trace('[vision] direct photo failed type='+reason+'\n');
-                    if((chat===instance||pausedRecognition)&&running())
+                    if((chat===instance||releasedForPhoto)&&running())
                       showConversationBalloon('写真を撮影できませんでした。カメラとSDカードの状態を確認してください。');
                     finishLocalPhoto();
                   }
