@@ -35,6 +35,7 @@ assert.ok(photoSource.startsWith('async function photo('), 'photo implementation
 test('camera errors are classified without exposing native messages',()=>{
   assert.equal(cameraFailureClass(Error('alloc failed')),'memory')
   assert.equal(cameraFailureClass(Error('SCCB bus error')),'sensor-bus')
+  assert.equal(cameraFailureClass(Error('Camera busy')),'busy')
   assert.equal(cameraFailureClass(Error('camera timed out')),'timeout')
   assert.equal(cameraFailureClass(Error('unexplained')),'unknown')
 })
