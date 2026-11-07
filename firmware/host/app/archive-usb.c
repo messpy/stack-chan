@@ -65,6 +65,28 @@ void xs_archive_usb_reboot(xsMachine *the) { usb_serial_jtag_wait_tx_done(pdMS_T
 #define SC_PHOTO_WATCHDOG_US 60000000LL
 #define SC_PHOTO_RECOVERY_MAGIC 0x53435048U
 static RTC_NOINIT_ATTR uint32_t sc_photo_recovery_cookie;
+/* Numeric phase survives a photo watchdog software restart without retaining
+ * conversation text, credentials, or other private data in RTC memory. */
+#define SC_PHOTO_STAGE_MAGIC 0x53435053U
+static RTC_NOINIT_ATTR uint32_t sc_photo_stage_magic;
+static RTC_NOINIT_ATTR uint32_t sc_photo_stage;
+void xs_archive_photo_checkpoint(xsMachine *the) {
+    int stage = xsmcToInteger(xsArg(0));
+    if (stage < 0 || stage > 255)
+        xsRangeError("Invalid photo checkpoint");
+    sc_photo_stage_magic = SC_PHOTO_STAGE_MAGIC;
+    sc_photo_stage = (uint32_t)stage;
+}
+void xs_archive_photo_last_checkpoint(xsMachine *the) {
+    int stage = -1;
+    if (sc_photo_recovery_cookie == SC_PHOTO_RECOVERY_MAGIC &&
+        esp_reset_reason() == ESP_RST_SW &&
+        sc_photo_stage_magic == SC_PHOTO_STAGE_MAGIC &&
+        sc_photo_stage <= 255)
+        stage = (int)sc_photo_stage;
+    xsmcSetInteger(xsResult, stage);
+}
+
 static esp_timer_handle_t sc_photo_watchdog_timer;
 static void sc_photo_watchdog_fire(void *arg) {
     (void)arg;
@@ -80,6 +102,8 @@ void xs_archive_photo_watchdog(xsMachine *the) {
     }
     // New photo attempt clears the previous guard-firing marker.
     sc_photo_recovery_cookie = 0;
+    sc_photo_stage_magic = SC_PHOTO_STAGE_MAGIC;
+    sc_photo_stage = 0;
     if (!sc_photo_watchdog_timer) {
         const esp_timer_create_args_t args = {
             .callback = sc_photo_watchdog_fire,
