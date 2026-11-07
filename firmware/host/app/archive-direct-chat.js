@@ -1,6 +1,8 @@
 import {headDirectionFromText} from 'archive-head-motion'
-import {heapStatus,collectMemory} from 'archive-usb'
-import {checkVoiceMemory,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
+import {directPhotoRequest} from 'archive-direct-photo'
+import {heapStatus,collectMemory,photoRecoveryCheckpoint,photoRecoveryWatchdog} from 'archive-usb'
+import {traceConversation} from 'archive-debug'
+import {checkVoiceMemory,waitForCameraMemory,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
 import { ollamaChat, ollamaModel, validOllamaModel, geminiTextChat, DEFAULT_GEMINI_TEXT_MODEL, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
 import { VoiceRegistration, enrollmentInstructions, explicitSpeakerName, registrationName } from 'archive-speaker-registration'
 import { speakerButtons } from 'archive-button-schema'
@@ -8,6 +10,7 @@ import { startSpeakerChooser, openSpeakerChooser } from 'archive-speaker-ui'
 import { setXiaoZhiVision, setVisionProvisioner } from 'archive-xiaozhi-vision'
 import { visionTools } from 'archive-vision'
 import Timer from 'timer'
+import Time from 'time'
 import { URL } from 'url'
 import { ChatService, createXiaozhiV1Connection, ChatState } from 'chat'
 import { DEFAULT_GEMINI_MODEL } from 'archive-gemini-protocol'
@@ -57,6 +60,8 @@ let robot,
   owned = false
 let refreshAITalk
 let photoHandler, modeChanged
+// Prevent the reconnect timer (2s cadence) from racing camera DMA/JPEG/SD.
+let photoHandoffActive=false
 let greetingPending = true,
   conversationProviderSeen,
   introText = ''
@@ -468,7 +473,9 @@ function closeChat() {
   const old = chat
   chat = undefined
   try {
+    if(photoHandoffActive){photoRecoveryCheckpoint(4);trace('[vision] native voice close begin\n')}
     old?.close()
+    if(photoHandoffActive){photoRecoveryCheckpoint(5);trace('[vision] native voice close done\n')}
   } catch (_) {}
   try {
     unlock?.()
@@ -613,7 +620,7 @@ async function provision() {
   trace('[direct-chat] cloud configuration renewed\n')
 }
 async function connect() {
-  if (connecting || chat || !running()) return
+  if (photoHandoffActive || connecting || chat || !running()) return
   if (enrollment.phase === 'confirming') return
   if (!getSettingsStatus().connected) {
     state = 'waiting'
@@ -700,6 +707,15 @@ async function connect() {
       if (chat !== instance&&!recognitionTurnCurrent()) throw new Error('会話が切り替わりました')
       if (name === 'camera_describe') {
         if (!photoHandler) throw new Error('Camera unavailable')
+        // The active Opus/TLS session keeps internal SRAM below what the
+        // camera driver needs.  Never allocate the native camera while voice
+        // is running: this previously failed during new ImageInCamera().
+        // Explicit photo commands take the separate audio-release path.
+        if (chat === instance) {
+          trace('[vision] camera_describe blocked during active voice; use local photo handoff\n')
+          traceConversation('CAMERA_BLOCKED', 'voice session active')
+          return {error:'音声会話中はカメラを安全に起動できません。写真撮影は「写真撮って」と短く話してください。'}
+        }
         const result = await photoHandler(args)
         return result.analysis?.status === 'complete'
           ? { photo: result.image, description: result.analysis.text }
@@ -748,7 +764,7 @@ async function connect() {
         const answer=text===null?(currentSpeaker()?'こんにちは。またお話ししよう。':'あなたは誰？お名前を教えて。'):
           await (provider==='ollama'?ollamaChat:geminiTextChat)([{role:'system',content:conversationInstructions()},{role:'user',content:text}],Object.values(tools),executeTool,isCurrent);
         if(!isCurrent())return
-        archive('output',answer);if(conversationStage==='greeting')advanceConversation('conversation');
+        traceConversation('AI_RESPONSE',answer);archive('output',answer);if(conversationStage==='greeting')advanceConversation('conversation');
         lastSubtitle=answer;robot.showBalloon(answer,{bottom:40,height:24,paddingY:4,holdMs:60000});state='speaking';conversationIndicator('off');
         const speech=new RecognitionTTS({volume:robot.audio.volume});recognitionSpeech=speech;
         await new Promise((resolve,reject)=>speech.stream(answer,robot.audio.volume,e=>e?reject(e):resolve()));
@@ -843,6 +859,7 @@ async function connect() {
               return
             }
             trace('[asr] final chars='+input.length+'\n')
+            traceConversation('ASR_FINAL',input)
             const event = archive('input', input)
             lastInputId = event?.id || ''
             if(standalone){
@@ -859,6 +876,55 @@ async function connect() {
               }catch(_){trace('[speaker] introduction needs clarification\n')}
             }
             const recognized=input;input = ''
+            // CoreS3's camera needs internal DMA/driver RAM. Do not initialize
+            // it while XiaoZhi, Opus and TLS own the voice session (#33/#40).
+            // Only an affirmative complete photo command takes this local path.
+            if (directPhotoRequest(recognized)) {
+              trace('[vision] explicit local photo requested; release voice before camera\n')
+              traceConversation('LOCAL_PHOTO_START', 'voice session handoff')
+              if (!photoHandler) {
+                robot.showBalloon('カメラを利用できません。')
+                return
+              }
+              Timer.set(async () => {
+                let released=false,earlyGuard=false,photoStarted=false
+                try {
+                  if (chat!==instance || !running()) return
+                  // The guard must cover synchronous closing of the active
+                  // voice session, not only native camera/JPEG work.
+                  photoRecoveryWatchdog(true)
+                  earlyGuard=true
+                  photoRecoveryCheckpoint(1)
+                  beginCameraHandoff()
+                  released=true
+                  try {collectMemory()} catch(_) {}
+                  await new Promise(resolve=>Timer.set(resolve,200))
+                  await waitForCameraMemory({
+                    read:heapStatus,collect:collectMemory,now:()=>Time.ticks,
+                    delay:ms=>new Promise(resolve=>Timer.set(resolve,ms))
+                  })
+                  photoStarted=true
+                  const photo=await photoHandler({analyze:false})
+                  const saved=!!photo?.image
+                  if (saved) archive('output','写真を撮影してSDカードに保存しました。',undefined,photo.image)
+                  traceConversation('LOCAL_PHOTO_DONE', saved ? 'saved' : 'no image')
+                  robot.showBalloon(saved?'写真を撮影してSDカードに保存しました。':'写真を撮影できませんでした。')
+                } catch(e) {
+                  trace('[vision] explicit photo error type='+String(e?.name||'Error').slice(0,32)+'\n')
+                  traceConversation('LOCAL_PHOTO_ERROR', String(e?.name||'Error'))
+                  robot.showBalloon('写真を撮影できませんでした。')
+                } finally {
+                  if(earlyGuard&&!photoStarted){
+                    try{photoRecoveryWatchdog(false)}catch(error){trace('[vision] early watchdog disarm failed\n')}
+                  }
+                  if(released){
+                    finishCameraHandoff()
+                    trace('[vision] camera freed; voice reconnect scheduled\n')
+                  }
+                }
+              },0)
+              return
+            }
             // A short, explicit physical command should not depend on whether
             // the cloud chooses a function call or only speaks an acknowledgement.
             if (!standalone && !recognitionOnly) {
@@ -881,6 +947,7 @@ async function connect() {
           if (!more && output) {
             if (!enrollment.active) {
               trace('[llm] output_final chars='+output.length+'\n')
+              traceConversation('AI_RESPONSE',output)
               archive('output', output)
               if(conversationStage==='greeting')advanceConversation('conversation')
               lastSubtitle=output
@@ -893,6 +960,7 @@ async function connect() {
           if (chat !== instance || enrollment.active) return
           conversationIndicator('thinking')
           trace('[chat-tool] begin '+name+'\n')
+          traceConversation('TOOL_START',name)
           Promise.resolve()
             .then(async () => {
               if (provider === 'ollama' && name === 'ollama_reply') {
@@ -918,13 +986,15 @@ async function connect() {
               }
               return executeTool(name, args)
             })
-            .then((result) => {
+             .then((result) => {
+              traceConversation('TOOL_DONE',name+' status='+(result?.error?'error':'ok'))
               if(name==='conversation_identify'&&result?.message)try{robot.showBalloon(result.message,{bottom:40,height:24,paddingY:4,holdMs:10000})}catch(_){trace('[speaker] result display unavailable\n')}
               return chat === instance ? instance.sendFunctionResult(call, name, result) : undefined
             })
             .catch((e) => {
               if (chat !== instance) return
               trace('[chat-tool] failed '+name+'\n')
+              traceConversation('TOOL_ERROR',name)
               let message = '道具を実行できませんでした'
               if (provider === 'ollama' || memoryTools.some(t=>t.name===name)) {
                 message = String(e.message || message)
@@ -963,7 +1033,36 @@ export function pauseDirectChat() {
   return false
 }
 export function resumeDirectChat() {
+  if (photoHandoffActive) return
   if (running()) retryAt = 0
+}
+// Photo handoff is exclusive. Never reconnect while native camera or SD owns
+// resources, even if capture exceeds the ordinary 30-second retry delay.
+export function beginCameraHandoff() {
+  if (photoHandoffActive) throw new Error('カメラ撮影中です')
+  photoHandoffActive=true
+  try {
+    photoRecoveryCheckpoint(2)
+    trace('[vision] camera audio release begin\n')
+    pauseDirectChat()
+    photoRecoveryCheckpoint(6)
+    trace('[vision] camera audio release done\n')
+    state=running()?'waiting':'off'
+    retryAt=Date.now()+60000
+    trace('[vision] camera handoff locked\n')
+  } catch(error) {
+    photoHandoffActive=false
+    throw error
+  }
+}
+export function finishCameraHandoff() {
+  if(!photoHandoffActive)return
+  photoHandoffActive=false
+  if(running()) {
+    state='waiting'
+    retryAt=Date.now()+1000
+  }
+  trace('[vision] camera handoff released\n')
 }
 export async function provisionDirectChat() {
   await provision()
@@ -1123,7 +1222,7 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
   // Restore saved conversation mode; credentials must not turn an explicit OFF on.
   Timer.set(()=>restoreConversationOnBoot(onBoot),1000)
   Timer.repeat(() => {
-    if (!running()) return
+    if (!running() || photoHandoffActive) return
     if (chat) {
       if (signature() !== connectionSignature) {
         closeChat()

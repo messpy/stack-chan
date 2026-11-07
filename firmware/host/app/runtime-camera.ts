@@ -1,4 +1,4 @@
-import type { RobotCamera } from 'camera'
+import type { CameraCaptureOptions, CameraFrame, RobotCamera } from 'camera'
 
 const NULL_CAMERA: RobotCamera = {
   available: false,
@@ -108,26 +108,35 @@ export class StackchanRuntimeCamera implements RobotCamera {
   }
 
   close(): Promise<void> | void {
-    const finish = () => {
-      const result = this.#camera.close?.()
-      const done = () => {
-        traceMessage('[runtime-camera] close done\n')
+    const done = () => {
+      traceMessage('[runtime-camera] close done\n')
+      this.#cameraActive = false
+      // The touch sensor shares CoreS3 internal I2C pins with camera SCCB.
+      // Never restart it until the native camera has released its bus.
+      this.#resumeTouchPanel()
+    }
+    const fail = (error: unknown): never => {
+      this.#cameraActive = false
+      this.#resumeTouchPanel()
+      throw error
+    }
+    const finish = (): Promise<void> | void => {
+      try {
+        const result = this.#camera.close?.()
+        if (isThenable(result)) return result.then(() => done(), fail)
+        done()
+      } catch (error) {
+        fail(error)
       }
-      if (isThenable(result)) return result.then(done)
-      done()
     }
 
     try {
       traceMessage('[runtime-camera] close begin\n')
       const result = this.#camera.stop()
-      this.#cameraActive = false
-      this.#touchPanelPaused = false
-      if (isThenable(result)) return result.then(() => finish())
+      if (isThenable(result)) return result.then(() => finish(), fail)
       return finish()
     } catch (error) {
-      this.#cameraActive = false
-      this.#touchPanelPaused = false
-      throw error
+      return fail(error)
     }
   }
 
@@ -138,9 +147,44 @@ export class StackchanRuntimeCamera implements RobotCamera {
       traceMessage('[runtime-camera] capture begin\n')
       const frame = await this.#camera.capture(options)
       traceMessage(`[runtime-camera] capture done frame=${frame ? 'yes' : 'no'}\n`)
+      // The frame is still backed by native camera DMA memory.
+      // Keep touch paused through JPEG conversion until stop()/close().
+      this.#cameraActive = true
       return frame
-    } finally {
+    } catch (error) {
       if (!wasActive) this.#resumeTouchPanel()
+      throw error
+    }
+  }
+
+  /**
+   * Photo-only fast path: process the still frame on the SAME Promise
+   * continuation where the native capture resolved. The ordinary capture()
+   * path adds another Promise resolution before photo/JPEG/SD code runs,
+   * which is where the CoreS3 hardware watchdog traced its last stall.
+   *
+   * Processors are synchronous and must release the frame before returning.
+   * Leave the touch panel paused until the processor closes the camera.
+   */
+  async captureWithProcessor<T>(
+    options: CameraCaptureOptions,
+    processor: (frame: CameraFrame) => T,
+  ): Promise<T> {
+    const wasActive = this.#cameraActive
+    if (!wasActive) this.#pauseTouchPanel()
+    try {
+      traceMessage('[runtime-camera] processor capture begin\n')
+      const frame = await this.#camera.capture(options)
+      traceMessage(`[runtime-camera] processor frame ready=${frame ? 'yes' : 'no'}\n`)
+      if (!frame) throw new Error('No camera frame')
+      this.#cameraActive = true
+      // This log MUST be immediately followed by CAMERA_CAPTURE from the
+      // processor; there must not be another await or Promise here.
+      traceMessage('[runtime-camera] processor enter\n')
+      return processor(frame)
+    } catch (error) {
+      if (!wasActive) this.#resumeTouchPanel()
+      throw error
     }
   }
 

@@ -124,7 +124,7 @@ test('StackchanRuntimeCamera waits for asynchronous stop before resuming touchPa
   assert.deepEqual(events, ['touch.stop', 'camera.start', 'camera.stop', 'touch.start'])
 })
 
-test('StackchanRuntimeCamera close releases the camera without resuming touchPanel', () => {
+test('StackchanRuntimeCamera close releases camera before restoring touchPanel', () => {
   const events: string[] = []
   const camera: RobotCamera = {
     start() {
@@ -156,10 +156,10 @@ test('StackchanRuntimeCamera close releases the camera without resuming touchPan
   const result = runtime.close()
 
   assert.equal(result, undefined)
-  assert.deepEqual(events, ['touch.stop', 'camera.start', 'camera.stop', 'camera.close'])
+  assert.deepEqual(events, ['touch.stop', 'camera.start', 'camera.stop', 'camera.close', 'touch.start'])
 })
 
-test('StackchanRuntimeCamera brackets direct capture calls with touchPanel pause and resume', async () => {
+test('StackchanRuntimeCamera keeps touch paused after capture until native camera closes', async () => {
   const events: string[] = []
   const camera: RobotCamera = {
     start() {
@@ -184,7 +184,24 @@ test('StackchanRuntimeCamera brackets direct capture calls with touchPanel pause
 
   const runtime = new StackchanRuntimeCamera({ camera, touchPanel })
   await runtime.camera.capture()
+  assert.deepEqual(events, ['touch.stop', 'camera.capture'])
+  await runtime.camera.close()
+  assert.deepEqual(events, ['touch.stop', 'camera.capture', 'camera.stop', 'touch.start'])
+})
 
+test('StackchanRuntimeCamera resumes touchPanel on capture exception', async () => {
+  const events: string[] = []
+  const camera: RobotCamera = {
+    start() {},
+    stop() { events.push('camera.stop') },
+    async capture() { events.push('camera.capture'); throw new Error('sensor failed') },
+  }
+  const touchPanel = {
+    stop() { events.push('touch.stop') },
+    start() { events.push('touch.start') },
+  }
+  const runtime = new StackchanRuntimeCamera({camera, touchPanel})
+  await assert.rejects(() => runtime.camera.capture(), /sensor failed/)
   assert.deepEqual(events, ['touch.stop', 'camera.capture', 'touch.start'])
 })
 
