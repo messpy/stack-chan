@@ -98,15 +98,15 @@ test('unauthenticated commands are silently ignored, write error does not crash 
   assert.equal(f.outbox[0].id,3)
 })
 test('camera SRAM preflight blocks voice-reserved RAM and fragmented memory',()=>{
-  assert.throws(()=>checkCameraMemory({internalFree:64999,internalLargest:31744}),/内蔵RAM/)
-  assert.throws(()=>checkCameraMemory({internalFree:150000,internalLargest:8192}),/内蔵RAM/)
+  assert.throws(()=>checkCameraMemory({internalFree:64999,internalLargest:31744,psramFree:6*1024*1024}),/内蔵RAM/)
+  assert.throws(()=>checkCameraMemory({internalFree:150000,internalLargest:8192,psramFree:6*1024*1024}),/内蔵RAM/)
   assert.throws(()=>checkCameraMemory({}),/確認できません/)
-  assert.doesNotThrow(()=>checkCameraMemory({internalFree:143000,internalLargest:40960}))
+  assert.doesNotThrow(()=>checkCameraMemory({internalFree:143000,internalLargest:40960,psramFree:6*1024*1024}))
 })
 test('bounded camera memory wait retries collection and fails closed if still low',async()=>{
   let time=0,reads=0,collects=0
   const heap=await waitForCameraMemory({
-    read:()=>++reads<3?{internalFree:64999,internalLargest:31744}:{internalFree:143000,internalLargest:40960},
+    read:()=>++reads<3?{internalFree:64999,internalLargest:31744,psramFree:6*1024*1024}:{internalFree:143000,internalLargest:40960,psramFree:6*1024*1024},
     collect:()=>collects++,
     delay:async(ms)=>{time+=ms},
     now:()=>time,timeoutMs:500,pollMs:100
@@ -117,7 +117,7 @@ test('bounded camera memory wait retries collection and fails closed if still lo
   assert.equal(time,200)
   time=0
   await assert.rejects(()=>waitForCameraMemory({
-    read:()=>({internalFree:64999,internalLargest:31744}),
+    read:()=>({internalFree:64999,internalLargest:31744,psramFree:6*1024*1024}),
     delay:async ms=>{time+=ms},
     now:()=>time,timeoutMs:200,pollMs:100
   }),/内蔵RAM/)
