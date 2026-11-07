@@ -15,7 +15,7 @@ test('runtime camera holds touch/I2C paused from capture until native camera clo
   const close = runtime.slice(runtime.indexOf('  close(): '), runtime.indexOf('  async capture('))
   assert.match(close, /this\.#camera\.close\?\.\(\)/)
   assert.match(close, /this\.#resumeTouchPanel\(\)/)
-  assert.ok(close.indexOf('const result = this.#camera.stop()') < close.indexOf('this.#camera.close?.()'))
+  assert.match(close, /return result\.then\(\(\) => finish\(\), fail\)/)
 })
 
 test('photo reports exact conversion/save stages and waits for camera close',()=>{
