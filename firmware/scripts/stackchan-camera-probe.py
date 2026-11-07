@@ -89,13 +89,17 @@ def print_status(response, stage):
     chat = result.get("chat") or {}
     audio = chat.get("audio") or {}
     heap = chat.get("memory") or {}
+    op = result.get("usbOperation") or {}
     print(
         f"[CHECK] STEP={stage} state={chat.get('state', '?')} "
         f"inputEvents={audio.get('inputEvents', '?')} "
         f"recognizedEvents={audio.get('recognizedEvents', '?')} "
         f"internalFree={heap.get('internalFree', '?')} "
         f"internalLargest={heap.get('internalLargest', '?')} "
-        f"psramFree={heap.get('psramFree', '?')}"
+        f"psramFree={heap.get('psramFree', '?')} "
+        f"photoPhase={op.get('phase', '?')} "
+        f"usbBusy={op.get('active', '?')} "
+        f"watchdogReset={op.get('watchdogReset', '?')}"
     )
 
 def main():
