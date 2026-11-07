@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 clear
 umask 077
-# Run from any directory: bash scripts/stackchan-ci.sh test|build|flash|voicevox|status [--yes]
+# Run from any directory: bash scripts/stackchan-ci.sh test|build|flash|diagnose|voicevox|status [--yes]
 STEP="PREFLIGHT"
 MODE="$1"
 AUTO_YES=0
@@ -57,11 +57,11 @@ run_voicevox() {
 
 case "$MODE" in
   help|-h|--help|'')
-    echo "Usage: bash scripts/stackchan-ci.sh {test|build|flash|voicevox|status} [--yes]"
-    echo "test=単体テスト build=テスト+ビルド flash=16MiBバックアップ+書き込み+VOICEVOX voicevox=kmac単体音声テスト status=結果確認"
+    echo "Usage: bash scripts/stackchan-ci.sh {test|build|flash|diagnose|voicevox|status} [--yes]"
+    echo "test=単体テスト build=テスト+ビルド flash=16MiBバックアップ+書き込み+VOICEVOX voicevox=kmac単体音声テスト diagnose=USB音声診断 status=結果確認"
     exit 0
     ;;
-  test|build|flash|voicevox|status) ;;
+  test|build|flash|diagnose|voicevox|status) ;;
   *) fatal "不明なモード: $MODE";;
 esac
 [ -z "$3" ] || fatal "引数が多すぎます"
@@ -69,6 +69,13 @@ if [ -n "$2" ] && [ "$2" != "--yes" ]; then fatal "第2引数は --yes のみ対
 cd "$FW" || fatal "firmwareディレクトリがありません"
 if [ "$MODE" = "voicevox" ]; then
   run_voicevox || fatal "VOICEVOXテスト失敗"
+  exit 0
+fi
+if [ "$MODE" = "diagnose" ]; then
+  STEP="DIAGNOSE"
+  echo "[CHECK] STEP=$STEP USB音声・AI診断"
+  command -v python3 >/dev/null 2>&1 || fatal "Python3がありません"
+  python3 scripts/stackchan-voice-diagnostic.py || fatal "USB診断失敗"
   exit 0
 fi
 if [ "$MODE" = "status" ]; then
