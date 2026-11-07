@@ -13,6 +13,7 @@ const {
   classifyBootWiFiFailure,
   networkReadyResultForRecoveryChoice,
   shouldRetryBootWiFiAttempt,
+  waitForBootWiFiRecoveryChoiceWithTimeout,
 } = await import('../boot-network-recovery.js')
 
 test('boot Wi-Fi retry helper respects the configured attempt limit', () => {
@@ -37,4 +38,97 @@ test('boot Wi-Fi helper maps offline choice to a skipped network readiness resul
     reason: 'offline start selected: authentication failed',
   })
   assert.equal(networkReadyResultForRecoveryChoice('retry', 'authentication failed'), undefined)
+})
+
+test('unattended Wi-Fi recovery falls back to offline and ignores stale taps', async () => {
+  let fireTimeout: (() => void) | undefined
+  let clearCount = 0
+  let cleanupCount = 0
+  let timeoutCount = 0
+  let choose: ((choice: 'retry' | 'offline') => void) | undefined
+  const timer = {
+    set(callback: () => void, interval: number) {
+      assert.equal(interval, 10000)
+      fireTimeout = callback
+      return 1
+    },
+    clear(handle: unknown) {
+      assert.equal(handle, 1)
+      clearCount++
+    },
+  }
+
+  const result = waitForBootWiFiRecoveryChoiceWithTimeout(
+    timer,
+    (select) => {
+      choose = select
+    },
+    () => cleanupCount++,
+    undefined,
+    () => timeoutCount++,
+  )
+  assert.ok(fireTimeout)
+  fireTimeout()
+  assert.equal(await result, 'offline')
+  choose?.('retry')
+  assert.equal(clearCount, 1)
+  assert.equal(cleanupCount, 1)
+  assert.equal(timeoutCount, 1)
+})
+
+test('manual Wi-Fi retry cancels automatic offline fallback and restores controls once', async () => {
+  let fireTimeout: (() => void) | undefined
+  let cleanupCount = 0
+  let clearCount = 0
+  const result = waitForBootWiFiRecoveryChoiceWithTimeout(
+    {
+      set(callback: () => void) {
+        fireTimeout = callback
+        return 2
+      },
+      clear() {
+        clearCount++
+      },
+    },
+    (select) => select('retry'),
+    () => cleanupCount++,
+  )
+  assert.equal(await result, 'retry')
+  fireTimeout?.()
+  assert.equal(clearCount, 1)
+  assert.equal(cleanupCount, 1)
+})
+
+test('recovery prompt or timer setup failure does not block offline boot', async () => {
+  const timer = {
+    set() {
+      return 3
+    },
+    clear() {},
+  }
+  let cleanupCount = 0
+  const result = waitForBootWiFiRecoveryChoiceWithTimeout(
+    timer,
+    () => {
+      throw new Error('recovery UI unavailable')
+    },
+    () => cleanupCount++,
+  )
+  assert.equal(await result, 'offline')
+  assert.equal(cleanupCount, 1)
+
+  const timerFailure = waitForBootWiFiRecoveryChoiceWithTimeout(
+    {
+      set(): number {
+        throw new Error('timer unavailable')
+      },
+      clear() {},
+    },
+    () => {
+      throw new Error('must not show UI without timer')
+    },
+    () => cleanupCount++,
+  )
+  assert.equal(await timerFailure, 'offline')
+  assert.equal(cleanupCount, 2)
 })
