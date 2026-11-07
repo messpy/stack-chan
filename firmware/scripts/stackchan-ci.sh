@@ -153,6 +153,8 @@ if [ "$MODE" = "test" ] || [ "$MODE" = "build" ] || [ "$MODE" = "deploy" ]; then
     fatal "診断・PSRAM単体テスト失敗"
   node scripts/lib/archive-memory-policy.test.mjs ||
     fatal "内部RAM保護テスト失敗"
+  python3 scripts/lib/patch-core-s3-camera.test.py ||
+    fatal "CoreS3カメラSDK設定テスト失敗"
   if [ "$MODE" = "test" ]; then
     echo "[CHECK] テスト成功"
     exit 0
