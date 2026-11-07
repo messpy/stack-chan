@@ -6,13 +6,16 @@ const runtime = readFileSync(new URL('../../host/app/runtime-camera.ts', import.
 const archive = readFileSync(new URL('../../host/app/lan-archive.js', import.meta.url), 'utf8')
 
 test('runtime camera holds touch/I2C paused from capture until native camera close', () => {
-  const capture = runtime.slice(runtime.indexOf('  async capture('), runtime.indexOf('  #pauseTouchPanel()'))
+  const classStart = runtime.indexOf('export class StackchanRuntimeCamera')
+  const captureStart = runtime.indexOf('  async capture(', classStart)
+  const capture = runtime.slice(captureStart, runtime.indexOf('  #pauseTouchPanel()', captureStart))
   assert.ok(capture.startsWith('  async capture('))
   assert.match(capture, /this\.#cameraActive\s*=\s*true/)
   assert.match(capture, /catch\s*\(error\)/)
   assert.doesNotMatch(capture, /finally\s*\{\s*if\s*\(!wasActive\)\s*this\.#resumeTouchPanel\(\)/)
 
-  const close = runtime.slice(runtime.indexOf('  close(): '), runtime.indexOf('  async capture('))
+  const closeStart = runtime.indexOf('  close(): ', classStart)
+  const close = runtime.slice(closeStart, captureStart)
   assert.match(close, /this\.#camera\.close\?\.\(\)/)
   assert.match(close, /this\.#resumeTouchPanel\(\)/)
   assert.match(close, /return result\.then\(\(\) => finish\(\), fail\)/)
