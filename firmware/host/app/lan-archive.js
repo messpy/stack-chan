@@ -161,12 +161,12 @@ async function photo(robot,args={},fromConversation=false) {
     }catch(error){reportFailure(error);throw error;}
     finally{releaseCamera(captured);}
   };
-  markPhotoPhase('CAMERA_START');
-  traceConversation('CAMERA_START','capture 176x144');
   try{
     // Still guard the *whole* Promise/USB completion. If any JS continuation
     // stalls after successful SD save, the independent timer still recovers.
     photoRecoveryWatchdog(true);
+    markPhotoPhase('CAMERA_START');
+    traceConversation('CAMERA_START','capture 176x144');
     if(typeof robot.camera.captureWithProcessor!=='function')
       throw new Error('CoreS3 safe photo handoff unavailable');
     result=await robot.camera.captureWithProcessor(
