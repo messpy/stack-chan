@@ -2,7 +2,7 @@ import {headDirectionFromText} from 'archive-head-motion'
 import {directPhotoRequest} from 'archive-direct-photo'
 import {heapStatus,collectMemory} from 'archive-usb'
 import {traceConversation} from 'archive-debug'
-import {checkVoiceMemory,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
+import {checkVoiceMemory,checkCameraMemory,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
 import { ollamaChat, ollamaModel, validOllamaModel, geminiTextChat, DEFAULT_GEMINI_TEXT_MODEL, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
 import { VoiceRegistration, enrollmentInstructions, explicitSpeakerName, registrationName } from 'archive-speaker-registration'
 import { speakerButtons } from 'archive-button-schema'
@@ -892,6 +892,8 @@ async function connect() {
                   retryAt=Date.now()+30000
                   try {collectMemory()} catch(_) {}
                   await new Promise(resolve=>Timer.set(resolve,200))
+                  collectMemory()
+                  checkCameraMemory(heapStatus())
                   const photo=await photoHandler({analyze:false})
                   const saved=!!photo?.image
                   if (saved) archive('output','写真を撮影してSDカードに保存しました。',undefined,photo.image)
