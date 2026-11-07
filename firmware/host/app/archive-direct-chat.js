@@ -1,5 +1,6 @@
 import {headDirectionFromText} from 'archive-head-motion'
 import {heapStatus,collectMemory} from 'archive-usb'
+import {traceConversation} from 'archive-debug'
 import {checkVoiceMemory,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
 import { ollamaChat, ollamaModel, validOllamaModel, geminiTextChat, DEFAULT_GEMINI_TEXT_MODEL, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
 import { VoiceRegistration, enrollmentInstructions, explicitSpeakerName, registrationName } from 'archive-speaker-registration'
@@ -748,7 +749,7 @@ async function connect() {
         const answer=text===null?(currentSpeaker()?'こんにちは。またお話ししよう。':'あなたは誰？お名前を教えて。'):
           await (provider==='ollama'?ollamaChat:geminiTextChat)([{role:'system',content:conversationInstructions()},{role:'user',content:text}],Object.values(tools),executeTool,isCurrent);
         if(!isCurrent())return
-        archive('output',answer);if(conversationStage==='greeting')advanceConversation('conversation');
+        traceConversation('AI_RESPONSE',answer);archive('output',answer);if(conversationStage==='greeting')advanceConversation('conversation');
         lastSubtitle=answer;robot.showBalloon(answer,{bottom:40,height:24,paddingY:4,holdMs:60000});state='speaking';conversationIndicator('off');
         const speech=new RecognitionTTS({volume:robot.audio.volume});recognitionSpeech=speech;
         await new Promise((resolve,reject)=>speech.stream(answer,robot.audio.volume,e=>e?reject(e):resolve()));
@@ -843,6 +844,7 @@ async function connect() {
               return
             }
             trace('[asr] final chars='+input.length+'\n')
+            traceConversation('ASR_FINAL',input)
             const event = archive('input', input)
             lastInputId = event?.id || ''
             if(standalone){
@@ -881,6 +883,7 @@ async function connect() {
           if (!more && output) {
             if (!enrollment.active) {
               trace('[llm] output_final chars='+output.length+'\n')
+              traceConversation('AI_RESPONSE',output)
               archive('output', output)
               if(conversationStage==='greeting')advanceConversation('conversation')
               lastSubtitle=output
@@ -893,6 +896,7 @@ async function connect() {
           if (chat !== instance || enrollment.active) return
           conversationIndicator('thinking')
           trace('[chat-tool] begin '+name+'\n')
+          traceConversation('TOOL_START',name)
           Promise.resolve()
             .then(async () => {
               if (provider === 'ollama' && name === 'ollama_reply') {
@@ -918,13 +922,15 @@ async function connect() {
               }
               return executeTool(name, args)
             })
-            .then((result) => {
+             .then((result) => {
+              traceConversation('TOOL_DONE',name+' status='+(result?.error?'error':'ok'))
               if(name==='conversation_identify'&&result?.message)try{robot.showBalloon(result.message,{bottom:40,height:24,paddingY:4,holdMs:10000})}catch(_){trace('[speaker] result display unavailable\n')}
               return chat === instance ? instance.sendFunctionResult(call, name, result) : undefined
             })
             .catch((e) => {
               if (chat !== instance) return
               trace('[chat-tool] failed '+name+'\n')
+              traceConversation('TOOL_ERROR',name)
               let message = '道具を実行できませんでした'
               if (provider === 'ollama' || memoryTools.some(t=>t.name===name)) {
                 message = String(e.message || message)
