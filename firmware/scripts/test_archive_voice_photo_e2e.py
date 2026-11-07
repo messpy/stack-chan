@@ -39,6 +39,34 @@ class VoicePhotoE2ETests(unittest.TestCase):
                           'audio': {'recognizedEvents':1,'secret':'PRIVATE'}},
                           'photo':{'phase':'error','image':'PRIVATE'}})
         self.assertNotIn('PRIVATE',str(obj))
+    def test_pipeline_epoch_ms_and_secrets(self):
+        at = 1794010000000
+        item = mod.safe_pipeline({
+            'schema': 1,
+            'audio': {'input': 'running', 'worker': 'running',
+                      'uploadEnabled': True, 'lastInputAt': at,
+                      'lastSentAt': at - 150, 'lastASRAt': 0,
+                      'lastError': 'none', 'reconnectCount': 12,
+                      'rawTranscript': 'PRIVATE'},
+            'heap': {'internalFree': 37803, 'key': 'SECRET'}
+        })
+        self.assertEqual(item['lastInputAt'], at)
+        self.assertEqual(item['lastSentAt'], at - 150)
+        self.assertEqual(item['reconnectCount'], 12)
+        self.assertTrue(item['uploadEnabled'])
+        self.assertNotIn('PRIVATE', str(item))
+        self.assertNotIn('SECRET', str(item))
+
+    def test_pipeline_rejects_invalid_timestamps(self):
+        item = mod.safe_pipeline({
+            'schema': 1,
+            'audio': {'lastInputAt': -1, 'lastSentAt': True,
+                      'lastASRAt': 10**15}
+        })
+        self.assertIsNone(item['lastInputAt'])
+        self.assertIsNone(item['lastSentAt'])
+        self.assertIsNone(item['lastASRAt'])
+
     def test_private_ipv4_only(self):
         self.assertEqual(mod.device_ip('192.168.2.102'),'192.168.2.102')
         for ip in ('8.8.8.8','127.0.0.1','169.254.4.5'):
