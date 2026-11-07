@@ -48,13 +48,23 @@ let photoActive=false;
 let lastServoReadFailure='none';
 let bootResetCode=null;
 // Read-only capture progress; never record image pixels, API keys or transcript text.
-let photoDiagnostics={phase:'idle',saved:false,analysisStatus:'not-started',errorStage:null,errorType:null};
+let photoDiagnostics={phase:'idle',saved:false,analysisStatus:'not-started',errorStage:null,errorType:null,errorReasonClass:null};
 function photoStatus(){
   return {...photoDiagnostics,active:photoActive,
     elapsedMs:photoActive&&photoDiagnostics.startedAt?Date.now()-photoDiagnostics.startedAt:photoDiagnostics.elapsedMs??0};
 }
 function photoStage(phase,details={}){
   photoDiagnostics={...photoDiagnostics,phase,...details};
+}
+// Do not expose native error text to HTTP/debug logs; retain only a bounded class.
+function cameraFailureClass(error){
+  const message=String(error?.message||'').slice(0,240).toLowerCase();
+  if(/out.of.memory|no.?mem|memory|alloc|malloc|heap|0x101/.test(message))return 'memory';
+  if(/i2c|sccb|bus|sensor|probe|gc0308/.test(message))return 'sensor-bus';
+  if(/busy|already in use|resource in use/.test(message))return 'busy';
+  if(/timeout|timed out/.test(message))return 'timeout';
+  if(/not found|not available|unavailable|not detected/.test(message))return 'unavailable';
+  return 'unknown';
 }
 let lastError='';
 let audioUpload;
@@ -122,7 +132,7 @@ async function photo(robot,args={},fromConversation=false) {
   try{markHeap('photo-start',heapStatus(),trace)}catch(_){}
   const photoStartedAt=Date.now();
   photoDiagnostics={phase:'starting',startedAt:photoStartedAt,finishedAt:null,
-    elapsedMs:0,saved:false,analysisStatus:'not-started',errorStage:null,errorType:null};
+    elapsedMs:0,saved:false,analysisStatus:'not-started',errorStage:null,errorType:null,errorReasonClass:null};
   // A conversation already owns busy. Never restore an obsolete true after it ends.
   const ownsBusy=!busy;
   if(ownsBusy)busy=true;
@@ -133,6 +143,7 @@ async function photo(robot,args={},fromConversation=false) {
     photoStage('camera-start');
     trace('[archive-camera] capture begin\n');
     const options={width:176,height:144,imageType:'rgb565le'};
+    try{markHeap('camera-before-start',heapStatus(),trace)}catch(_){}
     await robot.camera.start(options);
     trace('[archive-camera] native start done\n');
     photoStage('frame-wait');
@@ -159,6 +170,11 @@ async function photo(robot,args={},fromConversation=false) {
       trace('[archive-camera] stop failed\n');
       if(!primaryError)throw error;
     } finally {
+      // A failed native start can leave an allocated but non-running camera.
+      // The regular stop() only stops streaming; close() releases the object.
+      if(primaryError)try{await robot.camera.close?.()}catch(_){
+        trace('[archive-camera] close after failure failed\n');
+      }
       if(ownsBusy)busy=false;
     }
   }
@@ -174,8 +190,11 @@ async function photo(robot,args={},fromConversation=false) {
   } catch(error) {
     const stage=photoDiagnostics.phase;
     const errorType=String(error?.name||'Error').replace(/[^A-Za-z0-9_]/g,'').slice(0,40)||'Error';
-    photoStage('error',{errorStage:stage,errorType,finishedAt:Date.now(),elapsedMs:Date.now()-startedAt});
-    trace('[archive-camera] failure stage='+stage+' type='+errorType+' elapsedMs='+(Date.now()-startedAt)+'\n');
+    const errorReasonClass=cameraFailureClass(error);
+    photoStage('error',{errorStage:stage,errorType,errorReasonClass,
+      finishedAt:Date.now(),elapsedMs:Date.now()-startedAt});
+    trace('[archive-camera] failure stage='+stage+' type='+errorType+
+      ' class='+errorReasonClass+' elapsedMs='+(Date.now()-startedAt)+'\n');
     throw error;
   } finally {
     // Retain the single-flight lease through JPEG analysis and its failures.
