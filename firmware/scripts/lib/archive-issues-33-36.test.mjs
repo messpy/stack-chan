@@ -5,6 +5,7 @@ import vm from 'node:vm'
 
 const direct = readFileSync(new URL('../../host/app/archive-direct-chat.js', import.meta.url), 'utf8')
 const lan = readFileSync(new URL('../../host/app/lan-archive.js', import.meta.url), 'utf8')
+const deviceCamera = readFileSync(new URL('../../host/modules/camera/device/camera.ts', import.meta.url), 'utf8')
 const volume = readFileSync(new URL('../../host/app/archive-volume.js', import.meta.url), 'utf8')
 
 const intentions = direct.slice(
@@ -32,6 +33,14 @@ const failureCode = lan.slice(lan.indexOf('function cameraFailureClass('),lan.in
 const cameraFailureClass=vm.runInNewContext(failureCode+'\ncameraFailureClass')
 const photoSource = lan.slice(lan.indexOf('async function photo('), lan.indexOf('async function describeImage(', lan.indexOf('async function photo(')))
 assert.ok(photoSource.startsWith('async function photo('), 'photo implementation exists')
+test('device camera closes the native object even when stop fails',()=>{
+  const section=deviceCamera.slice(deviceCamera.indexOf('  #closeCamera(): void {'),deviceCamera.indexOf('  #startCamera(): void {'))
+  assert.match(section,/try\s*\{\s*this\.\#stopCamera\(\)/)
+  assert.match(section,/catch \(error\)/)
+  assert.match(section,/camera\?\.close\(\)/)
+  assert.match(section,/this\.\#camera = undefined/)
+})
+
 test('camera errors are classified without exposing native messages',()=>{
   assert.equal(cameraFailureClass(Error('alloc failed')),'memory')
   assert.equal(cameraFailureClass(Error('SCCB bus error')),'sensor-bus')
