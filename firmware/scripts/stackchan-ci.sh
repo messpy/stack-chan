@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 clear
 umask 077
-# Run from any directory: bash scripts/stackchan-ci.sh test|build|flash|diagnose|camera|voicevox|status [--yes]
+# Run from any directory: bash scripts/stackchan-ci.sh test|build|flash|deploy|diagnose|camera|voicevox|status [--yes]
 STEP="PREFLIGHT"
 MODE="$1"
 AUTO_YES=0
@@ -58,11 +58,11 @@ run_voicevox() {
 
 case "$MODE" in
   help|-h|--help|'')
-    echo "Usage: bash scripts/stackchan-ci.sh {test|build|flash|diagnose|camera|voicevox|status} [--yes]"
-    echo "test=単体テスト build=テスト+ビルド flash=16MiBバックアップ+書き込み+VOICEVOX voicevox=kmac単体音声テスト diagnose=USB音声診断 camera=単体撮影検証 status=結果確認"
+    echo "Usage: bash scripts/stackchan-ci.sh {test|build|flash|deploy|diagnose|camera|voicevox|status} [--yes]"
+    echo "test=単体テスト build=テスト+ビルド deploy=ビルド+バックアップ+書込 flash=16MiBバックアップ+書き込み+VOICEVOX voicevox=kmac単体音声テスト diagnose=USB音声診断 camera=単体撮影検証 status=結果確認"
     exit 0
     ;;
-  test|build|flash|diagnose|camera|voicevox|status) ;;
+  test|build|flash|deploy|diagnose|camera|voicevox|status) ;;
   *) fatal "不明なモード: $MODE";;
 esac
 [ -z "$3" ] || fatal "引数が多すぎます"
@@ -110,7 +110,7 @@ HEAD=$(git -C "$ROOT" rev-parse HEAD) || fatal "Gitコミットを取得でき�
   fatal "追跡ファイルに未コミット変更があります"
 echo "[INFO] COMMIT=$HEAD"
 
-if [ "$MODE" = "test" ] || [ "$MODE" = "build" ]; then
+if [ "$MODE" = "test" ] || [ "$MODE" = "build" ] || [ "$MODE" = "deploy" ]; then
   STEP="TEST"
   echo "[ACTION] USB診断ログ単体テスト"
   NODE_BIN="/mnt/data/Development/node22/current/bin"
@@ -154,8 +154,9 @@ if [ "$MODE" = "test" ] || [ "$MODE" = "build" ]; then
   printf "%s\n" "$HEAD" > "$BUILD_REV" || fatal "ビルドコミット記録失敗"
   ls -lh "$BIN"
   sha256sum "$BIN" || fatal "チェックサム取得失敗"
-  echo "[CHECK] ビルド成功。本体への書き込みなし"
-  exit 0
+  echo "[CHECK] ビルド成功。本体への書き込みは未開始"
+  if [ "$MODE" = "build" ]; then exit 0; fi
+  echo "[INFO] deploy: バックアップと書き込みの事前確認に進みます"
 fi
 
 STEP="VERIFY"
