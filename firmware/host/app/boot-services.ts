@@ -10,6 +10,7 @@ import type { LocalPeerCapability } from 'local-peer-types'
 import { localize } from 'localization'
 import config from 'mc/config'
 import { wait } from 'stackchan-util'
+import Timer from 'timer'
 import { connectStoredWiFi, stopStoredWiFiConnection } from 'stored-wifi'
 
 export type { NetworkReadyResult } from 'capabilities'
@@ -33,6 +34,7 @@ export type HostBootServicesOptions = {
   wifi?: {
     maxAttempts?: number
     retryDelayMs?: number
+    attemptTimeoutMs?: number
     onStatusChanged?: (status: BootWiFiStatus) => void
     promptRecoveryChoice?: (status: BootWiFiStatus & { reason: string }) => Promise<BootWiFiRecoveryChoice>
   }
@@ -53,6 +55,7 @@ const NOT_STARTED: NetworkReadyResult = {
 }
 const DEFAULT_BOOT_WIFI_MAX_ATTEMPTS = 3
 const DEFAULT_BOOT_WIFI_RETRY_DELAY_MS = 500
+const DEFAULT_BOOT_WIFI_ATTEMPT_TIMEOUT_MS = 20000
 
 let bootServices: HostBootServices = {
   connectivity: {
@@ -86,6 +89,7 @@ async function startStoredWiFi(
   if ((config as { archiveUSBOnly?: boolean }).archiveUSBOnly) return { status: 'skipped', reason: 'USB archive mode' }
   const maxAttempts = options.maxAttempts ?? DEFAULT_BOOT_WIFI_MAX_ATTEMPTS
   const retryDelayMs = options.retryDelayMs ?? DEFAULT_BOOT_WIFI_RETRY_DELAY_MS
+  const attemptTimeoutMs = options.attemptTimeoutMs ?? DEFAULT_BOOT_WIFI_ATTEMPT_TIMEOUT_MS
   for (;;) {
     let lastReason = 'connection failed'
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -94,7 +98,7 @@ async function startStoredWiFi(
         maxAttempts,
         message: localize('splash.connecting', { attempt, maxAttempts }),
       })
-      const result = await connectStoredWiFiOnce()
+      const result = await connectStoredWiFiOnce(attemptTimeoutMs)
       if (result.status !== 'failed') {
         return result
       }
@@ -124,12 +128,14 @@ async function startStoredWiFi(
   }
 }
 
-function connectStoredWiFiOnce(): Promise<NetworkReadyResult> {
+function connectStoredWiFiOnce(attemptTimeoutMs: number): Promise<NetworkReadyResult> {
   return new Promise((resolve) => {
     let settled = false
+    let timeout: ReturnType<typeof Timer.set> | undefined
     const finish = (result: NetworkReadyResult) => {
       if (settled) return
       settled = true
+      if (timeout !== undefined) Timer.clear(timeout)
       if (result.status !== 'connected') {
         stopStoredWiFiConnection()
       }
@@ -138,6 +144,11 @@ function connectStoredWiFiOnce(): Promise<NetworkReadyResult> {
 
     try {
       stopStoredWiFiConnection()
+      // Include scanning in the deadline: some drivers do not finish scans.
+      timeout = Timer.set(() => {
+        trace('[network] boot Wi-Fi attempt timed out\n')
+        finish({ status: 'failed', reason: 'boot Wi-Fi attempt timed out' })
+      }, attemptTimeoutMs)
       const started = connectStoredWiFi({
         ...getBootWiFiCredentials(),
         scanBeforeConnect: true,
