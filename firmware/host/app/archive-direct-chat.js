@@ -62,8 +62,10 @@ let robot,
 function explicitVisualRequest(text) {
   const normalized=String(text||'').replace(/[\s、。！？!?]/g,'');
   if(/(?:撮らない|撮るな|撮影しない|撮影するな|見ないで|写さない|映さない|やめて|禁止)/.test(normalized))return false;
+  // Authorization must end in a current imperative, not a quoted or historical
+  // mention such as "昨日写真を撮ってと言われた" (Issue #33 unsolicited camera).
   return /(?:写真|撮影|カメラ|画像|映像|目の前|これ|ここ)/.test(normalized)
-    && /(?:撮って|とって|撮影して|見て|確認して|映して|写して|見せて)/.test(normalized);
+    && /(?:撮って|とって|撮影して|見て|確認して|映して|写して|見せて)(?:ください|お願い)?(?:ね|よ)?$/.test(normalized);
 }
 function directPhotoRequest(text) {
   const normalized=String(text||'').replace(/[\s、。！？!?]/g,'');
