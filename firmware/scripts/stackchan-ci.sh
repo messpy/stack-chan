@@ -147,7 +147,8 @@ if [ "$MODE" = "test" ] || [ "$MODE" = "build" ] || [ "$MODE" = "deploy" ]; then
     scripts/lib/archive-conversation-log.test.mjs \
     scripts/lib/archive-usb-psram.test.mjs \
     scripts/lib/archive-direct-photo.test.mjs \
-    scripts/lib/archive-camera-polling.test.mjs ||
+    scripts/lib/archive-camera-polling.test.mjs \
+    scripts/lib/archive-camera-lifecycle.test.mjs ||
     fatal "診断・PSRAM単体テスト失敗"
   node scripts/lib/archive-memory-policy.test.mjs ||
     fatal "内部RAM保護テスト失敗"
