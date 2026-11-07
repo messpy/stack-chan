@@ -60,6 +60,8 @@ let robot,
   owned = false
 let refreshAITalk
 let photoHandler, modeChanged
+// Prevent the reconnect timer (2s cadence) from racing camera DMA/JPEG/SD.
+let photoHandoffActive=false
 let greetingPending = true,
   conversationProviderSeen,
   introText = ''
@@ -616,7 +618,7 @@ async function provision() {
   trace('[direct-chat] cloud configuration renewed\n')
 }
 async function connect() {
-  if (connecting || chat || !running()) return
+  if (photoHandoffActive || connecting || chat || !running()) return
   if (enrollment.phase === 'confirming') return
   if (!getSettingsStatus().connected) {
     state = 'waiting'
@@ -886,11 +888,8 @@ async function connect() {
                 let released=false
                 try {
                   if (chat!==instance || !running()) return
-                  closeChat()
+                  beginCameraHandoff()
                   released=true
-                  state='waiting'
-                  // Reconnection must not overlap the camera's native allocations.
-                  retryAt=Date.now()+30000
                   try {collectMemory()} catch(_) {}
                   await new Promise(resolve=>Timer.set(resolve,200))
                   await waitForCameraMemory({
@@ -907,9 +906,8 @@ async function connect() {
                   traceConversation('LOCAL_PHOTO_ERROR', String(e?.name||'Error'))
                   robot.showBalloon('写真を撮影できませんでした。')
                 } finally {
-                  if (released && running()) {
-                    state='waiting'
-                    retryAt=Date.now()+1000
+                  if(released){
+                    finishCameraHandoff()
                     trace('[vision] camera freed; voice reconnect scheduled\n')
                   }
                 }
@@ -1024,7 +1022,32 @@ export function pauseDirectChat() {
   return false
 }
 export function resumeDirectChat() {
+  if (photoHandoffActive) return
   if (running()) retryAt = 0
+}
+// Photo handoff is exclusive. Never reconnect while native camera or SD owns
+// resources, even if capture exceeds the ordinary 30-second retry delay.
+export function beginCameraHandoff() {
+  if (photoHandoffActive) throw new Error('カメラ撮影中です')
+  photoHandoffActive=true
+  try {
+    pauseDirectChat()
+    state=running()?'waiting':'off'
+    retryAt=Date.now()+60000
+    trace('[vision] camera handoff locked\n')
+  } catch(error) {
+    photoHandoffActive=false
+    throw error
+  }
+}
+export function finishCameraHandoff() {
+  if(!photoHandoffActive)return
+  photoHandoffActive=false
+  if(running()) {
+    state='waiting'
+    retryAt=Date.now()+1000
+  }
+  trace('[vision] camera handoff released\n')
 }
 export async function provisionDirectChat() {
   await provision()
@@ -1184,7 +1207,7 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
   // Restore saved conversation mode; credentials must not turn an explicit OFF on.
   Timer.set(()=>restoreConversationOnBoot(onBoot),1000)
   Timer.repeat(() => {
-    if (!running()) return
+    if (!running() || photoHandoffActive) return
     if (chat) {
       if (signature() !== connectionSignature) {
         closeChat()
