@@ -1,4 +1,4 @@
-import type { RobotCamera } from 'camera'
+import type { CameraCaptureOptions, CameraFrame, RobotCamera } from 'camera'
 
 const NULL_CAMERA: RobotCamera = {
   available: false,
@@ -151,6 +151,37 @@ export class StackchanRuntimeCamera implements RobotCamera {
       // Keep touch paused through JPEG conversion until stop()/close().
       this.#cameraActive = true
       return frame
+    } catch (error) {
+      if (!wasActive) this.#resumeTouchPanel()
+      throw error
+    }
+  }
+
+  /**
+   * Photo-only fast path: process the still frame on the SAME Promise
+   * continuation where the native capture resolved. The ordinary capture()
+   * path adds another Promise resolution before photo/JPEG/SD code runs,
+   * which is where the CoreS3 hardware watchdog traced its last stall.
+   *
+   * Processors are synchronous and must release the frame before returning.
+   * Leave the touch panel paused until the processor closes the camera.
+   */
+  async captureWithProcessor<T>(
+    options: CameraCaptureOptions,
+    processor: (frame: CameraFrame) => T,
+  ): Promise<T> {
+    const wasActive = this.#cameraActive
+    if (!wasActive) this.#pauseTouchPanel()
+    try {
+      traceMessage('[runtime-camera] processor capture begin\n')
+      const frame = await this.#camera.capture(options)
+      traceMessage(`[runtime-camera] processor frame ready=${frame ? 'yes' : 'no'}\n`)
+      if (!frame) throw new Error('No camera frame')
+      this.#cameraActive = true
+      // This log MUST be immediately followed by CAMERA_CAPTURE from the
+      // processor; there must not be another await or Promise here.
+      traceMessage('[runtime-camera] processor enter\n')
+      return processor(frame)
     } catch (error) {
       if (!wasActive) this.#resumeTouchPanel()
       throw error
