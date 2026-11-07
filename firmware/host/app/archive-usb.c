@@ -1,5 +1,6 @@
 #include "xsmc.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "xsHost.h"
 #include "driver/usb_serial_jtag.h"
 #include "freertos/FreeRTOS.h"
@@ -8,9 +9,18 @@
 #include "archive-vault-crypto.h"
 
 #define ARCHIVE_USB_PACKET_LIMIT 20000
-static char line[ARCHIVE_USB_PACKET_LIMIT + 5];
+// The full 20 KiB authenticated USB RPC frame formerly occupied internal BSS
+// even with no USB host attached. Keep this long-lived receive buffer in PSRAM;
+// DMA-capable driver RX/TX rings remain in the memory chosen by ESP-IDF.
+#define ARCHIVE_USB_LINE_BYTES (ARCHIVE_USB_PACKET_LIMIT + 5)
+static char *line;
 static size_t used;
 static int dropping;
+static void ensureUSBReceiveBuffer(xsMachine *the) {
+    if (line) return;
+    line = heap_caps_malloc(ARCHIVE_USB_LINE_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!line) xsUnknownError("USB receive PSRAM unavailable");
+}
 static void ensureUSB(xsMachine *the) {
     if (!usb_serial_jtag_is_driver_installed()) {
         usb_serial_jtag_driver_config_t config = {.rx_buffer_size=4096,.tx_buffer_size=4096};
@@ -19,6 +29,7 @@ static void ensureUSB(xsMachine *the) {
 }
 void xs_archive_usb_read(xsMachine *the) {
     ensureUSB(the);
+    ensureUSBReceiveBuffer(the);
     unsigned char c;
     while (usb_serial_jtag_read_bytes(&c,1,0)==1) {
         if (c=='\n') {
@@ -26,7 +37,7 @@ void xs_archive_usb_read(xsMachine *the) {
             line[used]=0;used=0;
             if (strncmp(line,"@SC ",4)==0) {xsmcSetString(xsResult,line+4);return;}
         } else if(c!='\r' && !dropping) {
-            if (used<sizeof(line)-1) line[used++]=c;
+            if (used<ARCHIVE_USB_LINE_BYTES-1) line[used++]=c;
             else {dropping=1;used=0;}
         }
     }
@@ -156,7 +167,6 @@ void xs_archive_usb_connected(xsMachine *the) {
     xsmcSetBoolean(xsResult, usb_serial_jtag_is_connected());
 }
 
-#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include <stdarg.h>
 #include <stdio.h>
@@ -233,6 +243,7 @@ void xs_archive_heap_status(xsMachine *the) {
     SC_HEAP_FIELD("psramMinimum",heap_caps_get_minimum_free_size(external));
     SC_HEAP_FIELD("psramLargest",heap_caps_get_largest_free_block(external));
     SC_HEAP_FIELD("psramTotal",heap_caps_get_total_size(external));
+    SC_HEAP_FIELD("usbRxPSRAMBytes",line ? ARCHIVE_USB_LINE_BYTES : 0);
 #undef SC_HEAP_FIELD
 }
 
