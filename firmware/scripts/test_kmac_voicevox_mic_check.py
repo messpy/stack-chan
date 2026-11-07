@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import struct
+from urllib.error import HTTPError, URLError
 import unittest
 from unittest.mock import Mock
 
@@ -63,6 +64,27 @@ class MicCheckTests(unittest.TestCase):
         self.assertEqual(summary['seconds'],1)
         self.assertEqual(summary['rms'],0)
         self.assertIsNone(summary['dbfs'])
+
+    def test_http_503_busy_is_categorized_without_raw_message(self):
+        private='camera busy: privateKey=DO-NOT-SHOW'
+        err=HTTPError('http://192.168.2.102:8082/rpc',503,
+                      'unavailable',{},io.BytesIO(json.dumps({'error':private}).encode()))
+        value=app.classify_capture_error(err)
+        self.assertEqual(value,'http-503-busy')
+        self.assertNotIn('DO-NOT-SHOW',value)
+
+    def test_record_rpc_busy_is_safe(self):
+        client=app.Device('192.168.2.102','PRIVATE')
+        fake=Mock()
+        fake.open.return_value=Reply(b'{"error":"Another capture is in progress"}')
+        client.opener=fake
+        with self.assertRaises(ValueError) as ctx:
+            client.record()
+        self.assertEqual(app.classify_capture_error(ctx.exception),'record-rpc-busy')
+
+    def test_transport_failure_category(self):
+        self.assertEqual(app.classify_capture_error(URLError('unreachable')),
+                         'network-unavailable')
 
     def test_private_ips(self):
         self.assertEqual(app.private_ip('192.168.2.102'),'192.168.2.102')
