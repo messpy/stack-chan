@@ -94,50 +94,89 @@ async function cameraPreview(robot) {
  }
 }
 async function photo(robot,args={},fromConversation=false) {
- const wasBusy=busy;if(busy&&!fromConversation){traceConversation('CAMERA_ERROR','busy');throw new Error('Camera busy');}busy=true;
- let frame,jpeg,result;
- markPhotoPhase('CAMERA_START');
- traceConversation('CAMERA_START','capture 176x144');
- try{
-  // An independent ESP timer can reboot the SoC if native code blocks the XS VM.
-  // The guard is stopped only after the camera and SD operation are released.
-  photoRecoveryWatchdog(true);
-  frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});if(!frame)throw new Error('No camera frame');
-  markPhotoPhase('CAMERA_CAPTURE');
-  traceConversation('CAMERA_CAPTURE','ok '+frame.width+'x'+frame.height);
-  const tag=id(),name='photo-'+tag+'.jpg',image=name;
-  trace('[photo] jpeg encode begin\n');
-  markPhotoPhase('JPEG_START');
-  traceConversation('JPEG_START',frame.width+'x'+frame.height);
-  jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
-  trace('[photo] jpeg encode done bytes='+jpeg.byteLength+'\n');
-  markPhotoPhase('JPEG_DONE');
-  traceConversation('JPEG_DONE','bytes='+jpeg.byteLength);
-  trace('[photo] sd save begin\n');
-  markPhotoPhase('SD_SAVE_START');
-  traceConversation('SD_SAVE_START',image);
-  save(image,[jpeg]);
-  trace('[photo] sd save done\n');
-  markPhotoPhase('CAMERA_SAVE');
-  traceConversation('CAMERA_SAVE',image+' bytes='+jpeg.byteLength);
-  result={name,image,width:frame.width,height:frame.height};
- }catch(e){markPhotoPhase('CAMERA_ERROR');trace('[photo] failed type='+String(e?.name||'Error').slice(0,48)+'\n');traceConversation('CAMERA_ERROR',String(e?.name||'Error')+' '+String(e?.message||'').slice(0,180));throw e;}
- finally{
-  markPhotoPhase('FRAME_RELEASE');
-  trace('[photo] frame release begin\n');
-  try{frame?.close?.();trace('[photo] frame release done\n');}
+  const wasBusy=busy;
+  if(busy&&!fromConversation){traceConversation('CAMERA_ERROR','busy');throw new Error('Camera busy');}
+  busy=true;
+  let frame,jpeg,result,cameraClosed=false,failureReported=false;
+  const reportFailure=error=>{
+    if(failureReported)return;
+    failureReported=true;
+    markPhotoPhase('CAMERA_ERROR');
+    trace('[photo] failed type='+String(error?.name||'Error').slice(0,48)+'\n');
+    traceConversation('CAMERA_ERROR',String(error?.name||'Error')+' '+String(error?.message||'').slice(0,180));
+  };
+  // The CoreS3 native camera close is synchronous. Do not resume touch/voice
+  // while the camera still owns its DMA frame and shared I2C pins.
+  const releaseCamera=captured=>{
+    markPhotoPhase('FRAME_RELEASE');
+    trace('[photo] frame release begin\n');
+    let releaseError;
+    try{captured?.close?.();trace('[photo] frame release done\n');}
+    catch(error){releaseError=error;}
+    markPhotoPhase('CAMERA_CLOSE');
+    trace('[photo] camera close begin\n');
+    try{
+      const closed=robot.camera.close();
+      if(closed&&typeof closed.then==='function')
+        throw new Error('CoreS3 still-photo close must be synchronous');
+      cameraClosed=true;
+      markPhotoPhase('CAMERA_CLOSED');
+      trace('[photo] camera close done\n');
+    }catch(error){if(!releaseError)releaseError=error;}
+    if(releaseError)throw releaseError;
+  };
+  // Called on the same async continuation as the native camera completion:
+  // no extra await between obtaining the disposable frame and JPEG/SD work.
+  const processFrame=captured=>{
+    frame=captured;
+    try{
+      markPhotoPhase('CAMERA_CAPTURE');
+      traceConversation('CAMERA_CAPTURE','ok '+frame.width+'x'+frame.height);
+      const tag=id(),name='photo-'+tag+'.jpg',image=name;
+      trace('[photo] jpeg encode begin\n');
+      markPhotoPhase('JPEG_START');
+      traceConversation('JPEG_START',frame.width+'x'+frame.height);
+      jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
+      trace('[photo] jpeg encode done bytes='+jpeg.byteLength+'\n');
+      markPhotoPhase('JPEG_DONE');
+      traceConversation('JPEG_DONE','bytes='+jpeg.byteLength);
+      trace('[photo] sd save begin\n');
+      markPhotoPhase('SD_SAVE_START');
+      traceConversation('SD_SAVE_START',image);
+      save(image,[jpeg]);
+      trace('[photo] sd save done\n');
+      markPhotoPhase('CAMERA_SAVE');
+      traceConversation('CAMERA_SAVE',image+' bytes='+jpeg.byteLength);
+      return {name,image,width:frame.width,height:frame.height};
+    }catch(error){reportFailure(error);throw error;}
+    finally{releaseCamera(captured);}
+  };
+  markPhotoPhase('CAMERA_START');
+  traceConversation('CAMERA_START','capture 176x144');
+  try{
+    // Still guard the *whole* Promise/USB completion. If any JS continuation
+    // stalls after successful SD save, the independent timer still recovers.
+    photoRecoveryWatchdog(true);
+    if(typeof robot.camera.captureWithProcessor!=='function')
+      throw new Error('CoreS3 safe photo handoff unavailable');
+    result=await robot.camera.captureWithProcessor(
+      {width:176,height:144,imageType:'rgb565le'},processFrame
+    );
+    trace('[photo] processor returned to photo\n');
+  }catch(error){reportFailure(error);throw error;}
   finally{
-   markPhotoPhase('CAMERA_CLOSE');
-   trace('[photo] camera close begin\n');
-   try{await robot.camera.close();markPhotoPhase('CAMERA_CLOSED');trace('[photo] camera close done\n');}
-   finally{
-    try{photoRecoveryWatchdog(false);}catch(e){trace('[photo] watchdog disarm failed\n');}
+    if(!cameraClosed){
+      try{releaseCamera(frame);}
+      catch(error){trace('[photo] incomplete camera release type='+String(error?.name||'Error').slice(0,48)+'\n');}
+    }
+    // A failed native camera close is unsafe: keep the recovery watchdog armed.
+    if(cameraClosed){
+      try{photoRecoveryWatchdog(false);}catch(error){trace('[photo] watchdog disarm failed\n');}
+    }else trace('[photo] camera close unconfirmed; recovery watchdog armed\n');
     busy=wasBusy;
-   }
   }
- }
- if(args.analyze!==false)Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
- return result;
+  if(args.analyze!==false)Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
+  return result;
 }
 
 async function describeImage(robot,name,jpeg,question){
