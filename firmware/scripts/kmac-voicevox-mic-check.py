@@ -71,7 +71,7 @@ class Device:
         self.token=token
         self.opener=build_opener(ProxyHandler({}),NoRedirect())
     def request(self, path, data=None, max_bytes=65536):
-        if path not in ('/status','/rpc') and not re.fullmatch(r'/media\\?name=audio-[0-9]+-[0-9]+\\.wav',path):
+        if path not in ('/status','/rpc') and not re.fullmatch(r'/media\?name=audio-[0-9]+-[0-9]+\.wav',path):
             raise ValueError('Invalid device endpoint')
         body=None if data is None else json.dumps(data,separators=(',',':')).encode()
         req=Request(self.base+path,data=body,method='POST' if body is not None else 'GET',
@@ -95,11 +95,11 @@ class Device:
         if not isinstance(raw,dict) or 'error' in raw:
             raise ValueError('Device could not record microphone')
         name=raw.get('name')
-        if not isinstance(name,str) or not re.fullmatch(r'audio-[0-9]+-[0-9]+\\.wav',name):
+        if not isinstance(name,str) or not re.fullmatch(r'audio-[0-9]+-[0-9]+\.wav',name):
             raise ValueError('Invalid microphone recording filename')
         return name
     def download(self,name):
-        if not re.fullmatch(r'audio-[0-9]+-[0-9]+\\.wav',name):
+        if not re.fullmatch(r'audio-[0-9]+-[0-9]+\.wav',name):
             raise ValueError('Invalid recording name')
         return self.request('/media?name='+quote(name),max_bytes=2*1024*1024)
 
