@@ -33,3 +33,16 @@ test('photo reports exact conversion/save stages and waits for camera close',()=
   assert.ok(photo.indexOf('JPEG_DONE') < photo.indexOf('SD_SAVE_START'))
   assert.ok(photo.indexOf('SD_SAVE_START') < photo.indexOf('CAMERA_SAVE'))
 })
+
+test('photo recovery watchdog runs independently of JS during camera/JPEG/SD and is disarmed in finally',()=>{
+  const native=readFileSync(new URL('../../host/app/archive-usb.c',import.meta.url),'utf8')
+  const usb=readFileSync(new URL('../../host/app/archive-usb.js',import.meta.url),'utf8')
+  const photo=archive.slice(archive.indexOf('async function photo('),archive.indexOf('async function describeImage('))
+  assert.match(native, /#define SC_PHOTO_WATCHDOG_US 60000000LL/)
+  assert.match(native, /esp_timer_start_once\(/)
+  assert.match(native, /esp_restart\(\)/)
+  assert.match(usb, /photoRecoveryWatchdog = native\('xs_archive_photo_watchdog'\)/)
+  assert.ok(photo.indexOf('photoRecoveryWatchdog(true)')>=0)
+  assert.ok(photo.indexOf('photoRecoveryWatchdog(true)')<photo.indexOf('robot.camera.capture'))
+  assert.ok(photo.indexOf('photoRecoveryWatchdog(false)')>photo.indexOf('await robot.camera.close()'))
+})
