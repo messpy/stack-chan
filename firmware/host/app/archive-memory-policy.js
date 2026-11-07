@@ -22,3 +22,19 @@ export function checkCameraMemory(heap) {
   if(free<96*1024||largest<32*1024)
     throw new Error('カメラ用の内蔵RAMが不足しています（空き '+free+' / 連続 '+largest+' バイト）。音声解放後も不足しているため撮影を中止します');
 }
+
+export async function waitForCameraMemory({read,collect,delay,now=Date.now,timeoutMs=1500,pollMs=150}) {
+  // No sensor allocation is attempted until internal SRAM is demonstrably usable.
+  const deadline=now()+timeoutMs;
+  let lastError;
+  while(true){
+    try{collect?.();}catch(_){}
+    try{
+      const heap=read();
+      checkCameraMemory(heap);
+      return heap;
+    }catch(error){lastError=error;}
+    if(now()>=deadline)throw lastError;
+    await delay(pollMs);
+  }
+}
