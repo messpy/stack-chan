@@ -1,4 +1,5 @@
 import {headDirectionFromText} from 'archive-head-motion'
+import {directPhotoRequest} from 'archive-direct-photo'
 import {heapStatus,collectMemory} from 'archive-usb'
 import {traceConversation} from 'archive-debug'
 import {checkVoiceMemory,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
@@ -861,6 +862,46 @@ async function connect() {
               }catch(_){trace('[speaker] introduction needs clarification\n')}
             }
             const recognized=input;input = ''
+            // CoreS3's camera needs internal DMA/driver RAM. Do not initialize
+            // it while XiaoZhi, Opus and TLS own the voice session (#33/#40).
+            // Only an affirmative complete photo command takes this local path.
+            if (directPhotoRequest(recognized)) {
+              trace('[vision] explicit local photo requested; release voice before camera\n')
+              traceConversation('LOCAL_PHOTO_START', 'voice session handoff')
+              if (!photoHandler) {
+                robot.showBalloon('カメラを利用できません。')
+                return
+              }
+              Timer.set(async () => {
+                let released=false
+                try {
+                  if (chat!==instance || !running()) return
+                  closeChat()
+                  released=true
+                  state='waiting'
+                  // Reconnection must not overlap the camera's native allocations.
+                  retryAt=Date.now()+30000
+                  try {collectMemory()} catch(_) {}
+                  await new Promise(resolve=>Timer.set(resolve,200))
+                  const photo=await photoHandler({analyze:false})
+                  const saved=!!photo?.image
+                  if (saved) archive('output','写真を撮影してSDカードに保存しました。',undefined,photo.image)
+                  traceConversation('LOCAL_PHOTO_DONE', saved ? 'saved' : 'no image')
+                  robot.showBalloon(saved?'写真を撮影してSDカードに保存しました。':'写真を撮影できませんでした。')
+                } catch(e) {
+                  trace('[vision] explicit photo error type='+String(e?.name||'Error').slice(0,32)+'\n')
+                  traceConversation('LOCAL_PHOTO_ERROR', String(e?.name||'Error'))
+                  robot.showBalloon('写真を撮影できませんでした。')
+                } finally {
+                  if (released && running()) {
+                    state='waiting'
+                    retryAt=Date.now()+1000
+                    trace('[vision] camera freed; voice reconnect scheduled\n')
+                  }
+                }
+              },0)
+              return
+            }
             // A short, explicit physical command should not depend on whether
             // the cloud chooses a function call or only speaks an acknowledgement.
             if (!standalone && !recognitionOnly) {
