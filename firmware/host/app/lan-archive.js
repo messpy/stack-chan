@@ -29,7 +29,7 @@ import {analyzeJPEG,visionStatus} from 'archive-vision';
 import {startAlarmSettings,openAlarmSettings,showRingingAlarm,hideRingingAlarm} from 'archive-alarm-ui';
 import {alarmSoundCommand,playAlarmSound} from 'archive-alarm-sound';
 import {startWeb,openControl,controlStatus} from 'archive-web';
-import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat} from 'archive-direct-chat';
+import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat,beginCameraHandoff,finishCameraHandoff} from 'archive-direct-chat';
 import {recordMemory,history,deviceHistory,currentSpeaker,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
 import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
 import {acceptAudioChunk} from 'archive-audio-upload';
@@ -261,9 +261,12 @@ export function startArchive(robot) {
   async function execute(request){
     if(monitor.active&&!request.op.startsWith('/monitor/')&&!['/status','/volume','/chat/status','/files','/files/page','/network/status','/speaker/list','/settings/status','/reminders','/debug/status','/motor-status','/media/trash'].includes(request.op))throw new Error('動作確認を終了してから操作してください');
     const capture=['/face/save','/face/restore','/alarm-sound/preview','/motor/test','/motor/recover','/image/finish','/photo','/record','/audio','/chat-record'].includes(request.op);
-    const paused=capture?pauseDirectChat():false;
+    const paused=request.op==='/photo'?false:(capture?pauseDirectChat():false);
+    let photoHandoff=false;
     try{
       if(request.op==='/photo'){
+        beginCameraHandoff();
+        photoHandoff=true;
         // Let the prior audio session yield before reserving camera native buffers.
         markPhotoPhase('VOICE_RELEASE');
         await new Promise(resolve=>Timer.set(resolve,200));
@@ -274,6 +277,7 @@ export function startArchive(robot) {
             delay:ms=>new Promise(resolve=>Timer.set(resolve,ms))
           });
         }catch(error){markPhotoPhase('RAM_BLOCKED');throw error;}
+        markPhotoPhase('RAM_READY');
       }
       let result;
       if(request.op==='/monitor/start')result=monitor.start();
@@ -408,7 +412,7 @@ export function startArchive(robot) {
         });
       }else throw new Error('Unknown operation');
       return result;
-    }finally{if(paused)resumeDirectChat();}
+    }finally{if(photoHandoff)finishCameraHandoff();else if(paused)resumeDirectChat();}
   }
   // Read-only status survives an outstanding asynchronous camera RPC.
   // A synchronous native-driver deadlock can still stop this JS scheduler.
