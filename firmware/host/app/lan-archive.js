@@ -166,13 +166,14 @@ async function photo(robot,args={},fromConversation=false) {
     throw error;
   } finally {
     try { frame?.close?.(); } catch(error) { trace('[archive-camera] frame close failed\n'); }
+    let stopFailed=false;
     try { await robot.camera.stop(); } catch(error) {
+      stopFailed=true;
       trace('[archive-camera] stop failed\n');
       if(!primaryError)throw error;
     } finally {
-      // A failed native start can leave an allocated but non-running camera.
-      // The regular stop() only stops streaming; close() releases the object.
-      if(primaryError)try{await robot.camera.close?.()}catch(_){
+      // A failed native start/stop can leave an allocated camera object behind.
+      if(primaryError||stopFailed)try{await robot.camera.close?.()}catch(_){
         trace('[archive-camera] close after failure failed\n');
       }
       if(ownsBusy)busy=false;
