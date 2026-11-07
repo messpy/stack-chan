@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Align the Moddable CoreS3 GC0308 camera with M5CoreS3's two-PSRAM-buffer policy.
 
-Applied only by the CoreS3 archive build, not at runtime. Refuse unexpected
+The camera module is loaded from modules/io/imagein/camera/esp32/camera,\nas specified by firmware/host/modules/camera/manifest_device.json.\nApplied only by the CoreS3 archive build, not at runtime. Refuse unexpected
 SDK versions rather than silently changing other camera configurations.
 The original shared SDK file is kept next to it for manual rollback.
 """
@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 MARKER = "STACKCHAN_CORE_S3_CAMERA_2FB"
-SRC = Path("modules/embedded/io/image/in/camera/esp32/camera.c")
+SRC = Path("modules/io/imagein/camera/esp32/camera.c")
 BACKUP_SUFFIX = ".stackchan-original"
 FRAMES = "#define kCameraFrameCount (3)"
 FB = ".fb_count = 3,"
@@ -46,7 +46,7 @@ def patch_source(source):
 def apply(root):
     path = Path(root) / SRC
     if not path.is_file():
-        raise RuntimeError(f"Moddable camera source not found: {path}")
+        raise RuntimeError(f"Moddable camera source not found: {path} (check manifest_device.json camera module path)")
     before = path.read_text(encoding="utf8")
     after = patch_source(before)
     if after == before:
