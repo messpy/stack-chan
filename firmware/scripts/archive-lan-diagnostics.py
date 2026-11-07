@@ -87,8 +87,13 @@ def clean_snapshot(value: object) -> dict:
     uptime = boot.get("uptimeMs")
     safe_uptime = uptime if type(uptime) in (int, float) and 0 <= uptime < 1e14 else None
     raw_audio = value.get("audio") if isinstance(value.get("audio"), dict) else {}
-    audio = counters(raw_audio, ("lastInputAt", "lastSentAt", "lastASRAt", "overrunBytes",
-                                "sampleRate", "underruns", "overruns", "bufferedMs", "queuedMs", "reconnectCount"))
+    # Date.now() is epoch milliseconds (> 10**12 since 2001). Unlike byte
+    # counters, timestamp fields need a larger bound or valid samples show null.
+    audio = counters(raw_audio, ("overrunBytes", "sampleRate", "underruns",
+                                "overruns", "bufferedMs", "queuedMs", "reconnectCount"))
+    for key in ("lastInputAt", "lastSentAt", "lastASRAt"):
+        stamp = raw_audio.get(key)
+        audio[key] = stamp if type(stamp) is int and 0 <= stamp < 10**14 else None
     for key in ("provider", "input", "output", "worker", "lastError", "phase"):
         audio[key] = safe_tag(raw_audio.get(key))
     for key in ("uploadEnabled", "playbackActive"):
