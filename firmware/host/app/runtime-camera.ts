@@ -108,26 +108,35 @@ export class StackchanRuntimeCamera implements RobotCamera {
   }
 
   close(): Promise<void> | void {
-    const finish = () => {
-      const result = this.#camera.close?.()
-      const done = () => {
-        traceMessage('[runtime-camera] close done\n')
+    const done = () => {
+      traceMessage('[runtime-camera] close done\n')
+      this.#cameraActive = false
+      // The touch sensor shares CoreS3 internal I2C pins with camera SCCB.
+      // Never restart it until the native camera has released its bus.
+      this.#resumeTouchPanel()
+    }
+    const fail = (error: unknown): never => {
+      this.#cameraActive = false
+      this.#resumeTouchPanel()
+      throw error
+    }
+    const finish = (): Promise<void> | void => {
+      try {
+        const result = this.#camera.close?.()
+        if (isThenable(result)) return result.then(() => done(), fail)
+        done()
+      } catch (error) {
+        fail(error)
       }
-      if (isThenable(result)) return result.then(done)
-      done()
     }
 
     try {
       traceMessage('[runtime-camera] close begin\n')
       const result = this.#camera.stop()
-      this.#cameraActive = false
-      this.#touchPanelPaused = false
-      if (isThenable(result)) return result.then(() => finish())
+      if (isThenable(result)) return result.then(() => finish(), fail)
       return finish()
     } catch (error) {
-      this.#cameraActive = false
-      this.#touchPanelPaused = false
-      throw error
+      return fail(error)
     }
   }
 
@@ -138,9 +147,13 @@ export class StackchanRuntimeCamera implements RobotCamera {
       traceMessage('[runtime-camera] capture begin\n')
       const frame = await this.#camera.capture(options)
       traceMessage(`[runtime-camera] capture done frame=${frame ? 'yes' : 'no'}\n`)
+      // The frame is still backed by native camera DMA memory.
+      // Keep touch paused through JPEG conversion until stop()/close().
+      this.#cameraActive = true
       return frame
-    } finally {
+    } catch (error) {
       if (!wasActive) this.#resumeTouchPanel()
+      throw error
     }
   }
 
