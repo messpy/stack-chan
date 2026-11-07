@@ -56,7 +56,7 @@ test('camera handoff prevents reconnect during both USB and voice photo, then re
   const direct=readFileSync(new URL('../../host/app/archive-direct-chat.js',import.meta.url),'utf8')
   const connect=direct.slice(direct.indexOf('async function connect()'),direct.indexOf('async function connect()')+240)
   const voicePhoto=direct.slice(direct.indexOf('if (directPhotoRequest(recognized))'),direct.indexOf('// A short, explicit physical command'))
-  const usbExecute=archive.slice(archive.indexOf('  async function execute(request)'),archive.indexOf('async function describeImage(')>0?archive.length:archive.length)
+  const usbExecute=archive.slice(archive.indexOf('  async function execute(request)'))
   assert.match(connect,/photoHandoffActive/)
   assert.match(direct,/if \(!running\(\) \|\| photoHandoffActive\) return/)
   assert.match(direct,/export function beginCameraHandoff\(\)/)
