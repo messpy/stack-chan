@@ -65,6 +65,42 @@ def safe_status(raw: dict) -> dict:
         },
     }
 
+def safe_pipeline(raw: dict) -> dict:
+    if not isinstance(raw, dict) or raw.get('schema') != 1:
+        raise ValueError('Invalid diagnostics schema')
+    audio = raw.get('audio') if isinstance(raw.get('audio'), dict) else {}
+    heap = raw.get('heap') if isinstance(raw.get('heap'), dict) else {}
+    def timestamp(value):
+        return value if type(value) is int and 0 <= value < 10**14 else None
+    return {
+        'input':clean_tag(audio.get('input')),
+        'worker':clean_tag(audio.get('worker')),
+        'uploadEnabled':audio.get('uploadEnabled') is True,
+        'lastInputAt':timestamp(audio.get('lastInputAt')),
+        'lastSentAt':timestamp(audio.get('lastSentAt')),
+        'lastASRAt':timestamp(audio.get('lastASRAt')),
+        'lastError':clean_tag(audio.get('lastError')),
+        'reconnectCount':clean_number(audio.get('reconnectCount')),
+        'internalFree':clean_number(heap.get('internalFree')),
+    }
+
+def pipeline_line(stage: str, obj: dict, first: dict | None = None):
+    suffix = ''
+    if first:
+        suffix = (' sent_advanced=' + str(
+            obj.get('lastSentAt') is not None and
+            first.get('lastSentAt') is not None and
+            obj['lastSentAt'] > first['lastSentAt']))
+    print('[CHECK] PIPELINE '+stage+
+          ' input='+str(obj.get('input'))+
+          ' worker='+str(obj.get('worker'))+
+          ' upload='+str(obj.get('uploadEnabled'))+
+          ' capturedAt='+str(obj.get('lastInputAt'))+
+          ' sentAt='+str(obj.get('lastSentAt'))+
+          ' lastError='+str(obj.get('lastError'))+
+          ' reconnects='+str(obj.get('reconnectCount'))+
+          ' heap='+str(obj.get('internalFree'))+suffix, flush=True)
+
 class Device:
     def __init__(self, ip: str, token: str):
         self.url = f'http://{device_ip(ip)}:8082'
@@ -72,7 +108,7 @@ class Device:
         self.opener = build_opener(ProxyHandler({}), NoRedirect())
 
     def request(self, route: str, payload: dict | None = None) -> dict:
-        if route not in ('/status', '/rpc'): raise ValueError('Unsupported route')
+        if route not in ('/status', '/rpc', '/diagnostics'): raise ValueError('Unsupported route')
         body = None if payload is None else json.dumps(payload, separators=(',',':')).encode()
         req = Request(self.url + route, data=body, method='GET' if body is None else 'POST',
                       headers={'Authorization': 'Bearer ' + self.token, 'Accept': 'application/json',
@@ -88,6 +124,9 @@ class Device:
 
     def status(self):
         return safe_status(self.request('/status'))
+
+    def diagnostics(self):
+        return safe_pipeline(self.request('/diagnostics'))
 
     def start_ai(self):
         self.request('/rpc', {'op':'/chat/start','args':{}})
@@ -159,6 +198,8 @@ def main(argv=None):
         dev=Device(args.ip,token)
         before=dev.status()
         status_line('BEFORE',before)
+        before_pipeline = dev.diagnostics()
+        pipeline_line('BEFORE',before_pipeline)
         if args.status_only: return 0
         if args.enable_ai and not before['chat']['enabled']:
             step='MODE'
@@ -183,6 +224,7 @@ def main(argv=None):
         out = args.output_dir/('trial-'+dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ'))
         out.mkdir(mode=0o700,exist_ok=False)
         save(out/'before.json',before)
+        save(out/'pipeline-before.json',before_pipeline)
         print('[ACTION] STEP=VOICEVOX ALSA経由で「'+args.text[:50]+'」を再生',flush=True)
         play=subprocess.run([sys.executable,str(player),'--speak-script',str(args.speak_script),
                             '--player','aplay','--alsa-device',args.alsa_device,args.text],
@@ -192,23 +234,38 @@ def main(argv=None):
             return 1
         step='POLL'
         latest=before
+        latest_pipeline=before_pipeline
         end=time.monotonic()+args.wait
         while time.monotonic()<end:
             time.sleep(2)
             try:
                 latest=dev.status()
+                latest_pipeline=dev.diagnostics()
             except (OSError,ValueError,HTTPError,URLError,TimeoutError) as exc:
                 print('[WARN] STEP=POLL '+type(exc).__name__+'（再試行）',flush=True)
                 continue
             status_line('AFTER',latest,before)
+            pipeline_line('AFTER',latest_pipeline,before_pipeline)
             p=latest['photo']
             if (p['startedAt'] is not None and p['startedAt']>(before['photo']['startedAt'] or 0)
                     and p['phase'] in ('error','complete','saved','analysis-unavailable')):
                 break
         save(out/'after.json',latest)
+        save(out/'pipeline-after.json',latest_pipeline)
         step='VERDICT'
         result,reason=verdict(before,latest)
         print(f'[CHECK] STEP=VERDICT {result}: {reason}',flush=True)
+        if result in ('NO_INPUT', 'NO_ASR', 'NO_PHOTO'):
+            original_send=before_pipeline.get('lastSentAt')
+            final_send=latest_pipeline.get('lastSentAt')
+            if not latest_pipeline.get('uploadEnabled'):
+                print('[WARN] Upload is not enabled in the final pipeline snapshot',flush=True)
+            elif final_send in (None,0):
+                print('[WARN] Native audio upload time was not recorded',flush=True)
+            elif original_send is not None and final_send>original_send:
+                print('[INFO] Native upload advanced; cloud-side ASR response not proven',flush=True)
+            else:
+                print('[WARN] Native upload timestamp did not advance in observed interval',flush=True)
         print(f'[INFO] 診断保存先={out} （認証情報/音声本文は保存しません）',flush=True)
         print('[INFO] 実際の発話の聞き取りと画像内容・会話復帰は別途確認が必要',flush=True)
         return 0 if result=='PASS' else 1 if result=='FAIL' else 2
