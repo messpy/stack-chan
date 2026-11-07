@@ -47,6 +47,7 @@ jobs:
         run: |
           node --check firmware/host/app/archive-direct-chat.js
           node --check firmware/host/app/lan-archive.js
+          bash -n firmware/scripts/kmac-pr55-acceptance.sh
       - name: Photo and voice-mode integration regression
         run: |
           node --experimental-vm-modules --test \
