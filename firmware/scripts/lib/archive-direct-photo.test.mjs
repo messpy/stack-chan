@@ -6,7 +6,7 @@ const src=readFileSync(new URL('../../host/app/archive-direct-photo.js',import.m
 const {directPhotoRequest}=await import('data:text/javascript;base64,'+Buffer.from(src).toString('base64'))
 
 test('explicit commands use local camera only',()=>{
-  for(const text of ['写真撮って。','写真を撮って','写真を一枚撮って','写真を1枚撮って','スタックチャン、写真撮って','スタックちゃん 写真を撮って','カメラで写真を撮影してください'])
+  for(const text of ['写真撮って。','写真を撮って','写真を一枚撮って','写真を1枚撮って','スタックチャン、写真撮って','スタックちゃん 写真を撮って','マックちゃん写真撮って。','マックチャン、写真を撮って','カメラで写真を撮影してください'])
     assert.equal(directPhotoRequest(text),true,text)
 })
 test('mentions, questions, negative or ambiguous text never trigger camera',()=>{
@@ -28,3 +28,15 @@ test('XiaoZhi resources are closed before local photo and analysis is disabled',
   assert.match(lan,/args=>photo\(robot,\{\.\.\.args,analyze:args\?\.analyze!==false\},true\)/)
   assert.match(lan,/robot\.camera\.close\(\)/)
 })
+
+test('cloud camera tool cannot allocate native camera while voice owns internal SRAM',()=>{
+  const chat=readFileSync(new URL('../../host/app/archive-direct-chat.js',import.meta.url),'utf8')
+  const start=chat.indexOf("if (name === 'camera_describe')")
+  const end=chat.indexOf('if (memoryTools.some(',start)
+  const body=chat.slice(start,end)
+  assert.ok(start>=0 && end>start)
+  assert.match(body,/if \(chat === instance\)/)
+  assert.match(body,/CAMERA_BLOCKED/)
+  assert.ok(body.indexOf('return {error:')>=0 && body.indexOf('return {error:')<body.indexOf('photoHandler(args)'))
+})
+
