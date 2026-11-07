@@ -47,6 +47,14 @@ jobs:
             firmware/scripts/lib/archive-usb-rpc.test.mjs
       - name: Preserve admission guard
         run: node firmware/scripts/lib/archive-memory-policy.test.mjs
+      - name: Parse JavaScript modules and manifests
+        run: |
+          node --check firmware/host/app/archive-usb-rpc.js
+          node --check firmware/host/app/archive-memory-policy.js
+          node --check firmware/host/app/archive-direct-chat.js
+          node --check firmware/host/app/lan-archive.js
+          python3 -m json.tool firmware/host/app/manifest_local.json > /dev/null
+          python3 -m json.tool firmware/host/app/manifest_archive.example.json > /dev/null
       - name: Check shell and Python syntax
         run: |
           bash -n firmware/scripts/stackchan-ci.sh
