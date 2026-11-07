@@ -10,6 +10,7 @@ import { startSpeakerChooser, openSpeakerChooser } from 'archive-speaker-ui'
 import { setXiaoZhiVision, setVisionProvisioner } from 'archive-xiaozhi-vision'
 import { visionTools } from 'archive-vision'
 import Timer from 'timer'
+import Time from 'time'
 import { URL } from 'url'
 import { ChatService, createXiaozhiV1Connection, ChatState } from 'chat'
 import { DEFAULT_GEMINI_MODEL } from 'archive-gemini-protocol'
@@ -893,7 +894,7 @@ async function connect() {
                   try {collectMemory()} catch(_) {}
                   await new Promise(resolve=>Timer.set(resolve,200))
                   await waitForCameraMemory({
-                    read:heapStatus,collect:collectMemory,
+                    read:heapStatus,collect:collectMemory,now:()=>Time.ticks,
                     delay:ms=>new Promise(resolve=>Timer.set(resolve,ms))
                   })
                   const photo=await photoHandler({analyze:false})
