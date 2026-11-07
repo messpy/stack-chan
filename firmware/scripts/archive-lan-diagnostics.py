@@ -104,6 +104,8 @@ def clean_snapshot(value: object) -> dict:
         "photo": {"phase": safe_tag(photo.get("phase")),
                   "errorStage": None if photo.get("errorStage") is None
                                 else safe_tag(photo.get("errorStage")),
+                  "errorReasonClass": None if photo.get("errorReasonClass") is None
+                                      else safe_tag(photo.get("errorReasonClass")),
                   "saved": photo.get("saved") is True,
                   "active": photo.get("active") is True}}
 
