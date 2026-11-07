@@ -22,6 +22,7 @@ import threading
 import time
 import wave
 from urllib.error import HTTPError, URLError
+import socket
 from urllib.parse import quote
 from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHandler
 
@@ -31,6 +32,39 @@ DEFAULT_VOICE = Path('/home/kmac/work/camera-voicevox/audio')
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, msg, headers, newurl):
         raise ValueError('Redirect refused')
+
+def classify_capture_error(exc):
+    """Return a bounded safe cause; never include raw HTTP response or credentials."""
+    if isinstance(exc, HTTPError):
+        try:
+            raw=exc.read(2048).decode('utf-8', errors='replace')
+        except (OSError, UnicodeError):
+            raw=''
+        low=raw.lower()
+        if any(word in low for word in ('busy','使用中','処理中','in progress')):
+            suffix='busy'
+        elif any(word in low for word in ('memory','heap','alloc','メモリ')):
+            suffix='memory'
+        elif any(word in low for word in ('sd card','sdcard','storage','保存','カード')):
+            suffix='storage'
+        elif any(word in low for word in ('audio','microphone','record','マイク','録音')):
+            suffix='audio'
+        else:
+            suffix='unknown'
+        return f'http-{exc.code}-{suffix}'
+    if isinstance(exc, (socket.timeout, TimeoutError)):
+        return 'timeout'
+    if isinstance(exc, URLError):
+        return 'network-unavailable'
+    if isinstance(exc, ValueError):
+        text=str(exc)
+        if text=='Invalid microphone recording filename': return 'invalid-recording-filename'
+        if text=='Device could not record microphone': return 'record-rpc-error'
+        if text in ('record-rpc-busy','record-rpc-memory'): return text
+        if text=='Device response too large': return 'response-too-large'
+        return 'invalid-response'
+    return type(exc).__name__
+
 
 def private_ip(ip):
     value = ipaddress.IPv4Address(ip)
@@ -92,7 +126,15 @@ class Device:
         return {'enabled':c.get('enabled') is True,'state':str(c.get('state','unknown'))[:30]}
     def record(self):
         raw=json.loads(self.request('/rpc',{'op':'/audio','args':{}}))
-        if not isinstance(raw,dict) or 'error' in raw:
+        if not isinstance(raw,dict):
+            raise ValueError('Device could not record microphone')
+        if 'error' in raw:
+            # Do not print raw device message, which may contain private data.
+            cause=str(raw['error']).lower()[:200]
+            if any(word in cause for word in ('busy','使用中','処理中','in progress')):
+                raise ValueError('record-rpc-busy')
+            if any(word in cause for word in ('memory','heap','alloc','メモリ')):
+                raise ValueError('record-rpc-memory')
             raise ValueError('Device could not record microphone')
         name=raw.get('name')
         if not isinstance(name,str) or not re.fullmatch(r'audio-[0-9]+-[0-9]+\.wav',name):
@@ -139,7 +181,7 @@ def main(argv=None):
         result={}
         def capture():
             try: result['name']=device.record()
-            except Exception as exc: result['error']=type(exc).__name__
+            except Exception as exc: result['error']=classify_capture_error(exc)
         thread=threading.Thread(target=capture,daemon=True)
         thread.start()
         time.sleep(0.9)
@@ -152,7 +194,15 @@ def main(argv=None):
         if thread.is_alive():
             raise TimeoutError('StackChan record response timeout')
         if 'name' not in result:
-            raise ValueError('StackChan recording failed ('+str(result.get('error','unknown'))+')')
+            cause=result.get('error','unknown')
+            print('[ERROR] STEP=CAPTURE cause='+str(cause),flush=True)
+            try:
+                status=device.status()
+                print('[CHECK] STEP=AFTER_FAILURE chat='+status['state']+
+                      ' ai='+str(status['enabled']),flush=True)
+            except (OSError,ValueError,HTTPError,URLError,TimeoutError):
+                print('[WARN] STEP=AFTER_FAILURE status-unavailable',flush=True)
+            raise ValueError('StackChan microphone capture failed')
         step='DOWNLOAD'
         data=device.download(result['name'])
         if not data.startswith(b'RIFF'):
