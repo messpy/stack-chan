@@ -37,7 +37,7 @@ import {startSettings,openSettings,closeSettings,getSettingsStatus,vaultSelfTest
 import {startDeviceTools,setAlarmDisplay,setAlarmMotion,callDeviceTool,listDeviceTools,reminderStatus} from 'archive-tools';
 import Time from 'time';
 import {getM5StackChanDriver} from 'm5stackchan-servo-driver';
-import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG} from 'archive-usb';
+import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG,photoRecoveryWatchdog} from 'archive-usb';
 import Base64 from 'base64';
 import config from 'mc/config';
 import {HttpServerService, Response} from 'http-server-service';
@@ -99,6 +99,9 @@ async function photo(robot,args={},fromConversation=false) {
  markPhotoPhase('CAMERA_START');
  traceConversation('CAMERA_START','capture 176x144');
  try{
+  // An independent ESP timer can reboot the SoC if native code blocks the XS VM.
+  // The guard is stopped only after the camera and SD operation are released.
+  photoRecoveryWatchdog(true);
   frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});if(!frame)throw new Error('No camera frame');
   markPhotoPhase('CAMERA_CAPTURE');
   traceConversation('CAMERA_CAPTURE','ok '+frame.width+'x'+frame.height);
@@ -127,7 +130,10 @@ async function photo(robot,args={},fromConversation=false) {
    markPhotoPhase('CAMERA_CLOSE');
    trace('[photo] camera close begin\n');
    try{await robot.camera.close();markPhotoPhase('CAMERA_CLOSED');trace('[photo] camera close done\n');}
-   finally{busy=wasBusy;}
+   finally{
+    try{photoRecoveryWatchdog(false);}catch(e){trace('[photo] watchdog disarm failed\n');}
+    busy=wasBusy;
+   }
   }
  }
  if(args.analyze!==false)Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
