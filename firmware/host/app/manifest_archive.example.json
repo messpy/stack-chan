@@ -29,6 +29,7 @@
     "archive-settings": "./archive-settings",
     "archive-vault": "./archive-vault",
     "archive-head-motion": "./archive-head-motion",
+    "archive-direct-photo": "./archive-direct-photo",
     "archive-head-jog": "./archive-head-jog",
     "archive-memory-policy": "./archive-memory-policy",
     "archive-tools": "./archive-tools",
