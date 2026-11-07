@@ -1,5 +1,6 @@
 #include "xsmc.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "esp_heap_caps.h"
 #include "xsHost.h"
 #include "driver/usb_serial_jtag.h"
@@ -57,6 +58,37 @@ void xs_archive_usb_write(xsMachine *the) {
 }
 
 void xs_archive_usb_reboot(xsMachine *the) { usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(200)); esp_restart(); }
+
+// Independent of the XS event loop: recover from a stuck synchronous camera/JPEG/SD call.
+// Only the active still-photo path may arm this guard. 60s is well above normal capture time.
+#define SC_PHOTO_WATCHDOG_US 60000000LL
+static esp_timer_handle_t sc_photo_watchdog_timer;
+static void sc_photo_watchdog_fire(void *arg) {
+    (void)arg;
+    esp_restart();
+}
+void xs_archive_photo_watchdog(xsMachine *the) {
+    const bool enable = xsmcToBoolean(xsArg(0));
+    if (!enable) {
+        if (sc_photo_watchdog_timer)
+            (void)esp_timer_stop(sc_photo_watchdog_timer);
+        return;
+    }
+    if (!sc_photo_watchdog_timer) {
+        const esp_timer_create_args_t args = {
+            .callback = sc_photo_watchdog_fire,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "sc_photo_guard"
+        };
+        esp_err_t error = esp_timer_create(&args, &sc_photo_watchdog_timer);
+        if (error != ESP_OK) xsUnknownError("Camera recovery watchdog unavailable");
+    }
+    // Stopping a not-yet-running timer returns ESP_ERR_INVALID_STATE, which is safe.
+    (void)esp_timer_stop(sc_photo_watchdog_timer);
+    if (esp_timer_start_once(sc_photo_watchdog_timer, SC_PHOTO_WATCHDOG_US) != ESP_OK)
+        xsUnknownError("Camera recovery watchdog start failed");
+}
+
 
 void xs_archive_rgb24(xsMachine *the) {
     void *data; xsUnsignedValue length;
