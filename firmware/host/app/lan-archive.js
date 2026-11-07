@@ -37,7 +37,7 @@ import {startSettings,openSettings,closeSettings,getSettingsStatus,vaultSelfTest
 import {startDeviceTools,setAlarmDisplay,setAlarmMotion,callDeviceTool,listDeviceTools,reminderStatus} from 'archive-tools';
 import Time from 'time';
 import {getM5StackChanDriver} from 'm5stackchan-servo-driver';
-import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG,photoRecoveryWatchdog,photoRecoveryTriggered} from 'archive-usb';
+import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG,photoRecoveryWatchdog,photoRecoveryTriggered,photoRecoveryCheckpoint,photoRecoveryLastCheckpoint} from 'archive-usb';
 import Base64 from 'base64';
 import config from 'mc/config';
 import {HttpServerService, Response} from 'http-server-service';
@@ -50,7 +50,17 @@ let lastError='';
 let audioUpload;
 let server;
 let photoProgress='idle';
-function markPhotoPhase(phase){photoProgress=phase;trace('[photo] stage='+phase+'\n');}
+const photoStageCodes={
+  HANDOFF_BEGIN:1,VOICE_RELEASE:6,RAM_CHECK:7,RAM_READY:8,CAMERA_START:9,
+  CAMERA_CAPTURE:10,JPEG_START:11,JPEG_DONE:12,SD_SAVE_START:13,
+  CAMERA_SAVE:14,CAMERA_CLOSED:15
+};
+function markPhotoPhase(phase){
+  photoProgress=phase;
+  const code=photoStageCodes[phase];
+  if(code!==undefined)photoRecoveryCheckpoint(code);
+  trace('[photo] stage='+phase+'\n');
+}
 const folder='stackchan';
 const safe=name=>typeof name==='string' && /^[a-z0-9-]+\.(bmp|avi|wav|jpg|json|mp3)$/.test(name);
 function files(operation) {
@@ -301,9 +311,14 @@ export function startArchive(robot) {
     if(monitor.active&&!request.op.startsWith('/monitor/')&&!['/status','/volume','/chat/status','/files','/files/page','/network/status','/speaker/list','/settings/status','/reminders','/debug/status','/motor-status','/media/trash'].includes(request.op))throw new Error('動作確認を終了してから操作してください');
     const capture=['/face/save','/face/restore','/alarm-sound/preview','/motor/test','/motor/recover','/image/finish','/photo','/record','/audio','/chat-record'].includes(request.op);
     const paused=request.op==='/photo'?false:(capture?pauseDirectChat():false);
-    let photoHandoff=false;
+    let photoHandoff=false,photoGuardArmed=false,photoStarted=false;
     try{
       if(request.op==='/photo'){
+        // Native guard must cover synchronous voice teardown too, not only
+        // camera/JPEG. The previous hardware hang produced no VOICE_RELEASE.
+        photoRecoveryWatchdog(true);
+        photoGuardArmed=true;
+        markPhotoPhase('HANDOFF_BEGIN');
         beginCameraHandoff();
         photoHandoff=true;
         // Let the prior audio session yield before reserving camera native buffers.
@@ -422,11 +437,11 @@ export function startArchive(robot) {
       }
       else if(request.op==='/chat-record'){await robot.audio.tone(880,100,Math.min(robot.audio.volume,0.25));result=await recordAudio(robot);}
       else if(request.op==='/audio')result=await recordAudio(robot);
-      else if(request.op==='/photo')result=await photo(robot,request.args);
+      else if(request.op==='/photo'){photoStarted=true;result=await photo(robot,request.args);}
       else if(request.op==='/record')result=await record(robot);
       else if(request.op==='/status'){
         let sd=false;try{files(()=>{});sd=true;}catch(e){lastError=String(e);}
-        result={sd,camera:robot.camera.available!==false,busy:busy&&!directChatStatus().busy,usbOperation:{active:false,phase:photoProgress,watchdogReset:photoRecoveryTriggered()},chat:directChatStatus(),lastError,headTouch:!!robot.touchPanel,headSample:Array.from(robot.touchPanel?.sample??[]),transport:'usb+wifi',petting:'m5stack/StackChan',wifi:getSettingsStatus(),wifiDisplay:wifiDisplayStatus(),firmware:'stack-chan + M5Stack petting + USB archive'};
+        result={sd,camera:robot.camera.available!==false,busy:busy&&!directChatStatus().busy,usbOperation:{active:false,phase:photoProgress,watchdogReset:photoRecoveryTriggered(),watchdogStage:photoRecoveryLastCheckpoint()},chat:directChatStatus(),lastError,headTouch:!!robot.touchPanel,headSample:Array.from(robot.touchPanel?.sample??[]),transport:'usb+wifi',petting:'m5stack/StackChan',wifi:getSettingsStatus(),wifiDisplay:wifiDisplayStatus(),firmware:'stack-chan + M5Stack petting + USB archive'};
       }else if(['/media/delete','/media/restore','/media/trash'].includes(request.op)){
         if(busy&&!directChatStatus().busy&&request.op!=='/media/trash')throw new Error('撮影・録音が終わってから操作してください');
         result=files(root=>mediaTrash(root,request.op==='/media/trash'?'list':request.op.slice(7),request.args||{}));
@@ -451,7 +466,15 @@ export function startArchive(robot) {
         });
       }else throw new Error('Unknown operation');
       return result;
-    }finally{if(photoHandoff)finishCameraHandoff();else if(paused)resumeDirectChat();}
+    }finally{
+      // If admission/voice shutdown failed before photo() took ownership,
+      // disarm the early guard. If photo() ran, only that function may disarm
+      // after successful frame + camera release.
+      if(photoGuardArmed&&!photoStarted){
+        try{photoRecoveryWatchdog(false);}catch(error){trace('[photo] early watchdog disarm failed\n');}
+      }
+      if(photoHandoff)finishCameraHandoff();else if(paused)resumeDirectChat();
+    }
   }
   // Read-only status survives an outstanding asynchronous camera RPC.
   // A synchronous native-driver deadlock can still stop this JS scheduler.
@@ -462,8 +485,8 @@ export function startArchive(robot) {
     authenticate:request=>request.token===token,
     arm:armDebugDrain,
     inspect:(op,pending)=>op==='/debug/status'
-      ? {...debugLogStatus(),usbOperation:{...pending,phase:photoProgress,watchdogReset:photoRecoveryTriggered()}}
-      : {busy:true,usbOperation:{...pending,phase:photoProgress,watchdogReset:photoRecoveryTriggered()},
+      ? {...debugLogStatus(),usbOperation:{...pending,phase:photoProgress,watchdogReset:photoRecoveryTriggered(),watchdogStage:photoRecoveryLastCheckpoint()}}
+      : {busy:true,usbOperation:{...pending,phase:photoProgress,watchdogReset:photoRecoveryTriggered(),watchdogStage:photoRecoveryLastCheckpoint()},
          camera:robot.camera.available!==false,chat:{state:'busy'}},
     trace,
     now:()=>Time.ticks,
