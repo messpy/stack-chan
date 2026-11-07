@@ -6,6 +6,8 @@ No USB, firmware flashing, raw transcripts or credentials in diagnostic files.
 """
 from __future__ import annotations
 import argparse
+import errno
+import socket
 import datetime as dt
 import ipaddress
 import json
@@ -101,6 +103,23 @@ def pipeline_line(stage: str, obj: dict, first: dict | None = None):
           ' reconnects='+str(obj.get('reconnectCount'))+
           ' heap='+str(obj.get('internalFree'))+suffix, flush=True)
 
+class DeviceConnectionError(ConnectionError):
+    """Safe classification without exposing bearer token or device response body."""
+
+
+def connection_class(error):
+    cause = error.reason if isinstance(error, URLError) and not isinstance(error, HTTPError) else error
+    if isinstance(cause, (TimeoutError, socket.timeout)):
+        return 'timeout'
+    if isinstance(cause, ConnectionRefusedError):
+        return 'connection-refused'
+    if isinstance(cause, OSError) and cause.errno in (errno.EHOSTUNREACH, errno.ENETUNREACH):
+        return 'network-unreachable'
+    if isinstance(cause, ConnectionResetError):
+        return 'connection-reset'
+    return 'network-unavailable'
+
+
 class Device:
     def __init__(self, ip: str, token: str):
         self.url = f'http://{device_ip(ip)}:8082'
@@ -113,14 +132,30 @@ class Device:
         req = Request(self.url + route, data=body, method='GET' if body is None else 'POST',
                       headers={'Authorization': 'Bearer ' + self.token, 'Accept': 'application/json',
                                **({'Content-Type':'application/json'} if body is not None else {})})
-        with self.opener.open(req, timeout=5) as response:
-            data = response.read(65537)
-            if response.status != 200 or len(data)>65536:
-                raise ValueError('Invalid device response')
-        result = json.loads(data)
-        if not isinstance(result, dict) or 'error' in result:
-            raise ValueError('Device returned an error (details omitted)')
-        return result
+        # Only idempotent GET requests are retried. Never repeat AI-mode POST.
+        attempts = 4 if body is None else 1
+        for attempt in range(1, attempts+1):
+            try:
+                with self.opener.open(req, timeout=5) as response:
+                    data = response.read(65537)
+                    if response.status != 200 or len(data)>65536:
+                        raise ValueError('Invalid device response')
+                result = json.loads(data)
+                if not isinstance(result, dict) or 'error' in result:
+                    raise ValueError('Device returned an error (details omitted)')
+                return result
+            except HTTPError as error:
+                # 401 indicates an auth failure, not a transient network error.
+                raise DeviceConnectionError('HTTP status=' + str(error.code) +
+                    (' (verify local token)' if error.code in (401,403) else '')) from None
+            except (URLError, TimeoutError, OSError) as error:
+                category = connection_class(error)
+                if attempt >= attempts:
+                    raise DeviceConnectionError(category + ' attempts=' + str(attempt)) from None
+                print('[WARN] STEP=LAN '+category+' (GET retry '+
+                      str(attempt)+'/'+str(attempts)+')',flush=True)
+                time.sleep(min(2, attempt))
+        raise DeviceConnectionError('request-exhausted')
 
     def status(self):
         return safe_status(self.request('/status'))
@@ -269,6 +304,9 @@ def main(argv=None):
         print(f'[INFO] 診断保存先={out} （認証情報/音声本文は保存しません）',flush=True)
         print('[INFO] 実際の発話の聞き取りと画像内容・会話復帰は別途確認が必要',flush=True)
         return 0 if result=='PASS' else 1 if result=='FAIL' else 2
+    except DeviceConnectionError as exc:
+        print(f'[FATAL] STEP={step} {exc} (秘密情報は表示しません)',file=sys.stderr)
+        return 1
     except (OSError,ValueError,HTTPError,URLError,TimeoutError,subprocess.TimeoutExpired,json.JSONDecodeError) as exc:
         print(f'[FATAL] STEP={step} {type(exc).__name__} （秘密情報は表示しません）',file=sys.stderr)
         return 1
