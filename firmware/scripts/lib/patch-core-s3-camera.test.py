@@ -30,6 +30,11 @@ class CameraPatchTests(unittest.TestCase):
         self.assertIn(".fb_location = CAMERA_FB_IN_PSRAM,", changed)
         self.assertEqual(module.patch_source(changed), changed)
 
+    def test_active_camera_manifest_path(self):
+        manifest = (ROOT.parent / "host" / "modules" / "camera" / "manifest_device.json").read_text()
+        self.assertIn("$(MODDABLE)/modules/io/imagein/camera/esp32/camera", manifest)
+        self.assertEqual(str(module.SRC), "modules/io/imagein/camera/esp32/camera.c")
+
     def test_unknown_sdk_is_rejected(self):
         with self.assertRaisesRegex(RuntimeError, "Unexpected SDK"):
             module.patch_source(ORIGINAL.replace(".fb_count = 3,", ".fb_count = 4,"))
