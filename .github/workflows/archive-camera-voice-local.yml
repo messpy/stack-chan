@@ -67,6 +67,8 @@ jobs:
       - name: Read-only photo LAN and legacy manifest regressions
         run: |
           python3 -m unittest discover -s firmware/scripts -p 'test_archive_photo_lan.py' -v
+          python3 -m unittest discover -s firmware/scripts -p 'test_archive_voice_photo_e2e.py' -v
+          python3 -m py_compile firmware/scripts/archive-voice-photo-e2e.py
           python3 -m unittest discover -s firmware/scripts -p 'test_archive_private_manifest_preflight.py' -v
           bash -n firmware/scripts/kmac-pr39.sh
           python3 -m unittest discover -s firmware/scripts -p 'test_voice_e2e.py' -v
