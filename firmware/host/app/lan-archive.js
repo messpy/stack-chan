@@ -2,7 +2,9 @@ import {mediaTrash,mediaFilePage} from 'archive-media-trash';
 import {createLANMonitor} from 'archive-lan-monitor';
 import AudioIn from 'embedded:io/audio/in';
 import {TTS as MonitorTTS} from 'archive-offline-tts';
-import {prepareRecognitionPCM} from 'archive-usb';
+import {prepareRecognitionPCM,heapStatus,collectMemory} from 'archive-usb';
+import {checkCameraMemory} from 'archive-memory-policy';
+import {createUSBRpcPump} from 'archive-usb-rpc';
 import {bootSpeechEnabled} from 'archive-offline-speech';
 import {startCustomFace,faceCommand} from 'archive-custom-face';
 import {startHistoryUI} from 'archive-history-ui';
@@ -47,6 +49,8 @@ let busy=false;
 let lastError='';
 let audioUpload;
 let server;
+let photoProgress='idle';
+function markPhotoPhase(phase){photoProgress=phase;trace('[photo] stage='+phase+'\n');}
 const folder='stackchan';
 const safe=name=>typeof name==='string' && /^[a-z0-9-]+\.(bmp|avi|wav|jpg|json|mp3)$/.test(name);
 function files(operation) {
@@ -92,29 +96,37 @@ async function cameraPreview(robot) {
 async function photo(robot,args={},fromConversation=false) {
  const wasBusy=busy;if(busy&&!fromConversation){traceConversation('CAMERA_ERROR','busy');throw new Error('Camera busy');}busy=true;
  let frame,jpeg,result;
+ markPhotoPhase('CAMERA_START');
  traceConversation('CAMERA_START','capture 176x144');
  try{
   frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});if(!frame)throw new Error('No camera frame');
+  markPhotoPhase('CAMERA_CAPTURE');
   traceConversation('CAMERA_CAPTURE','ok '+frame.width+'x'+frame.height);
   const tag=id(),name='photo-'+tag+'.jpg',image=name;
   trace('[photo] jpeg encode begin\n');
+  markPhotoPhase('JPEG_START');
   traceConversation('JPEG_START',frame.width+'x'+frame.height);
   jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
   trace('[photo] jpeg encode done bytes='+jpeg.byteLength+'\n');
+  markPhotoPhase('JPEG_DONE');
   traceConversation('JPEG_DONE','bytes='+jpeg.byteLength);
   trace('[photo] sd save begin\n');
+  markPhotoPhase('SD_SAVE_START');
   traceConversation('SD_SAVE_START',image);
   save(image,[jpeg]);
   trace('[photo] sd save done\n');
+  markPhotoPhase('CAMERA_SAVE');
   traceConversation('CAMERA_SAVE',image+' bytes='+jpeg.byteLength);
   result={name,image,width:frame.width,height:frame.height};
- }catch(e){trace('[photo] failed type='+String(e?.name||'Error').slice(0,48)+'\n');traceConversation('CAMERA_ERROR',String(e?.name||'Error')+' '+String(e?.message||'').slice(0,180));throw e;}
+ }catch(e){markPhotoPhase('CAMERA_ERROR');trace('[photo] failed type='+String(e?.name||'Error').slice(0,48)+'\n');traceConversation('CAMERA_ERROR',String(e?.name||'Error')+' '+String(e?.message||'').slice(0,180));throw e;}
  finally{
+  markPhotoPhase('FRAME_RELEASE');
   trace('[photo] frame release begin\n');
   try{frame?.close?.();trace('[photo] frame release done\n');}
   finally{
+   markPhotoPhase('CAMERA_CLOSE');
    trace('[photo] camera close begin\n');
-   try{await robot.camera.close();trace('[photo] camera close done\n');}
+   try{await robot.camera.close();markPhotoPhase('CAMERA_CLOSED');trace('[photo] camera close done\n');}
    finally{busy=wasBusy;}
   }
  }
@@ -245,6 +257,12 @@ export function startArchive(robot) {
     const capture=['/face/save','/face/restore','/alarm-sound/preview','/motor/test','/motor/recover','/image/finish','/photo','/record','/audio','/chat-record'].includes(request.op);
     const paused=capture?pauseDirectChat():false;
     try{
+      if(request.op==='/photo'){
+        // Let native Opus/TLS teardown and queued GC run before camera init.
+        await new Promise(resolve=>Timer.set(resolve,200));
+        collectMemory();
+        checkCameraMemory(heapStatus());
+      }
       let result;
       if(request.op==='/monitor/start')result=monitor.start();
       else if(request.op==='/monitor/stop')result=await monitor.stop(request.args?.id);
@@ -353,7 +371,7 @@ export function startArchive(robot) {
       else if(request.op==='/record')result=await record(robot);
       else if(request.op==='/status'){
         let sd=false;try{files(()=>{});sd=true;}catch(e){lastError=String(e);}
-        result={sd,camera:robot.camera.available!==false,busy:busy&&!directChatStatus().busy,chat:directChatStatus(),lastError,headTouch:!!robot.touchPanel,headSample:Array.from(robot.touchPanel?.sample??[]),transport:'usb+wifi',petting:'m5stack/StackChan',wifi:getSettingsStatus(),wifiDisplay:wifiDisplayStatus(),firmware:'stack-chan + M5Stack petting + USB archive'};
+        result={sd,camera:robot.camera.available!==false,busy:busy&&!directChatStatus().busy,usbOperation:{active:false,phase:photoProgress},chat:directChatStatus(),lastError,headTouch:!!robot.touchPanel,headSample:Array.from(robot.touchPanel?.sample??[]),transport:'usb+wifi',petting:'m5stack/StackChan',wifi:getSettingsStatus(),wifiDisplay:wifiDisplayStatus(),firmware:'stack-chan + M5Stack petting + USB archive'};
       }else if(['/media/delete','/media/restore','/media/trash'].includes(request.op)){
         if(busy&&!directChatStatus().busy&&request.op!=='/media/trash')throw new Error('撮影・録音が終わってから操作してください');
         result=files(root=>mediaTrash(root,request.op==='/media/trash'?'list':request.op.slice(7),request.args||{}));
@@ -380,25 +398,22 @@ export function startArchive(robot) {
       return result;
     }finally{if(paused)resumeDirectChat();}
   }
-  let usbBusy=false;
-  let usbInitError=false;
-  Timer.repeat(async()=>{
-    if(usbBusy)return;
-    if(audioUpload&&Date.now()-audioUpload.time>120000)audioUpload=undefined;
-    let raw;
-    try{raw=readUSB();}catch(e){if(!usbInitError){trace('[archive] USB init failed: '+String(e)+'\n');usbInitError=true;}return;}
-    if(!raw)return;
-    let request;
-    try{request=JSON.parse(raw);}catch(_){return;}
-    if(!Number.isInteger(request.id)||request.token!==token)return;
-    armDebugDrain();
-    usbBusy=true;
-    try {
-      const result=await execute(request);
-      writeUSB(JSON.stringify({id:request.id,result}));
-    }catch(e){lastError=String(e);writeUSB(JSON.stringify({id:request.id,error:lastError}));}
-    finally{usbBusy=false;}
-  },5);
+  // Read-only status survives an outstanding asynchronous camera RPC.
+  // A synchronous native-driver deadlock can still stop this JS scheduler.
+  const usbPump=createUSBRpcPump({
+    read:()=>{if(audioUpload&&Date.now()-audioUpload.time>120000)audioUpload=undefined;return readUSB();},
+    write:writeUSB,
+    execute:async request=>{try{return await execute(request);}catch(e){lastError=String(e);throw e;}},
+    authenticate:request=>request.token===token,
+    arm:armDebugDrain,
+    inspect:(op,pending)=>op==='/debug/status'
+      ? {...debugLogStatus(),usbOperation:{...pending,phase:photoProgress}}
+      : {busy:true,usbOperation:{...pending,phase:photoProgress},
+         camera:robot.camera.available!==false,chat:{state:'busy'}},
+    trace,
+    timeoutMs:25000
+  });
+  Timer.repeat(()=>usbPump.tick(),5);
 
   try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},args=>photo(robot,{...args,analyze:args?.analyze!==false},true),on=>{if(on){
     // Preserve the user's ON choice while boot/offline speech owns the audio device.
