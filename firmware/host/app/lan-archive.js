@@ -86,7 +86,7 @@ async function cameraPreview(robot) {
   if(!frame)throw new Error('カメラの画像を取得できませんでした');
   return encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
  }finally{
-  try{frame?.close?.();}finally{try{robot.camera.stop();}finally{busy=false;if(paused)resumeDirectChat();}}
+  try{frame?.close?.();}finally{try{robot.camera.close();}finally{busy=false;if(paused)resumeDirectChat();}}
  }
 }
 async function photo(robot,args={},fromConversation=false) {
@@ -101,7 +101,7 @@ async function photo(robot,args={},fromConversation=false) {
   traceConversation('CAMERA_SAVE',image+' bytes='+jpeg.byteLength);
   result={name,image,width:frame.width,height:frame.height};
  }catch(e){traceConversation('CAMERA_ERROR',String(e?.name||'Error'));throw e;}
- finally{frame?.close?.();robot.camera.stop();busy=wasBusy;}
+ finally{try{frame?.close?.();}finally{try{robot.camera.close();}finally{busy=wasBusy;}}}
  if(args.analyze!==false)Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
  return result;
 }
@@ -166,7 +166,7 @@ async function record(robot) {
     return {name,frames:count,fps,audio:true,duration:5};
   }finally {
     if(audioPromise)await audioPromise;
-    try {robot.camera.stop();}finally{busy=false;}
+    try {robot.camera.close();}finally{busy=false;}
   }
 }
 async function recordAudio(robot) {
