@@ -119,8 +119,12 @@ if [ "$MODE" = "test" ] || [ "$MODE" = "build" ]; then
   command -v node >/dev/null 2>&1 || fatal "Node.jsがありません"
   NODE_MAJOR=$(node -p "Number(process.versions.node.split('.')[0])") || fatal "Nodeバージョン取得失敗"
   [ "$NODE_MAJOR" -ge 22 ] || fatal "Node.js 22以上が必要です"
-  node --experimental-vm-modules --test scripts/lib/archive-conversation-log.test.mjs ||
-    fatal "単体テスト失敗"
+  node --experimental-vm-modules --test \
+    scripts/lib/archive-conversation-log.test.mjs \
+    scripts/lib/archive-usb-psram.test.mjs ||
+    fatal "診断・PSRAM単体テスト失敗"
+  node scripts/lib/archive-memory-policy.test.mjs ||
+    fatal "内部RAM保護テスト失敗"
   if [ "$MODE" = "test" ]; then
     echo "[CHECK] テスト成功"
     exit 0
