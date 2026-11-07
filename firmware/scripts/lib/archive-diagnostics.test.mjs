@@ -14,7 +14,7 @@ test('read-only snapshot excludes tokens, identifiers, free-text, and servo poll
   const actual=diagnosticSnapshot({
     heap:{internalFree:76659,internalLargest:31744,psramFree:100000,secret:'DO_NOT_COPY'},
     chat:{state:'retrying',provider:'xiaozhi',enabled:true,detail:'内蔵RAM不足 token=SECRET',memoryAdmission:{status:'blocked',mode:'conversation',at:1793859000000,internalFree:76659,internalLargest:31744,requiredFree:114688,requiredLargest:24576,shortfallFree:38029,shortfallLargest:0,token:'PRIVATE_KEY'}},
-    photo:{phase:'error',errorStage:'sd-save',saved:false,image:'PRIVATE_IMAGE'},
+    photo:{phase:'error',errorStage:'sd-save',errorReasonClass:'sensor-bus',saved:false,image:'PRIVATE_IMAGE'},
     debug:{queued:4,dropped:2,secret:'PRIVATE_LOG'},
     servo:{lastReadFailure:'timeout',reason:'SECRET_NATIVE'},
     resetCode:9,uptime:123456.5,
@@ -31,6 +31,7 @@ test('read-only snapshot excludes tokens, identifiers, free-text, and servo poll
   assert.equal(diagnosticSnapshot({chat:{state:'retrying',detail:'内蔵RAMが不足'}}).chat.failureClass,'memory-pressure')
   assert.equal(diagnosticSnapshot({chat:{state:'listening',detail:'websocket timeout'}}).chat.failureClass,'none')
   assert.equal(actual.photo.errorStage,'sd-save')
+  assert.equal(actual.photo.errorReasonClass,'sensor-bus')
   assert.equal(actual.debug.dropped,2)
   assert.equal(actual.servo.lastReadFailure,'timeout')
   assert.equal(actual.boot.resetReasonCode,9)
