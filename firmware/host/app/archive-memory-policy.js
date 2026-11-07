@@ -12,3 +12,13 @@ export function checkVoiceMemory(heap, usesOpus = true) {
   if (heap.internalFree < required || heap.internalLargest < 24 * 1024)
     throw new Error('内蔵RAMの空きが不足しています（空き '+heap.internalFree+' / 連続 '+heap.internalLargest+' バイト）。音声を停止して回復を待っています')
 }
+
+export function checkCameraMemory(heap) {
+  // Conservative guard for CoreS3 sensor init, DMA buffers and JPEG conversion.
+  // Re-check only after closing the voice Opus/TLS session and collecting garbage.
+  const free=heap?.internalFree,largest=heap?.internalLargest;
+  if(!Number.isFinite(free)||!Number.isFinite(largest))
+    throw new Error('カメラの内蔵RAM状態を確認できません');
+  if(free<96*1024||largest<32*1024)
+    throw new Error('カメラ用の内蔵RAMが不足しています（空き '+free+' / 連続 '+largest+' バイト）。音声解放後も不足しているため撮影を中止します');
+}
