@@ -4,6 +4,7 @@ import { runContextCreatedBehaviors, type StackchanAppBehavior } from 'app-behav
 import { resolveAppBehaviors } from 'app-behavior-resolver'
 import defaultBehavior from 'app-default-behavior'
 import { installLaunchShortcut, type LaunchShortcutButton, prepareAppLaunch } from 'app-launch'
+import { waitForBootWiFiRecoveryChoiceWithTimeout } from 'boot-network-recovery'
 import { type BootWiFiStatus, startHostBootServices } from 'boot-services'
 import type { StackchanContext } from 'capabilities'
 import { createStackchanContext, getHostDeviceEnvironment } from 'compose'
@@ -21,6 +22,7 @@ import {
   startupErrorClass,
 } from 'startup-splash'
 import { applyTimezone } from 'timezone-settings'
+import Timer from 'timer'
 
 type DeviceButton = {
   onChanged: (this: DeviceButton) => void
@@ -65,39 +67,28 @@ function installModManagerShortcut(): void {
 }
 
 function waitForBootWiFiRecoveryChoice(status: BootWiFiStatus & { reason: string }): Promise<'retry' | 'offline'> {
-  return new Promise((resolve) => {
-    let resolved = false
-    const previousAHandler = globalEnv.button?.a?.onChanged
-    const previousCHandler = globalEnv.button?.c?.onChanged
-
-    const restoreButtons = () => {
-      if (globalEnv.button?.a) {
-        globalEnv.button.a.onChanged = previousAHandler ?? noopButtonHandler
-      }
-      if (globalEnv.button?.c) {
-        globalEnv.button.c.onChanged = previousCHandler ?? noopButtonHandler
-      }
-    }
-    const choose = (choice: 'retry' | 'offline') => {
-      if (resolved) return
-      resolved = true
-      restoreButtons()
-      resolve(choice)
-    }
-
-    trace(`[network] ${status.message}: ${status.reason}\n`)
-    showWiFiRecoveryChoice({
-      message: status.message,
-      onRetry: () => choose('retry'),
-      onOffline: () => choose('offline'),
-    })
-    if (globalEnv.button?.a) {
-      globalEnv.button.a.onChanged = () => choose('retry')
-    }
-    if (globalEnv.button?.c) {
-      globalEnv.button.c.onChanged = () => choose('offline')
-    }
-  })
+  const previousAHandler = globalEnv.button?.a?.onChanged
+  const previousCHandler = globalEnv.button?.c?.onChanged
+  const restoreButtons = () => {
+    if (globalEnv.button?.a) globalEnv.button.a.onChanged = previousAHandler ?? noopButtonHandler
+    if (globalEnv.button?.c) globalEnv.button.c.onChanged = previousCHandler ?? noopButtonHandler
+  }
+  return waitForBootWiFiRecoveryChoiceWithTimeout(
+    Timer,
+    (choose) => {
+      trace(`[network] recovery choice: ${status.reason}\n`)
+      showWiFiRecoveryChoice({
+        message: status.message,
+        onRetry: () => choose('retry'),
+        onOffline: () => choose('offline'),
+      })
+      if (globalEnv.button?.a) globalEnv.button.a.onChanged = () => choose('retry')
+      if (globalEnv.button?.c) globalEnv.button.c.onChanged = () => choose('offline')
+    },
+    restoreButtons,
+    undefined,
+    () => trace('[network] recovery timeout; starting offline\n'),
+  )
 }
 
 async function main() {
