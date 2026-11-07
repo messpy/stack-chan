@@ -41,3 +41,10 @@ kmac USB `/photo`（画像解析なし）は `VOICE_RELEASE → RAM_CHECK → RA
 - SDKパッチの復旧には、変更中のビルドを停止した上で、`$MODDABLE/modules/embedded/io/image/in/camera/esp32/camera.c.stackchan-original` を対応する `camera.c` へ戻し、再ビルドする。共有SDKを使う他ビルドへの影響を確認すること。
 - 元の16MiBフラッシュは既存のバックアップファイルから復旧可能。ただし**SDKバックアップとフラッシュバックアップは別物**。
 - 本体の最新ファームウェアはPR #58の旧版 `bfb4891` のまま。GitHubソースを更新しただけで本体は自動更新されない。
+
+## 2026-11-07 19:48 JST: 初回ビルド停止と修正
+
+- 実機buildは撮影用SDKパッチで停止。 `MODDABLE/modules/embedded/io/image/in/camera/esp32/camera.c` が見つからなかった。**ビルド失敗、フラッシュ未書き込み**。
+- 本アプリの `host/modules/camera/manifest_device.json` は `$(MODDABLE)/modules/io/imagein/camera/esp32/camera` を参照しており、修正すべき対象は `modules/io/imagein/camera/esp32/camera.c`。
+- Moddable公式コミット [743b74c](https://github.com/Moddable-OpenSource/moddable/commit/743b74c77479f4d9ae04d0cc029f2c90dd76a160) (2026-11-02) により `modules/io` から `modules/embedded` へ移動したため、SDK世代が異なることが原因。移動前の[実ソース](https://github.com/Moddable-OpenSource/moddable/blob/e5aac86aeb56938be8253d859286a376406f76f3/modules/io/imagein/camera/esp32/camera.c)にも `kCameraFrameCount=3`, `fb_count=3`, `GRAB_LATEST` があり、今回の置換パターンと一致。
+- パッチの対象パスを実際のマニフェストに合わせて修正。CIには参照先の整合性チェックも追加。再ビルドと実機検証は別途必要。
