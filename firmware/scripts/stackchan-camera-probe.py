@@ -101,9 +101,11 @@ def print_status(response, stage):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--port", default="/dev/ttyACM0")
+    p.add_argument("--config", type=pathlib.Path, default=CONFIG,
+                   help="Existing private firmware manifest (never printed)")
     args = p.parse_args()
     try:
-        data = json.loads(CONFIG.read_text(encoding="utf-8"))
+        data = json.loads(args.config.read_text(encoding="utf-8"))
         token = data["config"]["archiveToken"]
         if not isinstance(token, str) or not token:
             raise ValueError("empty token")
