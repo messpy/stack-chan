@@ -8,4 +8,14 @@ assert.equal(policy.shouldRenewCloudIdentity('ESP Opus encoder initialization fa
 assert.equal(policy.shouldRenewCloudIdentity('Network connection closed'),false);
 assert.equal(policy.shouldRenewCloudIdentity('HTTP 401 unauthorized'),true);
 assert.equal(policy.shouldRenewCloudIdentity('token expired'),true);
+// CoreS3 measurement after releasing XiaoZhi/Opus: 130,091 free,
+ // 31,744 contiguous and 6.5 MiB PSRAM. The old 32 KiB gate always blocked.
+policy.checkCameraMemory({internalFree:130091,internalLargest:31744,psramFree:6572656});
+for(const heap of [
+  {internalFree:95*1024,internalLargest:31744,psramFree:6572656},
+  {internalFree:130091,internalLargest:29*1024,psramFree:6572656},
+  {internalFree:130091,internalLargest:31744,psramFree:800*1024},
+  {internalFree:130091,internalLargest:31744},
+]) assert.throws(()=>policy.checkCameraMemory(heap),/RAM/);
+console.log('PASS: measured camera handoff is admitted; low SRAM/contiguity/PSRAM is rejected');
 console.log('PASS: insufficient or fragmented internal RAM blocks audio; resource/network failures never trigger identity renewal');
