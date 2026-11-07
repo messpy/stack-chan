@@ -9,7 +9,7 @@ import {startHistoryUI} from 'archive-history-ui';
 import {startTimerUI} from 'archive-timer-ui';
 import {createAlarmDance} from 'archive-alarm-motion';
 import {captureFrame,screenCommand,showScreen} from 'archive-screen';
-import {startDebugDrain,armDebugDrain,debugLogStatus} from 'archive-debug';
+import {startDebugDrain,armDebugDrain,debugLogStatus,configureConversationLog,traceConversation} from 'archive-debug';
 import {startChecks,checkStatus} from 'archive-checks';
 import {Emotion} from 'face-state';
 import {OfflinePolicy} from 'archive-offline-policy';
@@ -86,18 +86,22 @@ async function cameraPreview(robot) {
   if(!frame)throw new Error('カメラの画像を取得できませんでした');
   return encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
  }finally{
-  try{frame?.close?.();}finally{try{robot.camera.stop();}finally{busy=false;if(paused)resumeDirectChat();}}
+  try{frame?.close?.();}finally{try{robot.camera.close();}finally{busy=false;if(paused)resumeDirectChat();}}
  }
 }
 async function photo(robot,args={},fromConversation=false) {
- const wasBusy=busy;if(busy&&!fromConversation)throw new Error('Camera busy');busy=true;
+ const wasBusy=busy;if(busy&&!fromConversation){traceConversation('CAMERA_ERROR','busy');throw new Error('Camera busy');}busy=true;
  let frame,jpeg,result;
+ traceConversation('CAMERA_START','capture 176x144');
  try{
   frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});if(!frame)throw new Error('No camera frame');
+  traceConversation('CAMERA_CAPTURE','ok '+frame.width+'x'+frame.height);
   const tag=id(),name='photo-'+tag+'.jpg',image=name;
   jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');save(image,[jpeg]);
+  traceConversation('CAMERA_SAVE',image+' bytes='+jpeg.byteLength);
   result={name,image,width:frame.width,height:frame.height};
- }finally{frame?.close?.();robot.camera.stop();busy=wasBusy;}
+ }catch(e){traceConversation('CAMERA_ERROR',String(e?.name||'Error')+' '+String(e?.message||'').slice(0,180));throw e;}
+ finally{try{frame?.close?.();}finally{try{robot.camera.close();}finally{busy=wasBusy;}}}
  if(args.analyze!==false)Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
  return result;
 }
@@ -106,7 +110,11 @@ async function describeImage(robot,name,jpeg,question){
  const prompt=String(question||'この画像には何が写っていますか？').slice(0,1000);
  const speakerId=directChatStatus().speaker?.id??null;
  const input=archiveTranscript('input',prompt,undefined,name,speakerId);
+ traceConversation('VISION_START','analyzing image');
  const analysis=await analyzeJPEG(jpeg,prompt);
+ traceConversation('VISION_STATUS','provider='+String(analysis.provider||'unknown')+' status='+String(analysis.status||'unknown'));
+ if(analysis.status==='complete')traceConversation('VISION_TEXT',analysis.text);
+ else traceConversation('VISION_ERROR',analysis.error||'No result');
  const answer=archiveTranscript('output',analysis.status==='complete'?analysis.text:'画像認識エラー: '+(analysis.error||'回答を取得できませんでした'),undefined,name,speakerId);
  if(analysis.status==='complete')robot.showBalloon(analysis.text);
  return {analysis,historySaved:!!input&&!!answer,messageIds:[input?.id,answer?.id]};
@@ -158,7 +166,7 @@ async function record(robot) {
     return {name,frames:count,fps,audio:true,duration:5};
   }finally {
     if(audioPromise)await audioPromise;
-    try {robot.camera.stop();}finally{busy=false;}
+    try {robot.camera.close();}finally{busy=false;}
   }
 }
 async function recordAudio(robot) {
@@ -245,6 +253,7 @@ export function startArchive(robot) {
       }
       else if(request.op==='/screen/show'){if(busy||directChatStatus().enabled||reminderStatus().ringing)throw new Error('本体の操作が終わってから画面を確認してください');if(request.args?.scene!=='balloon-test')closeOffline();result=showScreen(robot,request.args?.scene);await new Promise(resolve=>Timer.set(resolve,150));}
       else if(request.op==='/debug/status')result=debugLogStatus();
+      else if(request.op==='/debug/conversation')result=configureConversationLog(request.args?.enabled);
       else if(request.op==='/offline/auto')result=autoOffline(request.args?.enabled);
       else if(request.op==='/offline/status')result=offlineStatus();
       else if(request.op==='/offline/open')result=openOffline();
