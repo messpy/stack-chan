@@ -270,7 +270,7 @@ export function startArchive(robot) {
         markPhotoPhase('RAM_CHECK');
         try{
           await waitForCameraMemory({
-            read:heapStatus,collect:collectMemory,
+            read:heapStatus,collect:collectMemory,now:()=>Time.ticks,
             delay:ms=>new Promise(resolve=>Timer.set(resolve,ms))
           });
         }catch(error){markPhotoPhase('RAM_BLOCKED');throw error;}
@@ -423,6 +423,7 @@ export function startArchive(robot) {
       : {busy:true,usbOperation:{...pending,phase:photoProgress,watchdogReset:photoRecoveryTriggered()},
          camera:robot.camera.available!==false,chat:{state:'busy'}},
     trace,
+    now:()=>Time.ticks,
     timeoutMs:25000
   });
   Timer.repeat(()=>usbPump.tick(),5);
