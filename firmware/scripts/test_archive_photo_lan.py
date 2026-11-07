@@ -18,7 +18,7 @@ class LanPhotoTests(unittest.TestCase):
                 module.safe_device_ip(forbidden)
 
     def test_photo_field_allowlist(self):
-        data = {"photo": {"phase": "error", "errorStage": "frame-wait",
+        data = {"photo": {"phase": "error", "errorStage": "frame-wait", "errorReasonClass": "sensor-bus",
                           "saved": False, "startedAt": 55,
                           "token": "secret", "rawImage": "private"}}
         filtered = module.filtered_photo(data)
