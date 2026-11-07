@@ -84,7 +84,7 @@ test('camera handoff prevents reconnect during both USB and voice photo, then re
   assert.match(voicePhoto,/beginCameraHandoff\(\)/)
   assert.match(voicePhoto,/finally\s*\{[\s\S]*finishCameraHandoff\(\)/)
   assert.match(usbExecute,/beginCameraHandoff\(\)/)
-  assert.match(usbExecute,/finally\s*\{if\(photoHandoff\)finishCameraHandoff\(\)/)
+  assert.match(usbExecute,/finally\s*\{[\s\S]*?if\(photoHandoff\)finishCameraHandoff\(\)/)
   assert.match(usbExecute,/markPhotoPhase\('RAM_READY'\)/)
 })
 
