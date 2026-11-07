@@ -37,7 +37,7 @@ import {startSettings,openSettings,closeSettings,getSettingsStatus,vaultSelfTest
 import {startDeviceTools,setAlarmDisplay,setAlarmMotion,callDeviceTool,listDeviceTools,reminderStatus} from 'archive-tools';
 import Time from 'time';
 import {getM5StackChanDriver} from 'm5stackchan-servo-driver';
-import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG,photoRecoveryWatchdog} from 'archive-usb';
+import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG,photoRecoveryWatchdog,photoRecoveryTriggered} from 'archive-usb';
 import Base64 from 'base64';
 import config from 'mc/config';
 import {HttpServerService, Response} from 'http-server-service';
@@ -383,7 +383,7 @@ export function startArchive(robot) {
       else if(request.op==='/record')result=await record(robot);
       else if(request.op==='/status'){
         let sd=false;try{files(()=>{});sd=true;}catch(e){lastError=String(e);}
-        result={sd,camera:robot.camera.available!==false,busy:busy&&!directChatStatus().busy,usbOperation:{active:false,phase:photoProgress},chat:directChatStatus(),lastError,headTouch:!!robot.touchPanel,headSample:Array.from(robot.touchPanel?.sample??[]),transport:'usb+wifi',petting:'m5stack/StackChan',wifi:getSettingsStatus(),wifiDisplay:wifiDisplayStatus(),firmware:'stack-chan + M5Stack petting + USB archive'};
+        result={sd,camera:robot.camera.available!==false,busy:busy&&!directChatStatus().busy,usbOperation:{active:false,phase:photoProgress,watchdogReset:photoRecoveryTriggered()},chat:directChatStatus(),lastError,headTouch:!!robot.touchPanel,headSample:Array.from(robot.touchPanel?.sample??[]),transport:'usb+wifi',petting:'m5stack/StackChan',wifi:getSettingsStatus(),wifiDisplay:wifiDisplayStatus(),firmware:'stack-chan + M5Stack petting + USB archive'};
       }else if(['/media/delete','/media/restore','/media/trash'].includes(request.op)){
         if(busy&&!directChatStatus().busy&&request.op!=='/media/trash')throw new Error('撮影・録音が終わってから操作してください');
         result=files(root=>mediaTrash(root,request.op==='/media/trash'?'list':request.op.slice(7),request.args||{}));
@@ -419,8 +419,8 @@ export function startArchive(robot) {
     authenticate:request=>request.token===token,
     arm:armDebugDrain,
     inspect:(op,pending)=>op==='/debug/status'
-      ? {...debugLogStatus(),usbOperation:{...pending,phase:photoProgress}}
-      : {busy:true,usbOperation:{...pending,phase:photoProgress},
+      ? {...debugLogStatus(),usbOperation:{...pending,phase:photoProgress,watchdogReset:photoRecoveryTriggered()}}
+      : {busy:true,usbOperation:{...pending,phase:photoProgress,watchdogReset:photoRecoveryTriggered()},
          camera:robot.camera.available!==false,chat:{state:'busy'}},
     trace,
     timeoutMs:25000
