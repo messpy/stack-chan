@@ -99,12 +99,15 @@ def print_status(response, stage):
         f"psramFree={heap.get('psramFree', '?')} "
         f"photoPhase={op.get('phase', '?')} "
         f"usbBusy={op.get('active', '?')} "
-        f"watchdogReset={op.get('watchdogReset', '?')}"
+        f"watchdogReset={op.get('watchdogReset', '?')} "
+        f"watchdogStage={op.get('watchdogStage', '?')}"
     )
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--port", default="/dev/ttyACM0")
+    p.add_argument("--allow-ai-on", action="store_true",
+                   help="Explicitly test photo while voice/ASR is enabled; default is OFF-only")
     p.add_argument("--config", type=pathlib.Path, default=CONFIG,
                    help="Existing private firmware manifest (never printed)")
     args = p.parse_args()
@@ -121,7 +124,19 @@ def main():
     print("[WARN] 成功時は写真をSDカードに保存します。クラウド画像解析は呼び出しません")
     try:
         with serial.Serial(args.port, baudrate=115200, timeout=0.5, write_timeout=3, exclusive=True) as port:
-            print_status(request(port, token, 976001, "/status", {}, 8), "BEFORE")
+            before = request(port, token, 976001, "/status", {}, 8)
+            print_status(before, "BEFORE")
+            if "error" in before:
+                fatal("PREFLIGHT", "撮影前の本体状態を確認できません")
+            snapshot = before.get("result") or {}
+            chat = snapshot.get("chat") or {}
+            if not isinstance(chat, dict):
+                fatal("PREFLIGHT", "AI状態を確認できません")
+            enabled, recognition = chat.get("enabled"), chat.get("recognitionMode")
+            if not args.allow_ai_on and (enabled is not False or recognition is not False):
+                print("[WARN] 現在はAI会話OFFの撮影テストを行います")
+                fatal("PREFLIGHT", "本体のAI会話と文字起こしをOFFにしてから再実行してください "
+                      f"(enabled={enabled}, recognitionMode={recognition}, state={chat.get('state', '?')})")
             print("[ACTION] STEP=CAMERA 撮影だけを試行（analyze=false）")
             result = request(port, token, 976002, "/photo", {"analyze": False}, 30)
             if "error" in result:
