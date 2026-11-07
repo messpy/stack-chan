@@ -43,7 +43,7 @@ type NativeImageInCameraConstructor = new (options: {
   height: number
   imageType: number
   format: typeof FORMAT_DISPOSABLE_BUFFER
-  onReadable: () => void
+  onReadable?: () => void
 }) => NativeImageInCamera
 
 const ImageInCamera = NativeCamera as NativeImageInCameraConstructor
@@ -63,7 +63,6 @@ export default class Camera implements RobotCamera {
   readonly available = true
 
   #camera: NativeImageInCamera | undefined
-  #frame: DisposableCameraBuffer | undefined
   #width = DEFAULT_WIDTH
   #height = DEFAULT_HEIGHT
   #imageType: CameraImageType = DEFAULT_IMAGE_TYPE
@@ -96,7 +95,8 @@ export default class Camera implements RobotCamera {
       height: request.height,
       imageType: nativeImageType,
       format: FORMAT_DISPOSABLE_BUFFER,
-      onReadable: () => this.#readLatestFrame(),
+      // Poll read() instead of a native-to-JS callback during CoreS3 DMA.
+      // The callback path can invoke JS while camera/voice resources transition.
     })
     trace(`[camera] native constructor ready width=${camera.width} height=${camera.height}\n`)
 
@@ -163,12 +163,16 @@ export default class Camera implements RobotCamera {
 
   #startCamera(): void {
     if (!this.#camera || this.#running) return
-    closeFrame(this.#frame)
-    this.#frame = undefined
     trace('[camera] native start begin\n')
-    this.#camera.start()
-    this.#running = true
-    trace('[camera] native start done\n')
+    try {
+      this.#camera.start()
+      this.#running = true
+      trace('[camera] native start done\n')
+    } catch (error) {
+      trace('[camera] native start threw '+String(error instanceof Error ? error.message : error)+'\n')
+      this.#running = false
+      throw error
+    }
   }
 
   #stopCamera(): void {
@@ -177,22 +181,11 @@ export default class Camera implements RobotCamera {
       this.#camera.stop()
       trace('[camera] native stop done\n')
     }
-    closeFrame(this.#frame)
-    this.#frame = undefined
     this.#running = false
   }
 
-  #readLatestFrame(): void {
-    const frame = this.#camera?.read()
-    if (!frame) return
-    closeFrame(this.#frame)
-    this.#frame = frame
-  }
-
   #takeFrame(camera: NativeImageInCamera): DisposableCameraBuffer | undefined {
-    const frame = this.#frame ?? camera.read()
-    this.#frame = undefined
-    return frame
+    return camera.read()
   }
 
   #waitForFrame(camera: NativeImageInCamera): Promise<DisposableCameraBuffer | undefined> {
