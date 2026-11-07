@@ -3,7 +3,7 @@ import {createLANMonitor} from 'archive-lan-monitor';
 import AudioIn from 'embedded:io/audio/in';
 import {TTS as MonitorTTS} from 'archive-offline-tts';
 import {prepareRecognitionPCM,heapStatus,collectMemory} from 'archive-usb';
-import {checkCameraMemory} from 'archive-memory-policy';
+import {waitForCameraMemory} from 'archive-memory-policy';
 import {createUSBRpcPump} from 'archive-usb-rpc';
 import {bootSpeechEnabled} from 'archive-offline-speech';
 import {startCustomFace,faceCommand} from 'archive-custom-face';
@@ -258,10 +258,16 @@ export function startArchive(robot) {
     const paused=capture?pauseDirectChat():false;
     try{
       if(request.op==='/photo'){
-        // Let native Opus/TLS teardown and queued GC run before camera init.
+        // Let the prior audio session yield before reserving camera native buffers.
+        markPhotoPhase('VOICE_RELEASE');
         await new Promise(resolve=>Timer.set(resolve,200));
-        collectMemory();
-        checkCameraMemory(heapStatus());
+        markPhotoPhase('RAM_CHECK');
+        try{
+          await waitForCameraMemory({
+            read:heapStatus,collect:collectMemory,
+            delay:ms=>new Promise(resolve=>Timer.set(resolve,ms))
+          });
+        }catch(error){markPhotoPhase('RAM_BLOCKED');throw error;}
       }
       let result;
       if(request.op==='/monitor/start')result=monitor.start();
