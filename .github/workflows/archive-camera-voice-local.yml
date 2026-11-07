@@ -68,6 +68,8 @@ jobs:
         run: |
           python3 -m unittest discover -s firmware/scripts -p 'test_archive_photo_lan.py' -v
           python3 -m unittest discover -s firmware/scripts -p 'test_archive_voice_photo_e2e.py' -v
+          python3 -m unittest discover -s firmware/scripts -p 'test_kmac_voicevox_mic_check.py' -v
+          python3 -m py_compile firmware/scripts/kmac-voicevox-mic-check.py
           python3 -m py_compile firmware/scripts/archive-voice-photo-e2e.py
           python3 -m unittest discover -s firmware/scripts -p 'test_archive_private_manifest_preflight.py' -v
           bash -n firmware/scripts/kmac-pr39.sh
