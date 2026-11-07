@@ -1,0 +1,43 @@
+name: CoreS3 PR56 + PR57 Integration Checks
+
+on:
+  push:
+    branches:
+      - test/pr56-pr57-core-s3-20261107
+    paths:
+      - 'firmware/host/app/archive-*.js'
+      - 'firmware/host/app/archive-usb.c'
+      - 'firmware/scripts/stackchan-ci.sh'
+      - 'firmware/scripts/lib/archive-usb-psram.test.mjs'
+      - 'firmware/scripts/lib/archive-conversation-log.test.mjs'
+      - 'firmware/scripts/lib/archive-memory-policy.test.mjs'
+      - '.github/workflows/archive-integration-56-57.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integrated-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate integrated USB diagnostic and PSRAM tests
+        run: |
+          node --experimental-vm-modules --test \
+            firmware/scripts/lib/archive-conversation-log.test.mjs \
+            firmware/scripts/lib/archive-usb-psram.test.mjs
+      - name: Preserve admission guard
+        run: node firmware/scripts/lib/archive-memory-policy.test.mjs
+      - name: Check shell and Python syntax
+        run: |
+          bash -n firmware/scripts/stackchan-ci.sh
+          python3 -m py_compile firmware/scripts/stackchan-camera-probe.py firmware/scripts/stackchan-voice-diagnostic.py
+      - name: Check patch whitespace
+        run: git diff --check HEAD^ HEAD
