@@ -100,7 +100,7 @@ async function photo(robot,args={},fromConversation=false) {
   jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');save(image,[jpeg]);
   traceConversation('CAMERA_SAVE',image+' bytes='+jpeg.byteLength);
   result={name,image,width:frame.width,height:frame.height};
- }catch(e){traceConversation('CAMERA_ERROR',String(e?.name||'Error'));throw e;}
+ }catch(e){traceConversation('CAMERA_ERROR',String(e?.name||'Error')+' '+String(e?.message||'').slice(0,180));throw e;}
  finally{try{frame?.close?.();}finally{try{robot.camera.close();}finally{busy=wasBusy;}}}
  if(args.analyze!==false)Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
  return result;
