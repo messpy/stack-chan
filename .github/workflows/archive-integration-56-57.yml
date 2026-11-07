@@ -13,6 +13,7 @@ on:
       - 'firmware/scripts/lib/archive-camera-lifecycle.test.mjs'
       - 'firmware/scripts/lib/archive-camera-polling.test.mjs'
       - 'firmware/scripts/stackchan-ci.sh'
+      - 'firmware/scripts/stackchan-camera-probe.py'
       - 'firmware/scripts/lib/archive-usb-psram.test.mjs'
       - 'firmware/scripts/lib/archive-conversation-log.test.mjs'
       - 'firmware/scripts/lib/archive-direct-photo.test.mjs'
