@@ -121,7 +121,8 @@ if [ "$MODE" = "test" ] || [ "$MODE" = "build" ] || [ "$MODE" = "deploy" ]; then
   [ "$NODE_MAJOR" -ge 22 ] || fatal "Node.js 22以上が必要です"
   node --experimental-vm-modules --test \
     scripts/lib/archive-conversation-log.test.mjs \
-    scripts/lib/archive-usb-psram.test.mjs ||
+    scripts/lib/archive-usb-psram.test.mjs \
+    scripts/lib/archive-direct-photo.test.mjs ||
     fatal "診断・PSRAM単体テスト失敗"
   node scripts/lib/archive-memory-policy.test.mjs ||
     fatal "内部RAM保護テスト失敗"
