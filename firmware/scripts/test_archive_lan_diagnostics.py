@@ -25,6 +25,27 @@ class LanDiagnosticsTests(unittest.TestCase):
         self.assertEqual(audio["overrunBytes"], 1920)
         self.assertNotIn("SECRET", json.dumps(audio))
 
+    def test_real_epoch_millis_are_preserved(self):
+        # Regression: a 2026 Date.now() timestamp exceeds the byte-counter limit.
+        at = 1794010000000
+        audio = module.clean_snapshot({"schema": 1, "audio": {
+            "lastInputAt": at, "lastSentAt": at - 120, "lastASRAt": at - 900,
+            "overrunBytes": 21, "reconnectCount": 5,
+        }})["audio"]
+        self.assertEqual(audio["lastInputAt"], at)
+        self.assertEqual(audio["lastSentAt"], at - 120)
+        self.assertEqual(audio["lastASRAt"], at - 900)
+        self.assertEqual(audio["overrunBytes"], 21)
+        self.assertEqual(audio["reconnectCount"], 5)
+
+    def test_invalid_audio_timestamps_stay_redacted(self):
+        audio = module.clean_snapshot({"schema": 1, "audio": {
+            "lastInputAt": True, "lastSentAt": -1, "lastASRAt": 10**15,
+        }})["audio"]
+        self.assertIsNone(audio["lastInputAt"])
+        self.assertIsNone(audio["lastSentAt"])
+        self.assertIsNone(audio["lastASRAt"])
+
     def test_lan_only(self):
         self.assertEqual(module.private_ip("192.168.2.102"), "192.168.2.102")
         for value in ("8.8.8.8", "127.0.0.1", "169.254.1.2",
