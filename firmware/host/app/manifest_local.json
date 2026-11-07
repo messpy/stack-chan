@@ -1,5 +1,5 @@
 {
   "include": ["./manifest.json"],
-  "modules": {"archive-direct-photo": "./archive-direct-photo"},
+  "modules": {"archive-direct-photo": "./archive-direct-photo", "archive-usb-rpc": "./archive-usb-rpc"},
   "config": {}
 }
