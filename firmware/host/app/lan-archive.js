@@ -98,7 +98,7 @@ async function photo(robot,args={},fromConversation=false) {
   const tag=id(),name='photo-'+tag+'.jpg',image=name;
   jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');save(image,[jpeg]);
   result={name,image,width:frame.width,height:frame.height};
- }finally{frame?.close?.();robot.camera.stop();busy=wasBusy;}
+ }finally{try{frame?.close?.();}finally{try{robot.camera.stop();}finally{busy=false;}}}
  if(args.analyze!==false)Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
  return result;
 }
