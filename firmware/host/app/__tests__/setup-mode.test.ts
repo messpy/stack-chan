@@ -51,6 +51,7 @@ function installAliases(): void {
     ['volume-preview', 'volume-preview.js'],
   ])
     writeAliasPackage(appRoot, name, resolve(appRoot, path))
+  writeAliasPackage(appRoot, 'offline-boot-request', resolve(appRoot, 'offline-boot-request.js'))
   writeAliasPackage(appRoot, 'speaker', resolve(appRoot, '__tests__/fakes/settings-speaker.js'), {
     hasDefaultExport: true,
   })
