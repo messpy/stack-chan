@@ -57,3 +57,21 @@ test('cloud camera tool cannot allocate native camera while voice owns internal 
   assert.ok(body.indexOf('return {error:')>=0 && body.indexOf('return {error:')<body.indexOf('photoHandler(args)'))
 })
 
+
+test('PR #55 camera failure classification remains sanitized in both USB status lanes',()=>{
+  const lan=readFileSync(new URL('../../host/app/lan-archive.js',import.meta.url),'utf8')
+  const start=lan.indexOf('function cameraFailureClass(error){')
+  const end=lan.indexOf('function photoDiagnostic(){',start)
+  assert.ok(start>=0 && end>start)
+  const classifierSource=lan.slice(start,end)
+  const classify=new Function(classifierSource+';return cameraFailureClass')()
+  assert.equal(classify(new Error('not enough memory for camera')),'memory')
+  assert.equal(classify(new Error('SCCB sensor probe failed')),'sensor-bus')
+  assert.equal(classify(new Error('camera busy')),'busy')
+  assert.equal(classify(new Error('camera timeout')),'timeout')
+  assert.equal(classify(new Error('camera unavailable')),'unavailable')
+  assert.equal(classify(new Error('internal secret error')),'unknown')
+  assert.equal((lan.match(/watchdogStage:photoRecoveryLastCheckpoint\(\),\.\.\.photoDiagnostic\(\)/g)||[]).length,3)
+  assert.match(lan,/photoErrorClass=cameraFailureClass\(error\)/)
+  assert.match(lan,/photoErrorStage=photoProgress/)
+})
