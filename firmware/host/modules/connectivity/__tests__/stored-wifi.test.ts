@@ -63,6 +63,7 @@ function installBareSpecifierPackages(): void {
     hasDefaultExport: true,
   })
   writeAliasPackage(hostRoot, 'stored-wifi', resolve(modulesRoot, 'connectivity/stored-wifi.js'))
+  writeAliasPackage(hostRoot, 'timer', resolve(modulesRoot, 'testing/fakes/timer.js'), { hasDefaultExport: true })
 }
 
 async function setup(values: Record<string, unknown> = {}, configValues: Record<string, unknown> = {}) {
@@ -195,6 +196,65 @@ test('startHostBootServices exposes skipped network readiness when Wi-Fi credent
     reason: 'missing Wi-Fi credentials',
   })
   assert.ok(traces.includes('No Wi-Fi SSID\n'))
+})
+
+test('missing SSID automatically skips networking without opening a recovery prompt', async () => {
+  const { networkManager } = await setup()
+  const { startHostBootServices } = await import('../../../app/boot-services.js')
+  let prompts = 0
+  const services = startHostBootServices({
+    wifi: {
+      promptRecoveryChoice: async () => {
+        prompts++
+        return 'retry'
+      },
+    },
+  })
+  assert.deepEqual(await services.connectivity.network.ready, {
+    status: 'skipped',
+    reason: 'missing Wi-Fi credentials',
+  })
+  assert.equal(prompts, 0)
+  assert.deepEqual(networkManager.getStartedConnections(), [])
+})
+
+test('unresponsive Wi-Fi scan has a bounded deadline and releases the connection', async () => {
+  const { networkManager, traces } = await setup({
+    'wifi.ssid': 'boot-ap',
+    'wifi.password': 'boot-secret',
+  })
+  const timer = (await import('../../testing/fakes/timer.js')).default
+  timer.reset()
+  const { startHostBootServices } = await import('../../../app/boot-services.js')
+  const services = startHostBootServices({ wifi: { maxAttempts: 1, attemptTimeoutMs: 100 } })
+  assert.equal(networkManager.getStartedConnections().length, 1)
+  const stoppedBefore = networkManager.getStopCount()
+  timer.advance(99)
+  assert.equal(networkManager.getStopCount(), stoppedBefore)
+  timer.advance(1)
+  assert.deepEqual(await services.connectivity.network.ready, {
+    status: 'failed',
+    reason: 'boot Wi-Fi attempt timed out',
+  })
+  assert.equal(networkManager.getStopCount(), stoppedBefore + 1)
+  assert.ok(traces.includes('[network] boot Wi-Fi attempt timed out\n'))
+  networkManager.completeLastConnection()
+  assert.equal(networkManager.getStopCount(), stoppedBefore + 1)
+})
+
+test('successful Wi-Fi startup cancels its deadline', async () => {
+  const { networkManager, traces } = await setup({
+    'wifi.ssid': 'boot-ap',
+    'wifi.password': 'boot-secret',
+  })
+  const timer = (await import('../../testing/fakes/timer.js')).default
+  timer.reset()
+  const { startHostBootServices } = await import('../../../app/boot-services.js')
+  const services = startHostBootServices({ wifi: { maxAttempts: 1, attemptTimeoutMs: 100 } })
+  networkManager.completeLastConnection()
+  assert.deepEqual(await services.connectivity.network.ready, { status: 'connected' })
+  timer.advance(200)
+  assert.ok(!traces.includes('[network] boot Wi-Fi attempt timed out\n'))
 })
 
 test('startHostBootServices exposes failed network readiness with a traceable reason', async () => {
