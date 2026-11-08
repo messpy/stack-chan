@@ -1,6 +1,7 @@
 import {
   type BootWiFiRecoveryChoice,
   bootWiFiFailureMessage,
+  classifyBootWiFiFailure,
   networkReadyResultForRecoveryChoice,
   shouldRetryBootWiFiAttempt,
 } from 'boot-network-recovery'
@@ -32,6 +33,7 @@ export type BootWiFiStatus = {
 export type HostBootServicesOptions = {
   wifi?: {
     maxAttempts?: number
+    skipConnection?: boolean
     retryDelayMs?: number
     onStatusChanged?: (status: BootWiFiStatus) => void
     promptRecoveryChoice?: (status: BootWiFiStatus & { reason: string }) => Promise<BootWiFiRecoveryChoice>
@@ -84,6 +86,7 @@ async function startStoredWiFi(
   options: NonNullable<HostBootServicesOptions['wifi']> = {},
 ): Promise<NetworkReadyResult> {
   if ((config as { archiveUSBOnly?: boolean }).archiveUSBOnly) return { status: 'skipped', reason: 'USB archive mode' }
+  if (options.skipConnection) return { status: 'skipped', reason: 'one-shot offline boot requested' }
   const maxAttempts = options.maxAttempts ?? DEFAULT_BOOT_WIFI_MAX_ATTEMPTS
   const retryDelayMs = options.retryDelayMs ?? DEFAULT_BOOT_WIFI_RETRY_DELAY_MS
   for (;;) {
@@ -95,11 +98,11 @@ async function startStoredWiFi(
         message: localize('splash.connecting', { attempt, maxAttempts }),
       })
       const result = await connectStoredWiFiOnce()
-      if (result.status !== 'failed') {
-        return result
-      }
+      if (result.status === 'connected') return result
       lastReason = result.reason
-      trace(`[network] boot Wi-Fi attempt ${attempt}/${maxAttempts} failed: ${lastReason}\n`)
+      trace(`[network] boot Wi-Fi attempt ${attempt}/${maxAttempts}: ${classifyBootWiFiFailure(lastReason)}\n`)
+      // Missing credentials cannot recover through another identical retry.
+      if (result.status === 'skipped') break
       if (shouldRetryBootWiFiAttempt(attempt, maxAttempts)) {
         await wait(retryDelayMs)
       }
@@ -144,7 +147,7 @@ function connectStoredWiFiOnce(): Promise<NetworkReadyResult> {
         onConnected: () => finish({ status: 'connected' }),
         onError: (reason) => {
           const message = reason ?? 'connection failed'
-          trace(`[network] connection failed: ${message}\n`)
+          trace(`[network] connection failed: ${classifyBootWiFiFailure(message)}\n`)
           finish({ status: 'failed', reason: message })
         },
       })
@@ -153,7 +156,7 @@ function connectStoredWiFiOnce(): Promise<NetworkReadyResult> {
       }
     } catch (error) {
       const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : String(error)
-      trace(`[network] connection failed: ${message}\n`)
+      trace(`[network] connection failed: ${classifyBootWiFiFailure(message)}\n`)
       finish({ status: 'failed', reason: message })
     }
   })
