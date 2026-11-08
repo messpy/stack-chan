@@ -113,8 +113,10 @@ async function photo(robot,args={},fromConversation=false) {
   } finally {
    try {
     await releaseCameraResources(robot.camera,frame,(at)=>trace('[archive-camera] cleanup failed stage='+at+'\n'));
-    const heap=heapStatus();
-    trace('[archive-camera] stage=camera-released free='+(heap?.internalFree??-1)+' largest='+(heap?.internalLargest??-1)+'\n');
+    try{
+      const heap=heapStatus();
+      trace('[archive-camera] stage=camera-released free='+(heap?.internalFree??-1)+' largest='+(heap?.internalLargest??-1)+'\n');
+    }catch(_){trace('[archive-camera] stage=camera-released (heap metrics unavailable)\n')}
    } catch(e) {
     trace('[archive-camera] failed stage=camera-release type='+String(e?.name||'Error').slice(0,48)+'\n');
     throw e;
@@ -185,8 +187,12 @@ async function record(robot) {
     trace('[archive] video with audio saved\n');
     return {name,frames:count,fps,audio:true,duration:5};
   }finally {
-    if(audioPromise)await audioPromise;
-    try {await releaseCameraResources(robot.camera,undefined,(at)=>trace('[archive-camera] record cleanup failed stage='+at+'\n'));}finally{busy=false;}
+    try {
+      if(audioPromise)await audioPromise;
+    }finally{
+      try {await releaseCameraResources(robot.camera,undefined,(at)=>trace('[archive-camera] record cleanup failed stage='+at+'\n'));}
+      finally {busy=false;}
+    }
   }
 }
 async function recordAudio(robot) {
@@ -233,9 +239,11 @@ export function startArchive(robot) {
       }catch(e){release();throw e}
     },
     release(){
-      busy=false;
+      // createLANMonitor also calls release after a failed claim. In that
+      // case do not clear busy ownership belonging to an unrelated operation.
       const release=monitorReleaseHold;monitorReleaseHold=undefined;
-      release?.();trace('[monitor] stopped\n');
+      if(release){busy=false;release()}
+      trace('[monitor] stopped\n');
     },
     log:message=>trace('[head-jog] '+message+'\n'),
     readHeadRotation:()=>new Promise((resolve,reject)=>{const driver=getM5StackChanDriver();if(!driver){reject(new Error('Motor unavailable'));return}driver.getRotation(result=>result.success?resolve({...result.value}):reject(new Error('Position unavailable')))}),
