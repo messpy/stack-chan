@@ -32,3 +32,24 @@ archive-*.js を一括変換せず、実際の依存グラフを根拠に移行�
 
 Issue: https://github.com/messpy/stack-chan/issues/3
 Base: `stackchan-super`
+
+
+## 2026-11-08 追補: 実行可能な依存監査（未移行）
+
+`firmware/scripts/archive-js-inventory.mjs` を追加。**ソースのみ読み取り**、`archive-*.js` のファイル名・行数・静的import候補・依存先・native/Worker/Piu/機器アクセスのフラグをJSONで標準出力する。
+
+```bash
+# kmacのcloneで事前調査。何も変更しない
+cd /mnt/data/Development/stackchan/stack-chan/firmware
+node scripts/archive-js-inventory.mjs
+node --test scripts/lib/archive-js-inventory.test.mjs
+```
+
+監査の重要な区別:
+- `archive-memory.js` は `native('xs_archive_database')` を使用。C/SQLiteへの依存を取り除かず、型宣言を先に作る。
+- `archive-gemini-worker.js` は音声Worker側の実装。MainとWorker間のプロトコル互換を独立検証する。
+- `archive-screen.js` / `archive-usb.js` は manifest 上でCファイルと組。JSだけを改名してはならない。
+- `archive-direct-chat.js` は複数プロバイダーの音声・ツール・撮影呼出しを集約。最終段階までJS維持が安全。
+- このスクリプトは正規表現の**語彙解析**であり、実際の`manifest` エイリアス、動的import、XSホスト関数の完全な依存グラフではない。レポートの `unresolvedArchiveImports` を直ちに欠陥と解釈しない。
+
+**状態:** スクリプトとNodeテストを追加したが、全52ファイルのリスク評価・ビルド・実機検証は未完了。JS→TSの実変換はこのPRではしない。
