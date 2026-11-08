@@ -12,6 +12,10 @@ on:
       - 'firmware/host/modules/camera/device/camera.ts'
       - 'firmware/host/app/runtime-camera.ts'
       - 'firmware/scripts/lib/archive-camera-lifecycle.test.mjs'
+      - 'firmware/scripts/lib/archive-photo-faults.test.mjs'
+      - 'firmware/scripts/lib/archive-diagnostic-no-sd.test.mjs'
+      - 'firmware/scripts/camera-probe-session.py'
+      - 'firmware/scripts/lib/camera-probe-session.test.py'
       - 'firmware/scripts/lib/archive-usb-rpc.test.mjs'
       - 'firmware/scripts/lib/archive-camera-polling.test.mjs'
       - 'firmware/scripts/stackchan-ci.sh'
@@ -49,11 +53,15 @@ jobs:
             firmware/scripts/lib/archive-direct-photo.test.mjs \
             firmware/scripts/lib/archive-camera-polling.test.mjs \
             firmware/scripts/lib/archive-camera-lifecycle.test.mjs \
-            firmware/scripts/lib/archive-usb-rpc.test.mjs
+            firmware/scripts/lib/archive-usb-rpc.test.mjs \
+            firmware/scripts/lib/archive-photo-faults.test.mjs \
+            firmware/scripts/lib/archive-diagnostic-no-sd.test.mjs
       - name: Preserve admission guard
         run: node firmware/scripts/lib/archive-memory-policy.test.mjs
       - name: Validate CoreS3 two-frame SDK camera patch
         run: python3 firmware/scripts/lib/patch-core-s3-camera.test.py
+      - name: Validate durable probe supervision without a device
+        run: python3 firmware/scripts/lib/camera-probe-session.test.py
       - name: Parse JavaScript modules and manifests
         run: |
           node --check firmware/host/app/archive-usb-rpc.js
@@ -65,6 +73,6 @@ jobs:
       - name: Check shell and Python syntax
         run: |
           bash -n firmware/scripts/stackchan-ci.sh firmware/scripts/update-archive.sh
-          python3 -m py_compile firmware/scripts/stackchan-camera-probe.py firmware/scripts/stackchan-voice-diagnostic.py firmware/scripts/patch-core-s3-camera.py
+          python3 -m py_compile firmware/scripts/camera-probe-session.py firmware/scripts/stackchan-camera-probe.py firmware/scripts/stackchan-voice-diagnostic.py firmware/scripts/patch-core-s3-camera.py
       - name: Check patch whitespace
         run: git diff --check HEAD^ HEAD

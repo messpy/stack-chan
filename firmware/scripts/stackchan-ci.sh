@@ -98,8 +98,7 @@ if [ "$MODE" = "voicevox" ]; then
 fi
 if [ "$MODE" = "camera" ]; then
   STEP="CAMERA"
-  confirm "写真を1枚撮影してSDへ保存しますか？（クラウド解析はしません）"
-  python3 scripts/stackchan-camera-probe.py || fatal "撮影診断に失敗しました"
+  python3 scripts/camera-probe-session.py || fatal "撮影診断に失敗しました"
   exit 0
 fi
 if [ "$MODE" = "diagnose" ]; then
@@ -149,11 +148,14 @@ if [ "$MODE" = "test" ] || [ "$MODE" = "build" ] || [ "$MODE" = "deploy" ]; then
     scripts/lib/archive-direct-photo.test.mjs \
     scripts/lib/archive-camera-polling.test.mjs \
     scripts/lib/archive-camera-lifecycle.test.mjs \
+    scripts/lib/archive-photo-faults.test.mjs \
+    scripts/lib/archive-diagnostic-no-sd.test.mjs \
     scripts/lib/archive-usb-rpc.test.mjs \
     scripts/lib/idf-dependencies.test.mjs ||
     fatal "診断・PSRAM単体テスト失敗"
   node scripts/lib/archive-memory-policy.test.mjs ||
     fatal "内部RAM保護テスト失敗"
+  python3 scripts/lib/camera-probe-session.test.py || fatal "診断スーパーバイザーテスト失敗"
   python3 scripts/lib/patch-core-s3-camera.test.py ||
     fatal "CoreS3カメラSDK設定テスト失敗"
   if [ "$MODE" = "test" ]; then

@@ -145,8 +145,8 @@ export default class Camera implements RobotCamera {
       buffer: frame,
       close: () => {
         if (isClosed) return
-        isClosed = true
         closeFrame(frame)
+        isClosed = true
       },
     }
   }

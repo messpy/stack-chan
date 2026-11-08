@@ -29,7 +29,7 @@ import {analyzeJPEG,visionStatus} from 'archive-vision';
 import {startAlarmSettings,openAlarmSettings,showRingingAlarm,hideRingingAlarm} from 'archive-alarm-ui';
 import {alarmSoundCommand,playAlarmSound} from 'archive-alarm-sound';
 import {startWeb,openControl,controlStatus} from 'archive-web';
-import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat,beginCameraHandoff,finishCameraHandoff,quarantineCameraHandoff,isCameraHandoffUnsafe} from 'archive-direct-chat';
+import {microphoneIndicator,startDirectChat,directChatStatus,directChatDiagnostic,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat,beginCameraHandoff,finishCameraHandoff,quarantineCameraHandoff,isCameraHandoffUnsafe} from 'archive-direct-chat';
 import {recordMemory,history,deviceHistory,currentSpeaker,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
 import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
 import {acceptAudioChunk} from 'archive-audio-upload';
@@ -132,7 +132,7 @@ async function photo(robot,args={},fromConversation=false) {
   if(busy){traceConversation('CAMERA_ERROR','busy');throw new Error('Camera busy');}
   busy=true;
   photoErrorClass='none';photoErrorStage='none';
-  let frame,jpeg,result,cameraClosed=false,failureReported=false;
+  let frame,jpeg,result,cameraClosed=false,releaseAttempted=false,failureReported=false;
   const reportFailure=error=>{
     if(failureReported)return;
     failureReported=true;
@@ -145,6 +145,8 @@ async function photo(robot,args={},fromConversation=false) {
   // The CoreS3 native camera close is synchronous. Do not resume touch/voice
   // while the camera still owns its DMA frame and shared I2C pins.
   const releaseCamera=captured=>{
+    if(releaseAttempted)return;
+    releaseAttempted=true;
     markPhotoPhase('FRAME_RELEASE');
     trace('[photo] frame release begin\n');
     let releaseError;
@@ -187,6 +189,8 @@ async function photo(robot,args={},fromConversation=false) {
       trace('[photo] jpeg encode done bytes='+jpeg.byteLength+'\n');
       markPhotoPhase('JPEG_DONE');
       traceConversation('JPEG_DONE','bytes='+jpeg.byteLength);
+      // JPEG owns its output; return DMA and release SCCB before synchronous SD I/O.
+      releaseCamera(captured);
       trace('[photo] sd save begin\n');
       markPhotoPhase('SD_SAVE_START');
       traceConversation('SD_SAVE_START',image);
@@ -213,7 +217,7 @@ async function photo(robot,args={},fromConversation=false) {
     trace('[photo] processor returned to photo\n');
   }catch(error){reportFailure(error);throw error;}
   finally{
-    if(!cameraClosed){
+    if(!releaseAttempted){
       try{releaseCamera(frame);}
       catch(error){trace('[photo] incomplete camera release type='+String(error?.name||'Error').slice(0,48)+'\n');}
     }
@@ -529,7 +533,7 @@ export function startArchive(robot) {
     authenticate:request=>request.token===token,
     arm:armDebugDrain,
     inspect:(op,pending)=>op==='/debug/status'
-      ? {...debugLogStatus(),usbOperation:{...pending,phase:photoProgress,watchdogReset:photoRecoveryTriggered(),watchdogStage:photoRecoveryLastCheckpoint(),...photoDiagnostic()}}
+      ? {...debugLogStatus(),chat:directChatDiagnostic(),usbOperation:{...pending,phase:photoProgress,watchdogReset:photoRecoveryTriggered(),watchdogStage:photoRecoveryLastCheckpoint(),...photoDiagnostic()}}
       : {busy:true,usbOperation:{...pending,phase:photoProgress,watchdogReset:photoRecoveryTriggered(),watchdogStage:photoRecoveryLastCheckpoint(),...photoDiagnostic()},
          camera:robot.camera.available!==false,chat:{state:'busy'}},
     trace,

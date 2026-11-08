@@ -19,7 +19,7 @@ import {TTS as RecognitionTTS} from 'archive-offline-tts'
 import { Container, Label, Text, Skin, Style } from 'piu/MC'
 import { ActionButton } from 'ui-controls'
 import { uiFont } from 'ui-theme'
-import { getSettings, changeSettings } from 'archive-vault'
+import { peekSettings, getSettings, changeSettings } from 'archive-vault'
 import { getSettingsStatus } from 'archive-settings'
 import { listDeviceTools, callDeviceTool } from 'archive-tools'
 import {
@@ -307,6 +307,17 @@ function providerNotice() {
   if (chatProvider() === 'ollama') return 'Ollama Cloudで返答生成。音声はGemini / Googleへ送信します。'
   return (chatProvider() === 'gemini' ? 'Gemini / Google' : 'XiaoZhi') + 'へON中はマイク音声を送信します。OFFで停止。'
 }
+// No user lookup, SQLite, SD access, provider configuration, or conversation text.
+export function directChatDiagnostic() {
+  const settings = peekSettings()
+  return {
+    enabled: settings ? !chatSaveFailedOff && settings.chatMode === true : null,
+    recognitionMode: settings ? !recognitionSaveFailedOff && settings.transcriptionMode === true : null,
+    state,
+    memory: typeof heapStatus === 'function' ? heapStatus() : null,
+  }
+}
+
 export function directChatStatus() {
   const provider = chatProvider()
   return {

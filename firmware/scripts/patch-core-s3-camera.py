@@ -17,7 +17,7 @@ FB = ".fb_count = 3,"
 GRAB_RE = re.compile(r"(?m)^(\s*)\.grab_mode = CAMERA_GRAB_LATEST,[^\n]*$")
 
 
-def patch_source(source):
+def patch_buffers(source):
     if MARKER in source:
         if (
             "#define kCameraFrameCount (2)" not in source
@@ -43,6 +43,44 @@ def patch_source(source):
     return source
 
 
+LIFECYCLE_MARKER = "STACKCHAN_CAMERA_STOP_NOTIFY"
+LOOP = "\twhile (true) {\n\t\tif (kStateClosing == camera->state) {"
+STOP = "\txTaskNotify(camera->task, kStateStopping, eSetValueWithOverwrite);\n\n\txSemaphoreTake(camera->mutex, portMAX_DELAY);"
+
+
+def patch_source(source):
+    source = patch_buffers(source)
+    if LIFECYCLE_MARKER in source:
+        if ("if (kStateRunning == control) running = 1;" not in source
+                or "while (kStateIdle != camera->state)" not in source
+                or "if (!fb) continue; /* Driver timeout:" not in source):
+            raise RuntimeError("Existing camera lifecycle patch is incomplete; review SDK")
+        return source
+    if source.count(LOOP) != 1 or source.count(STOP) != 1:
+        raise RuntimeError("Unexpected SDK camera task lifecycle; abort camera patch")
+    # Running capture formerly never consumed stop/close task notifications.
+    source = source.replace(LOOP,
+        "\twhile (true) {\n"
+        "\t\t/* " + LIFECYCLE_MARKER + ": consume control even during capture. */\n"
+        "\t\tuint32_t control;\n"
+        "\t\tif (xTaskNotifyWait(0, 0, &control, 0) == pdTRUE) {\n"
+        "\t\t\tcamera->state = control;\n"
+        "\t\t\tif (kStateRunning == control) running = 1;\n"
+        "\t\t}\n"
+        "\t\tif (kStateClosing == camera->state) {", 1)
+    source = source.replace(STOP,
+        "\txTaskNotify(camera->task, kStateStopping, eSetValueWithOverwrite);\n"
+        "\t/* Do not return DMA buffers while the producer can publish a frame. */\n"
+        "\twhile (kStateIdle != camera->state)\n"
+        "\t\tmodDelayMilliseconds(1);\n\n"
+        "\txSemaphoreTake(camera->mutex, portMAX_DELAY);", 1)
+    needle = "\t\t\tcamera_fb_t *fb = esp_camera_fb_get();"
+    if source.count(needle) != 1:
+        raise RuntimeError("Unexpected SDK frame acquisition; abort camera patch")
+    source = source.replace(needle, needle + "\n\t\t\tif (!fb) continue; /* Driver timeout: service control on next loop. */", 1)
+    return source
+
+
 def apply(root):
     path = Path(root) / SRC
     if not path.is_file():
@@ -53,7 +91,7 @@ def apply(root):
         print("[CHECK] CoreS3 camera SDK patch: already applied")
         return
     backup = path.with_name(path.name + BACKUP_SUFFIX)
-    if backup.exists() and backup.read_text(encoding="utf8") != before:
+    if backup.exists() and patch_source(backup.read_text(encoding="utf8")) != after:
         raise RuntimeError(f"SDK backup differs from current source: {backup}")
     if not backup.exists():
         backup.write_text(before, encoding="utf8")

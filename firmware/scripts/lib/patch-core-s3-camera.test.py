@@ -18,6 +18,7 @@ ORIGINAL = (
     "    .fb_location = CAMERA_FB_IN_PSRAM,\n"
     "    .grab_mode = CAMERA_GRAB_LATEST, // vs. CAMERA_GRAB_WHEN_EMPTY\n"
     "};\n"
+    + module.LOOP + "\n" + module.STOP + "\n\t\t\tcamera_fb_t *fb = esp_camera_fb_get();\n"
 )
 
 
