@@ -347,6 +347,13 @@ bail:
 	vTaskDelete(NULL);
 }
 
+static int cameraCreateTask(Camera camera)
+{
+	camera->mutex = xSemaphoreCreateMutex();
+	if (!camera->mutex) return 0;
+	return pdPASS == xTaskCreate(cameraLoop, "camera", 8 * 1024 + XT_STACK_EXTRA_CLIB, camera, 10, &camera->task);
+}
+
 static int formatToCamFormat(int commodettoFormat)
 {
 	switch (commodettoFormat) {
@@ -380,6 +387,15 @@ static int dimensionsToFrameSize(int width, int height)
 	return -1;
 }
 
+
+static void cameraConstructionFailed(xsMachine *the, Camera camera, const char *message)
+{
+	xsmcSetHostData(xsThis, NULL);
+	xsmcSetHostDestructor(xsThis, NULL);
+	xsForget(camera->object);
+	xs_camera_destructor(camera);
+	xsUnknownError("%s", message);
+}
 
 void xs_camera_constructor(xsMachine *the)
 {
@@ -433,7 +449,6 @@ void xs_camera_constructor(xsMachine *the)
 	camera_config.frame_size = FrameSizes[frameSizeIndex].id;
 
 	camera->state = kStateInitializing;
-	camera->mutex = xSemaphoreCreateMutex();
 
 	if (isJPEG)
 		camera_config.pixel_format = PIXFORMAT_JPEG;
@@ -446,13 +461,15 @@ void xs_camera_constructor(xsMachine *the)
 	camera->swap16 = (imageType == kCommodettoBitmapRGB565LE);
 	camera->isJPEG = isJPEG;
 
-	xTaskCreate(cameraLoop, "camera", 8 * 1024 + XT_STACK_EXTRA_CLIB, camera, 10, &camera->task);
+	if (!cameraCreateTask(camera)) {
+		cameraConstructionFailed(the, camera, "camera resources unavailable");
+	}
 
 	while (kStateInitializing == camera->state)
 		vTaskDelay(1);
 
 	if (camera->initErr)
-		xsUnknownError("camera init failed");
+		cameraConstructionFailed(the, camera, "camera init failed");
 }
 
 void xs_camera_destructor(void *it)

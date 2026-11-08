@@ -86,7 +86,10 @@ const cameraHandoff = createCameraHandoff({
     trace('[archive-camera] audio released free=' + (heap?.internalFree ?? -1) +
       ' largest=' + (heap?.internalLargest ?? -1) + ' psramFree='+(heap?.psramFree??-1)+'\n')
   },
-  capture(args) { return photoHandler(args) },
+  capture(args) { return photoHandler(args,{
+    speakerId:cameraRequestSpeaker,
+    isCurrent:()=>enabled()&&cameraRequestContext===cameraContextVersion&&cameraRequestSpeaker===(currentSpeaker()?.id??null),
+  }) },
   settle(outcome) {
     try {
     const success = outcome.status === 'complete'

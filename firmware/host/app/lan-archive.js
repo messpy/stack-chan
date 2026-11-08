@@ -90,9 +90,10 @@ async function cameraPreview(robot) {
   finally {busy=false;release()}
  }
 }
-async function photo(robot,args={},fromConversation=false) {
+async function photo(robot,args={},fromConversation=false,context) {
  if(busy||(directChatStatus().cameraCaptureActive&&!fromConversation))throw new Error('Camera busy');
  busy=true;
+ const speakerId=context?context.speakerId:(directChatStatus().speaker?.id??null);
  let frame,jpeg,result,stage='camera-start';
  const started=Date.now();
  const metrics=at=>{try{const h=heapStatus();trace('[archive-camera] stage='+at+' elapsedMs='+(Date.now()-started)+' internalFree='+h.internalFree+' internalLargest='+h.internalLargest+' psramFree='+h.psramFree+'\n')}catch(_){}};
@@ -126,20 +127,19 @@ async function photo(robot,args={},fromConversation=false) {
   }
   if(args.analyze!==false) {
    trace('[archive-camera] stage=analysis-start\n');
-   Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
+   Object.assign(result,await describeImage(robot,result.name,jpeg,args.question,speakerId,context?.isCurrent));
    metrics('analysis-complete');
   }
   return result;
  } finally {busy=false;}
 }
 
-async function describeImage(robot,name,jpeg,question){
+async function describeImage(robot,name,jpeg,question,speakerId=directChatStatus().speaker?.id??null,isCurrent=()=>true){
  const prompt=String(question||'この画像には何が写っていますか？').slice(0,1000);
- const speakerId=directChatStatus().speaker?.id??null;
  const input=archiveTranscript('input',prompt,undefined,name,speakerId);
  const analysis=await analyzeJPEG(jpeg,prompt);
  const answer=archiveTranscript('output',analysis.status==='complete'?analysis.text:'画像認識エラー: '+(analysis.error||'回答を取得できませんでした'),undefined,name,speakerId);
- if(analysis.status==='complete')robot.showBalloon(analysis.text);
+ if(analysis.status==='complete'&&isCurrent()&&(directChatStatus().speaker?.id??null)===speakerId)robot.showBalloon(analysis.text);
  return {analysis,historySaved:!!input&&!!answer,messageIds:[input?.id,answer?.id]};
 }
 
@@ -421,7 +421,7 @@ export function startArchive(robot) {
     finally{usbBusy=false;}
   },5);
 
-  try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},args=>photo(robot,{...args,analyze:true},true),on=>{if(on){
+  try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},(args,context)=>photo(robot,{...args,analyze:true},true,context),on=>{if(on){
     // Preserve the user's ON choice while boot/offline speech owns the audio device.
     // The regular chat retry loop will connect after the audio lease is released.
     if(offlineStatus().playing)return;

@@ -9,7 +9,7 @@ are occupied). Native close waits for task termination. The CoreS3-specific
 native override now polls notifications during capture, acknowledges stop before
 returning buffers, coalesces readable callbacks, and defers freeing the native
 record until its queued callback drains. Explicit close still terminates the
-worker and deinitializes the camera before returning. The upstream camera license
+worker and deinitializes the camera before returning. Mutex/task allocation failures now return an error instead of waiting for an initialization that cannot start; failed initialization also releases its rooted native record. These are fault-injection results, not measured hardware RAM limits. The upstream camera license
 and provenance are included under `firmware/host/modules/camera/device/native/`.
 Other ESP32 camera targets retain their existing native implementation.
 
@@ -23,7 +23,7 @@ TTS after reconnecting, without generating another greeting or camera tool call.
 A continuation is retained until local playback succeeds, or until a final reply
 arrives on a live transport. A disconnect before a final reply can result in a
 retry; exactly-once audible delivery cannot be guaranteed across network loss.
-Speaker/mode changes invalidate stale continuations. JSON fields are bounded
+Speaker/mode changes invalidate stale continuations. Photo history keeps the speaker captured at request start, and stale analysis cannot replace the new speaker’s balloon. JSON fields are bounded
 before serialization so escaping cannot create a truncated JSON document.
 
 ## Build and test
@@ -42,7 +42,7 @@ platform**, not the generic SDK `m5stack_cores3` platform. Existing
 `build:archive` remains available for that older generic target. The example
 private manifest includes the official target's managed dependencies. Pre-seeding
 JPEG with audio/camera prevents concurrent IDF dependency additions from racing.
-No credentials are committed. CI creates a throwaway private manifest; that build
+The PC media test uses a checked-in, provenance-tagged compatibility fixture instead of depending on a sibling hub checkout; live external hub E2E remains separate. No credentials are committed. CI creates a throwaway private manifest; that build
 is a compile check and is not a configured deployment image.
 
 The C regression test executes the actual native worker and teardown functions

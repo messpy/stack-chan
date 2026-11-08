@@ -9,7 +9,7 @@ const exec=promisify(execFile)
 test('native worker consumes stop/close while streaming, full, or frame acquisition fails',async()=>{
  const native=await fs.readFile(new URL('../../host/modules/camera/device/native/camera.c',import.meta.url),'utf8')
  // Compile the actual production worker, supplying only RTOS/driver boundaries.
- const start=native.indexOf('static void cameraLoop(void *pvParameter)'),end=native.indexOf('\nstatic int formatToCamFormat',start)
+ const start=native.indexOf('static void cameraLoop(void *pvParameter)'),end=native.indexOf('\nstatic int cameraCreateTask',start)
  if(start<0||end<0)throw Error('Native worker boundary unavailable')
  const loop=native.slice(start,end)
  const source=String.raw`
@@ -78,6 +78,7 @@ int main(void){
 test('explicit native close terminates before queued callback drains and frees its record once',async()=>{
  const native=await fs.readFile(new URL('../../host/modules/camera/device/native/camera.c',import.meta.url),'utf8')
  const extract=(from,to)=>{const a=native.indexOf(from),b=native.indexOf(to,a);if(a<0||b<a)throw Error('Native boundary missing');return native.slice(a,b)}
+ const cleanup=extract('static void cameraConstructionFailed(', 'void xs_camera_constructor(')
  const callbacks=extract('static void deliverCallbacks(', 'static void cameraLoop(')
  const teardown=extract('void xs_camera_destructor(void *it)', 'void xs_camera_mark(')
  const source=String.raw`
@@ -93,6 +94,9 @@ typedef void xsMachine;typedef int xsSlot;
 #define eSetValueWithOverwrite 0
 #define portMAX_DELAY 99
 #define xsThis 0
+#include <setjmp.h>
+static jmp_buf failureJump;
+#define xsUnknownError(...) longjmp(failureJump,1)
 #define xsReference(x) 0
 #define xsInteger(x) 0
 #define xsmcGetHostData(x) current
@@ -113,7 +117,7 @@ static void xsBeginHost(void*p){}
 static void xsEndHost(void*p){}
 static void xsCallFunction1(int a,int b,int c){jsCalls++;}
 void xs_camera_destructor(void*);
-`+callbacks+teardown+String.raw`
+`+cleanup+callbacks+teardown+String.raw`
 int main(void){
  for(int pending=0;pending<2;pending++){
   Record c={.state=kStateRunning,.calling=pending,.mutex=(void*)1};c.task=&c;current=&c;
@@ -124,6 +128,9 @@ int main(void){
   if(pending)deliverCallbacks(NULL,&c,NULL,0);
   assert(freed==1&&deleted==1&&jsCalls==0);
  }
+ Record failed={.state=kStateTerminated,.mutex=(void*)1,.task=(void*)2};current=&failed;freed=deleted=notified=0;
+ if(!setjmp(failureJump))cameraConstructionFailed(NULL,&failed,"init failed");
+ assert(current==NULL&&freed==1&&deleted==1&&notified==0);
  return 0;
 }
 `
@@ -133,4 +140,26 @@ int main(void){
   await exec('cc',['-std=c11','-Werror=implicit-function-declaration',path.join(dir,'test.c'),'-o',path.join(dir,'test')])
   await exec(path.join(dir,'test'),[],{timeout:5000})
  }finally{await fs.rm(dir,{recursive:true,force:true})}
+})
+
+test('native task allocation fails promptly when mutex or task memory is unavailable',async()=>{
+ const native=await fs.readFile(new URL('../../host/modules/camera/device/native/camera.c',import.meta.url),'utf8')
+ const start=native.indexOf('static int cameraCreateTask('),end=native.indexOf('\nstatic int formatToCamFormat',start)
+ if(start<0||end<0)throw Error('Native allocation boundary unavailable')
+ const source=String.raw`
+#include <assert.h>
+#include <stddef.h>
+#define pdPASS 1
+#define XT_STACK_EXTRA_CLIB 0
+typedef struct{void *mutex,*task;} Record,*Camera;
+static int fault,calls;
+static void cameraLoop(void*p){}
+static void *xSemaphoreCreateMutex(void){return fault==0?NULL:(void*)1;}
+static int xTaskCreate(void(*fn)(void*),const char*name,int stack,void*arg,int priority,void**task){calls++;if(fault==1)return 0;*task=(void*)2;return pdPASS;}
+`+native.slice(start,end)+String.raw`
+int main(void){for(fault=0;fault<3;fault++){Record c={0};calls=0;int ok=cameraCreateTask(&c);assert(ok==(fault==2));assert(calls==(fault==0?0:1));}return 0;}
+`
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'stackchan-native-allocation-'))
+ try{await fs.writeFile(path.join(dir,'test.c'),source);await exec('cc',['-std=c11',path.join(dir,'test.c'),'-o',path.join(dir,'test')]);await exec(path.join(dir,'test'),[],{timeout:5000})}
+ finally{await fs.rm(dir,{recursive:true,force:true})}
 })
