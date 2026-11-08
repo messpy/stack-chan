@@ -202,7 +202,7 @@ async function recordAudio(robot) {
   }finally{microphoneIndicator(false);busy=false;}
 }
 export function startArchive(robot) {
-  let monitor,monitorVoice;
+  let monitor,monitorVoice,monitorReleaseHold;
   startDebugDrain();
   startLocalClock();
   startCustomFace(robot);
@@ -224,15 +224,23 @@ export function startArchive(robot) {
   monitor=createLANMonitor({robot,now:()=>Date.now(),repeat:(fn,ms)=>Timer.repeat(fn,ms),cancel:id=>Timer.clear(id),token:()=>randomHex(16),
     claim(){
       if(offlineStatus().playing||reminderStatus().ringing||directChatStatus().cameraCaptureActive||(busy&&!directChatStatus().busy))throw new Error('本体で処理中です');
-      const paused=pauseDirectChat();
-      if(busy){if(paused)resumeDirectChat();throw new Error('本体で処理中です');}
-      closeOffline();busy=true;trace('[monitor] started\n');
+      const release=holdDirectChat('lan-monitor');
+      try{
+        if(busy)throw new Error('本体で処理中です');
+        closeOffline();busy=true;monitorReleaseHold=release;
+        trace('[monitor] started\n');
+      }catch(e){release();throw e}
     },
-    release(){busy=false;resumeDirectChat();trace('[monitor] stopped\n');},
+    release(){
+      busy=false;
+      const release=monitorReleaseHold;monitorReleaseHold=undefined;
+      release?.();trace('[monitor] stopped\n');
+    },
     log:message=>trace('[head-jog] '+message+'\n'),
     readHeadRotation:()=>new Promise((resolve,reject)=>{const driver=getM5StackChanDriver();if(!driver){reject(new Error('Motor unavailable'));return}driver.getRotation(result=>result.success?resolve({...result.value}):reject(new Error('Position unavailable')))}),
     createInput:options=>new AudioIn(options),
     convertPCM:(raw,channels)=>prepareRecognitionPCM(raw,0,raw.byteLength,channels),jpeg:encodeJPEG,
+    releaseCamera:(frame)=>releaseCameraResources(robot.camera,frame,(stage)=>trace('[archive-camera] monitor cleanup failed stage='+stage+'\n')),
     cancelSpeech:()=>monitorVoice?.cancel(),
     async speak(text){
       let unlock;
