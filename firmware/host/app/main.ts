@@ -76,7 +76,7 @@ function waitForBootWiFiRecoveryChoice(status: BootWiFiStatus & { reason: string
   return waitForBootWiFiRecoveryChoiceWithTimeout(
     Timer,
     (choose) => {
-      trace(`[network] recovery choice: ${status.reason}\n`)
+      trace('[network] user recovery choice offered\n')
       showWiFiRecoveryChoice({
         message: status.message,
         onRetry: () => choose('retry'),
