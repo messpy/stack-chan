@@ -235,7 +235,7 @@ test('routine stop then close releases native DMA and restores touch before the 
   runtime.camera.start()
   await runtime.camera.capture()
   await runtime.camera.stop()
-  await runtime.camera.close()
+  await runtime.camera.close?.()
   runtime.camera.start()
   await runtime.camera.capture()
   await runtime.camera.stop()
