@@ -334,3 +334,48 @@ test('photo teardown callback stops at native close failure; touch stays paused'
     'CAMERA_NATIVE_CLOSE_BEGIN','camera.close',
   ])
 })
+
+test('failed touch restart is reported and retried only after native close', () => {
+  const events: string[] = []
+  let failTouchStart = true
+  const camera: RobotCamera = {
+    start() { events.push('camera.start') },
+    stop() { events.push('camera.stop') },
+    close() { events.push('camera.close') },
+    async capture() { return frame() },
+  }
+  const touchPanel = {
+    stop() { events.push('touch.stop') },
+    start() {
+      events.push('touch.start')
+      if (failTouchStart) throw new Error('touch hardware not ready')
+    },
+  }
+  const runtime = new StackchanRuntimeCamera({camera, touchPanel})
+  const firstStages: string[] = []
+
+  runtime.camera.start()
+  assert.throws(
+    () => runtime.close(stage => firstStages.push(stage)),
+    /touch hardware not ready/,
+  )
+  assert.deepEqual(firstStages, [
+    'CAMERA_STOP_BEGIN', 'CAMERA_STOP_DONE',
+    'CAMERA_NATIVE_CLOSE_BEGIN', 'CAMERA_NATIVE_CLOSE_DONE',
+    'TOUCH_RESUME_BEGIN',
+  ])
+
+  failTouchStart = false
+  const retryStages: string[] = []
+  assert.equal(runtime.close(stage => retryStages.push(stage)), undefined)
+  assert.deepEqual(retryStages, [
+    'CAMERA_STOP_BEGIN', 'CAMERA_STOP_DONE',
+    'CAMERA_NATIVE_CLOSE_BEGIN', 'CAMERA_NATIVE_CLOSE_DONE',
+    'TOUCH_RESUME_BEGIN', 'TOUCH_RESUME_DONE',
+  ])
+  assert.deepEqual(events, [
+    'touch.stop', 'camera.start',
+    'camera.stop', 'camera.close', 'touch.start',
+    'camera.stop', 'camera.close', 'touch.start',
+  ])
+})

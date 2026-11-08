@@ -215,11 +215,16 @@ export class StackchanRuntimeCamera implements RobotCamera {
 
   #resumeTouchPanel(): void {
     if (!this.#touchPanel || !this.#touchPanelPaused) return
-    this.#touchPanelPaused = false
     try {
       this.#touchPanel.start()
+      // The panel remains logically paused until its hardware start succeeds.
+      // A failed restart must not make close() report a recovered device.
+      this.#touchPanelPaused = false
     } catch (error) {
       traceMessage(`[runtime-camera] touch panel restart error ${errorMessage(error)}\n`)
+      // Preserve the paused state for a later explicit retry and let the
+      // photo teardown keep its recovery guard instead of claiming success.
+      throw error
     }
   }
 }
