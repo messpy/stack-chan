@@ -5,12 +5,14 @@ import { resolveAppBehaviors } from 'app-behavior-resolver'
 import defaultBehavior from 'app-default-behavior'
 import { installLaunchShortcut, type LaunchShortcutButton, prepareAppLaunch } from 'app-launch'
 import { type BootWiFiStatus, startHostBootServices } from 'boot-services'
+import { classifyBootWiFiFailure } from 'boot-network-recovery'
 import type { StackchanContext } from 'capabilities'
 import { createStackchanContext, getHostDeviceEnvironment } from 'compose'
 import { DOMAIN } from 'consts'
 import { type StackchanDockRuntime, startStackchanDock } from 'dock'
 import { prepareExperimentalMiniApps, registerExperimentalMiniApps } from 'experimental-mini-app-loader'
 import { initializeLocalization } from 'localization'
+import { consumeOfflineBootRequest } from 'offline-boot-request'
 import Modules from 'modules'
 import {
   type StartupPhase,
@@ -21,6 +23,7 @@ import {
   startupErrorClass,
 } from 'startup-splash'
 import { applyTimezone } from 'timezone-settings'
+import Timer from 'timer'
 
 type DeviceButton = {
   onChanged: (this: DeviceButton) => void
@@ -33,6 +36,7 @@ type GlobalEnvironment = {
 
 const globalEnv = globalThis as typeof globalThis & GlobalEnvironment
 const noopButtonHandler = () => undefined
+const BOOT_WIFI_FALLBACK_TIMEOUT_MS = 15000
 
 function installPlatformInputBridge(): void {
   if (!Modules.has('wasm-button-bridge')) return
@@ -69,6 +73,7 @@ function waitForBootWiFiRecoveryChoice(status: BootWiFiStatus & { reason: string
     let resolved = false
     const previousAHandler = globalEnv.button?.a?.onChanged
     const previousCHandler = globalEnv.button?.c?.onChanged
+    let fallbackTimer: ReturnType<typeof Timer.set> | undefined
 
     const restoreButtons = () => {
       if (globalEnv.button?.a) {
@@ -81,11 +86,12 @@ function waitForBootWiFiRecoveryChoice(status: BootWiFiStatus & { reason: string
     const choose = (choice: 'retry' | 'offline') => {
       if (resolved) return
       resolved = true
+      if (fallbackTimer !== undefined) Timer.clear(fallbackTimer)
       restoreButtons()
       resolve(choice)
     }
 
-    trace(`[network] ${status.message}: ${status.reason}\n`)
+    trace(`[network] recovery prompt: ${classifyBootWiFiFailure(status.reason)}\n`)
     showWiFiRecoveryChoice({
       message: status.message,
       onRetry: () => choose('retry'),
@@ -97,6 +103,11 @@ function waitForBootWiFiRecoveryChoice(status: BootWiFiStatus & { reason: string
     if (globalEnv.button?.c) {
       globalEnv.button.c.onChanged = () => choose('offline')
     }
+    // Unattended devices must not be held on the boot splash indefinitely.
+    fallbackTimer = Timer.set(() => {
+      trace('[network] boot Wi-Fi recovery timed out; starting offline\n')
+      choose('offline')
+    }, BOOT_WIFI_FALLBACK_TIMEOUT_MS)
   })
 }
 
@@ -137,6 +148,7 @@ async function main() {
     phase = 'network'
     const bootServices = startHostBootServices({
       wifi: {
+        skipConnection: consumeOfflineBootRequest(),
         onStatusChanged: showWiFiConnectionStatus,
         promptRecoveryChoice: waitForBootWiFiRecoveryChoice,
       },
