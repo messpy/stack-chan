@@ -31,3 +31,16 @@
 - ユニットテスト、CI、CoreS3ビルド、実機検証のエビデンスが揃うまでDraftを維持する。
 
 Issue: https://github.com/messpy/stack-chan/issues/14
+
+
+## 2026-11-08: 撮影と画像解析の現在の契約
+
+`stackchan-super` のソースで確認:
+- `lan-archive.js` の `photo()` は`camera.capture`→JPEG化→SD保存後、`args.analyze!==false` のとき `describeImage()` を呼ぶ。
+- `describeImage()` は入力/結果の両方を`archiveTranscript()`で保存しているが、**画像解析試行ごとの状態レコードは作っていない**。
+- `archive-vision.js` の`analyzeJPEG()` は `busy` / `unconfigured` / `complete` / `error` を返し、最後の結果はメモリ上にある。送信が開始されたかは現状レスポンスの`complete`と混同しない。
+- `archive-memory.js` は `message_media(message_id,filename)` を保存する。解析試行が成功したか否かを表すカラム/別テーブルはない。
+
+従って新規`media_analysis`は、撮影成功・SD保存成功・プロバイダー送信要求・応答完了を**別々のイベント**として扱う。旧行に対して`sent=true`を推定補完しない。既存写真の全削除やメッセージID変更は行わない。
+
+**未実施:** 実SQLiteデータ監査、画像解析メタデータ保存、移行テスト、実機撮影 (#33/#40)。
