@@ -9,6 +9,23 @@ test('explicit commands use local camera only',()=>{
   for(const text of ['写真撮って。','写真を撮って','写真を一枚撮って','写真を1枚撮って','スタックチャン、写真撮って','スタックちゃん 写真を撮って','マックちゃん写真撮って。','マックチャン、写真を撮って','カメラで写真を撮影してください'])
     assert.equal(directPhotoRequest(text),true,text)
 })
+test('camera-only PR #47/#55 voice variants are accepted without cloud analysis',()=>{
+  for(const line of [
+    '撮影して', '撮影してください', 'カメラで撮って',
+    'カメラを撮影して', '写真を撮ってね', '写真撮ってお願い',
+    'ねぇ、写真を撮って', 'スタックチャン、写真を一枚撮って',
+    'カメラで写真を1枚撮って'
+  ]) assert.equal(directPhotoRequest(line),true,line)
+})
+test('historical, quoted and negated camera requests are never authorized',()=>{
+  for(const line of [
+    '昨日写真を撮ってと言った', '「写真を撮って」',
+    '写真を撮ってとは言ってない', '写真を撮らないでください',
+    'カメラで撮ってもいい？', 'カメラで見てください',
+    '写真撮影の話をした', '写真を撮ってから送信して',
+    'スタックチャンに写真を撮ってと言われた'
+  ]) assert.equal(directPhotoRequest(line),false,line)
+})
 test('mentions, questions, negative or ambiguous text never trigger camera',()=>{
   for(const text of ['写真を撮らないで','写真を撮ってほしくない','写真撮ってと言った','写真が撮れる？','さっき写真を撮って','写真を撮って、そのあと送って','顔を見て','説明して','写真','',null,'写真撮って '.repeat(30)])
     assert.equal(directPhotoRequest(text),false,String(text))
