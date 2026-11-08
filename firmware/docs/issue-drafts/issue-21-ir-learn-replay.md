@@ -31,3 +31,15 @@ KoeAct-JP学習済みスキーマにはIRがないため#17/#18とは独立。�
 - ユニットテスト、CI、CoreS3ビルド、実機検証のエビデンスが揃うまでDraftを維持する。
 
 Issue: https://github.com/messpy/stack-chan/issues/21
+
+
+## 2026-11-08: IR固定コマンド・データ検証プロトタイプ
+
+`firmware/scripts/lib/archive-ir-policy.mjs`（Node検証専用）とテストを追加。機器種別の限定、学習済みNEC/Rawの長さ・搬送波・リピート上限、明示登録された日本語フレーズの**完全一致**、曖昧一致拒否、二重登録拒否、500ms連打抑止を試験する。
+
+```bash
+cd firmware
+node --test scripts/lib/archive-ir-policy.test.mjs
+```
+
+**ハードRMT受信/送信、SD永続保存、UI、音声モデル推論は未実装**。認識やAIが任意コードを生成して送信する経路は追加しない。対応家電・GPIO・電源の実機事前確認後のみ実装着手する。
