@@ -1,7 +1,7 @@
 import {headDirectionFromText} from 'archive-head-motion'
 import {heapStatus,collectMemory} from 'archive-usb'
 import {checkVoiceMemory,voiceMemoryAdmission,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
-import {markHeap} from 'archive-debug'
+import {markHeap,createVoiceTurnTracker,memoryReasonCode} from 'archive-debug'
 import { ollamaChat, ollamaModel, validOllamaModel, geminiTextChat, DEFAULT_GEMINI_TEXT_MODEL, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
 import { VoiceRegistration, enrollmentInstructions, explicitSpeakerName, registrationName } from 'archive-speaker-registration'
 import { speakerButtons } from 'archive-button-schema'
@@ -264,6 +264,7 @@ export function microphoneIndicator(active){
   trace('[microphone] '+(active?'recording':'stopped')+'\n')
 }
 const audioStats = { recognizedEvents:0,lastTranscriptAt:0,inputEvents: 0, inputPeak: 0, outputEvents: 0, outputPeak: 0, lastInputAt: 0, lastOutputAt: 0 }
+const voiceTurnTracker=createVoiceTurnTracker({emit:line=>trace(line)})
 const labels = {
   identity: '話す人を画面で選んでください',
   off: '会話モード OFF',
@@ -394,6 +395,7 @@ export function directChatStatus() {
     detail,
     conversationStage,
     audio: { ...audioStats },
+    voiceTurn:voiceTurnTracker.snapshot(),
     memory: typeof heapStatus==='function'?heapStatus():null,
     // Last admission attempt, not live free RAM; survives a retry for diagnostics.
     memoryAdmission:lastMemoryAdmission,
@@ -551,6 +553,7 @@ function scheduleMemoryCleanup(){if(memoryCleanupTimer!==undefined)return;memory
 },0)}
 function closeChat() {
   if(chat || connecting)trace('[mode-session] closing native session\n')
+  voiceTurnTracker.end()
   const speech=recognitionSpeech;recognitionSpeech=undefined;try{speech?.cancel()}catch(_){}
   identityNotice=''
   microphoneIndicator(false)
@@ -576,6 +579,7 @@ function closeChat() {
 }
 function failed(reason) {
   if (state === 'retrying' || memoryRetryStopped) return
+  voiceTurnTracker.end(memoryReasonCode(reason))
   if(globalThis.stackchanAudioHealth&&/^Microphone (upload|PCM) stalled$/.test(String(reason)))
     globalThis.stackchanAudioHealth.lastError=String(reason).includes('upload')?'upload-stalled':'input-stalled'
   failures++
@@ -909,6 +913,7 @@ async function connect() {
       }catch(e){if(isCurrent()){error='返答処理に失敗しました';detail=String(e.message||e).slice(0,160);for(const key of [getSettings().api?.gemini,getSettings().api?.ollama])if(key)detail=detail.split(key).join('[redacted]');showConversationBalloon(error);trace('[recognition] response failed\n')}}
       finally{recognitionTurnCurrent=()=>false;if(generation===turn){closeChat();state=enabled()?'waiting':'off';retryAt=Date.now()+1000}}
     }
+    const turnEpoch=voiceTurnTracker.begin()
     const instance = new ChatService({
       ...serviceOptions,
       chatAudioIOCtor: recognitionOnly?XiaoZhiRecognitionIO:ArchiveChatAudioIO,
@@ -916,6 +921,8 @@ async function connect() {
       callbacks: {
         onStateChanged(value, reason) {
           if (chat !== instance) return
+          const nativeEvent=value===ChatState.CONNECTED?'connected':value===ChatState.SPEAKING?'speaking':value===ChatState.LISTENING?'listening':value===ChatState.WAITING?'waiting':value===ChatState.FAILED?'failed':value===ChatState.DISCONNECTED?'disconnected':null
+          if(nativeEvent)voiceTurnTracker.mark(turnEpoch,nativeEvent,nativeEvent==='failed'||nativeEvent==='disconnected'?memoryReasonCode(reason):'none')
           if(value===ChatState.CONNECTED)try{markHeap('chat-connected',heapStatus(),trace)}catch(_){}
           if (value === ChatState.FAILED || value === ChatState.DISCONNECTED) {
             failed(reason)
@@ -1001,6 +1008,7 @@ async function connect() {
               receiveRegistrationName(text)
               return
             }
+            voiceTurnTracker.mark(turnEpoch,'asr-final')
             trace('[asr] final chars='+input.length+'\n')
             const event = archive('input', input)
             lastInputId = event?.id || ''
@@ -1132,6 +1140,7 @@ async function connect() {
           }
           if (!more && output) {
             if (!enrollment.active) {
+              voiceTurnTracker.mark(turnEpoch,'reply-text-final')
               trace('[llm] output_final chars='+output.length+'\n')
               archive('output', output)
               if(conversationStage==='greeting')advanceConversation('conversation')
