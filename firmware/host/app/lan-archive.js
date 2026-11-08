@@ -27,7 +27,8 @@ import {analyzeJPEG,visionStatus} from 'archive-vision';
 import {startAlarmSettings,openAlarmSettings,showRingingAlarm,hideRingingAlarm} from 'archive-alarm-ui';
 import {alarmSoundCommand,playAlarmSound} from 'archive-alarm-sound';
 import {startWeb,openControl,controlStatus} from 'archive-web';
-import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat} from 'archive-direct-chat';
+import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat,holdDirectChat} from 'archive-direct-chat';
+import {releaseCameraResources} from 'archive-camera-release';
 import {recordMemory,history,deviceHistory,currentSpeaker,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
 import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
 import {acceptAudioChunk} from 'archive-audio-upload';
@@ -77,33 +78,55 @@ export function archiveTranscript(role,text,eventId,image,speakerId) {
 // Preview frames stay in RAM: no SD writes or cloud image recognition.
 async function cameraPreview(robot) {
  if(busy||directChatStatus().cameraCaptureActive)throw new Error('本体で処理中です。会話や録画を停止してからお試しください');
- const paused=pauseDirectChat();
- if(busy){if(paused)resumeDirectChat();throw new Error('本体で処理中です');}
+ const release=holdDirectChat('camera-preview');
  busy=true;
  let frame;
- try{
+ try {
   frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});
   if(!frame)throw new Error('カメラの画像を取得できませんでした');
   return encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
- }finally{
-  try{frame?.close?.();}finally{try{robot.camera.stop();}finally{busy=false;if(paused)resumeDirectChat();}}
+ } finally {
+  try {await releaseCameraResources(robot.camera,frame,(stage)=>trace('[archive-camera] preview cleanup failed stage='+stage+'\n'))}
+  finally {busy=false;release()}
  }
 }
 async function photo(robot,args={},fromConversation=false) {
- // A detached camera tool must never take ownership of an already busy device.
- if(busy||(directChatStatus().cameraCaptureActive&&!fromConversation))throw new Error('Camera busy');busy=true;
- let frame,jpeg,result;
- try{
-  trace('[archive-camera] stage=capture-start\n');
-  frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});if(!frame)throw new Error('No camera frame');
-  trace('[archive-camera] stage=frame-ready\n');
-  const tag=id(),name='photo-'+tag+'.jpg',image=name;
-  jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');trace('[archive-camera] stage=jpeg-encoded\n');save(image,[jpeg]);
-  trace('[archive-camera] stage=jpeg-saved\n');
-  result={name,image,width:frame.width,height:frame.height};
- }finally{try{frame?.close?.();}finally{try{robot.camera.stop();}finally{busy=false;trace('[archive-camera] stage=camera-released\n');}}}
- if(args.analyze!==false)Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
- return result;
+ if(busy||(directChatStatus().cameraCaptureActive&&!fromConversation))throw new Error('Camera busy');
+ busy=true;
+ let frame,jpeg,result,stage='camera-start';
+ try {
+  try {
+   trace('[archive-camera] stage='+stage+'\n');
+   frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});
+   if(!frame){stage='frame-wait';throw new Error('No camera frame')}
+   stage='jpeg-encode';
+   trace('[archive-camera] stage=frame-ready\n');
+   const tag=id(),name='photo-'+tag+'.jpg';
+   jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
+   stage='sd-save';
+   save(name,[jpeg]);
+   result={name,image:name,width:frame.width,height:frame.height};
+   trace('[archive-camera] stage=jpeg-saved\n');
+  } catch(e) {
+   trace('[archive-camera] failed stage='+stage+' type='+String(e?.name||'Error').slice(0,48)+'\n');
+   throw e;
+  } finally {
+   try {
+    await releaseCameraResources(robot.camera,frame,(at)=>trace('[archive-camera] cleanup failed stage='+at+'\n'));
+    trace('[archive-camera] stage=camera-released\n');
+   } catch(e) {
+    trace('[archive-camera] failed stage=camera-release type='+String(e?.name||'Error').slice(0,48)+'\n');
+    throw e;
+   }
+   frame=undefined;
+  }
+  if(args.analyze!==false) {
+   trace('[archive-camera] stage=analysis-start\n');
+   Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
+   trace('[archive-camera] stage=analysis-complete\n');
+  }
+  return result;
+ } finally {busy=false;}
 }
 
 async function describeImage(robot,name,jpeg,question){
@@ -162,7 +185,7 @@ async function record(robot) {
     return {name,frames:count,fps,audio:true,duration:5};
   }finally {
     if(audioPromise)await audioPromise;
-    try {robot.camera.stop();}finally{busy=false;}
+    try {await releaseCameraResources(robot.camera,undefined,(at)=>trace('[archive-camera] record cleanup failed stage='+at+'\n'));}finally{busy=false;}
   }
 }
 async function recordAudio(robot) {
@@ -224,7 +247,7 @@ export function startArchive(robot) {
     if(monitor.active&&!request.op.startsWith('/monitor/')&&!['/status','/volume','/chat/status','/files','/files/page','/network/status','/speaker/list','/settings/status','/reminders','/debug/status','/motor-status','/media/trash'].includes(request.op))throw new Error('動作確認を終了してから操作してください');
     const capture=['/face/save','/face/restore','/alarm-sound/preview','/motor/test','/motor/recover','/image/finish','/photo','/record','/audio','/chat-record'].includes(request.op);
     if(capture&&directChatStatus().cameraCaptureActive)throw new Error('撮影処理中のため他の操作を開始できません');
-    const paused=capture?pauseDirectChat():false;
+    const release=capture?holdDirectChat('rpc-capture'):undefined;
     try{
       let result;
       if(request.op==='/monitor/start')result=monitor.start();
@@ -358,7 +381,7 @@ export function startArchive(robot) {
         });
       }else throw new Error('Unknown operation');
       return result;
-    }finally{if(paused)resumeDirectChat();}
+    }finally{release?.();}
   }
   let usbBusy=false;
   let usbInitError=false;
