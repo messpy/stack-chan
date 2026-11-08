@@ -36,7 +36,7 @@
   "settings.scanning": "Scanning",
   "settings.boot": "Start",
   "settings.offlineTitle": "Start Offline",
-  "settings.offlineConfirm": "Clear the saved SSID and password\nand start offline?",
+  "settings.offlineConfirm": "Boot offline this time without deleting\\nsaved Wi-Fi credentials?",
   "settings.cancel": "Cancel",
   "settings.clearAndBoot": "Clear and Start",
   "settings.wifiTitle": "Wi-Fi Settings",
@@ -92,5 +92,7 @@
   "drawer.recordAndPlay": "Record and Play",
   "drawer.color.light": "White",
   "drawer.color.dark": "Black",
-  "drawer.colorScheme": "Color Scheme"
+  "drawer.colorScheme": "Color Scheme",
+  "boot.wifiMissing": "Wi-Fi credentials are missing",
+  "settings.offlineBoot": "Boot offline"
 }
