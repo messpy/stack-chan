@@ -186,6 +186,29 @@
           ]
         }
       ]
+    },
+    "esp32/m5stackchan_cores3": {
+      "dependency": [
+        {
+          "idf": "esp_driver_usb_serial_jtag"
+        },
+        {
+          "idf": "mbedtls"
+        },
+        {
+          "idf": "nvs_flash"
+        },
+        {
+          "name": "esp_audio_codec",
+          "version": "~2.5.0",
+          "includes": [
+            "include/decoder",
+            "include/decoder/impl",
+            "include/encoder",
+            "include/encoder/impl"
+          ]
+        }
+      ]
     }
   },
   "creation": {

@@ -10,6 +10,7 @@ let opened=0,connections=[];class Chat{constructor(o){this.options=o;connections
 const c={DEFAULT_GEMINI_TEXT_MODEL:'gemini-test-text',geminiTextChat:async()=> 'Gemini文字回答',XiaoZhiRecognitionIO:class{},RecognitionTTS:class{stream(text,volume,done){done()}cancel(){}},getSettings:()=>data,changeSettings:fn=>fn(data),...Object.fromEntries(['currentSpeaker','identifySpeaker','users','saveUser','history','beginConversation'].map(k=>[k,memory[k]])),setXiaoZhiVision(){},setVisionProvisioner(){},openSpeakerChooser(){opened++;},startSpeakerChooser(){},getSettingsStatus:()=>({connected:true}),DEFAULT_GEMINI_MODEL:'gemini-test',ChatService:Chat,ChatState:{FAILED:0,DISCONNECTED:1,CONNECTED:4,SPEAKING:5,LISTENING:6,WAITING:7},ArchiveChatAudioIO:class{},createXiaozhiV1Connection:opts=>opts,Timer:{set:()=>1,clear(){},repeat:()=>1},trace(){},listDeviceTools:()=>[],memoryTools:[{name:'conversation_identify'}],visionTools:[],callMemory(){},URL,robotStub:{showBalloon(){},ui:{showFace(){},application:{behavior:{},distribute(){}}},drawer:{setDrawerButtonState(){}},audio:{volume:.1,acquireExclusive:()=>()=>{}}}};
 const schema=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-button-schema.js')).toString('base64'));const registration=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-speaker-registration.js')).toString('base64'));c.VoiceRegistration=registration.VoiceRegistration;c.enrollmentInstructions=registration.enrollmentInstructions;c.registrationName=registration.registrationName;c.explicitSpeakerName=registration.explicitSpeakerName;c.ollamaChat=async()=> 'Ollama回答';c.ollamaModel=()=>data.ollamaModel||'gemma4:31b';c.validOllamaModel=v=>/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,99}$/.test(v);c.OLLAMA_SPEECH_INSTRUCTIONS='音声だけ。ollama_replyを呼ぶ';c.ollamaSpeechTool={name:'ollama_reply'};c.speakerButtons=schema.speakerButtons;const headTestURL='data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-head-motion.js','utf8').replace("import Timer from 'timer'","const Timer={set:fn=>fn()}" )).toString('base64');c.headDirectionFromText=(await import(headTestURL)).headDirectionFromText;
 c.collectMemory=()=>{};c.heapStatus=()=>({});Object.assign(c,await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-memory-policy.js','utf8')).toString('base64')));
+for(const name of ['archive-chat-pause-gate','archive-camera-handoff'])Object.assign(c,await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+name+'.js')).toString('base64')));
 vm.createContext(c);vm.runInContext(fs.readFileSync(root+'archive-direct-chat.js','utf8').replace(/^import [\s\S]*? from '[^']+';?\s*$/gm,'').replace(/export /g,''),c);vm.runInContext('robot=robotStub;claim=()=>true;release=()=>{};',c);
 vm.runInContext('setChatMode(true)',c);assert.equal(vm.runInContext('directChatStatus().requiresSpeaker',c),true);assert.equal(opened,0);await vm.runInContext('connect()',c);assert.equal(connections.length,1);assert.ok(connections[0].config.instructions.includes('conversation_identify'));
 const selected=vm.runInContext('selectSpeaker({id:'+JSON.stringify(alice.id)+',name:"Alice"})',c);assert.equal(selected.historyRead,3);await vm.runInContext('connect()',c);assert.equal(connections.length,2);assert.ok(connections[1].config.instructions.includes('Alice'));assert.ok(!connections[1].config.instructions.includes('Bob専用'));assert.ok(Object.keys(connections[1].tools).includes('conversation_identify'));
@@ -385,3 +386,66 @@ adapterContext.SharedArrayBuffer=class{constructor(){throw Error('allocation fai
 assert.throws(()=>vm.runInContext("adapter=new ChatAudioIO();adapter.createWorker('xiaozhiV1')",adapterContext),/allocation failed/);
 assert.equal(terminated,1);
 console.log('Memory recovery: OFF survives save failure; terminal audio closes once; partial constructor terminates Worker: PASS');
+
+// Production callback -> camera handoff -> reconnect -> local recognition TTS.
+const tick=()=>new Promise(resolve=>setImmediate(resolve));
+const spokenCamera=[];let finishPhoto;
+Chat.prototype.start=function(){};
+c.Timer.set=(fn)=>{queueMicrotask(fn);return 1};
+c.RecognitionTTS=class{stream(text,volume,done){spokenCamera.push(text);done()}cancel(){}};
+for(const provider of ['gemini','ollama']){
+ data.conversationProvider=provider;data.speechRecognition='xiaozhi';
+ c.geminiTextChat=c.ollamaChat=async(messages,tools,run)=>{await run('camera_describe',{question:'景色を説明して'});return 'stale answer'};
+ vm.runInContext('setChatMode(true);photoHandler=()=>new Promise(resolve=>{finishPhoto=resolve})',c);
+ await vm.runInContext('connect()',c);
+ const prior=connections.at(-1);
+ prior.callbacks.onInputTranscript('写真撮って',false);await tick();
+ assert.equal(vm.runInContext('cameraHandoff.active&&chatPauseGate.active',c),true);
+ const count=connections.length;
+ await vm.runInContext('connect()',c);assert.equal(connections.length,count);
+ vm.runInContext("finishPhoto({image:'photo-test.jpg',analysis:{status:'complete',text:'木が写っています'}})",c);await tick();
+ assert.equal(vm.runInContext('cameraHandoff.active||chatPauseGate.active',c),false);
+ await vm.runInContext('connect()',c);
+ connections.at(-1).callbacks.onStateChanged(c.ChatState.CONNECTED);await tick();
+ assert.match(spokenCamera.at(-1),/木が写っています/);
+ assert.equal(vm.runInContext('pendingCameraContinuation',c),'');
+ assert.ok(!spokenCamera.includes('stale answer'));
+ vm.runInContext('setChatMode(false)',c);
+}
+console.log('PASS: Gemini/Ollama recognition camera result is spoken once after cleanup, without stale answer or greeting');
+// No response yet: retrying the transport must retain the result; confirmation clears it.
+data.conversationProvider='gemini';data.speechRecognition='gemini';
+let sent=[];Chat.prototype.sendText=function(text){sent.push(text)};
+vm.runInContext(`setChatMode(true);pendingCameraContinuation=JSON.stringify({captured:true,analysis:'retry result'});greetingPending=true`,c);
+await vm.runInContext('connect()',c);connections.at(-1).callbacks.onStateChanged(c.ChatState.CONNECTED);connections.at(-1).callbacks.onStateChanged(c.ChatState.CONNECTED);await tick();
+assert.equal(sent.length,1);
+assert.notEqual(vm.runInContext('pendingCameraContinuation',c),'');
+vm.runInContext('closeChat()',c);await vm.runInContext('connect()',c);
+connections.at(-1).callbacks.onStateChanged(c.ChatState.CONNECTED);await tick();
+assert.equal(sent.filter(text=>text.includes('retry result')).length,2);
+connections.at(-1).callbacks.onOutputTranscript('撮影結果です',false);
+assert.equal(vm.runInContext('pendingCameraContinuation',c),'');
+vm.runInContext('setChatMode(false)',c);
+console.log('PASS: result survives pre-response disconnect and clears on final answer');
+for(const action of ['long-analysis','off','speaker-change','capture-failure']){
+ data.conversationProvider='xiaozhi';data.speechRecognition='xiaozhi';
+ vm.runInContext('setChatMode(true);photoHandler=()=>new Promise((resolve,reject)=>{finishPhoto=resolve;globalThis.failPhoto=reject})',c);
+ await vm.runInContext('connect()',c);const original=connections.at(-1);
+ original.callbacks.onFunctionCall('camera-call','camera_describe',{question:'"\\'.repeat(80)});await tick();
+ assert.equal(vm.runInContext('cameraHandoff.active',c),true);
+ if(action==='off')vm.runInContext('setChatMode(false)',c);
+ if(action==='speaker-change')vm.runInContext('selectSpeaker({guest:true})',c);
+ if(action==='long-analysis'){
+  let wall=Date.now();c.Date=class extends Date{static now(){return wall}};wall+=70000;
+  const count=connections.length;await vm.runInContext('connect()',c);assert.equal(connections.length,count);
+ }
+ if(action==='capture-failure')vm.runInContext("failPhoto(Error('test SD error'))",c);
+ else vm.runInContext("finishPhoto({image:'photo-test.jpg',analysis:{status:'complete',text:'木'.repeat(500)}})",c);
+ await tick();
+ assert.equal(vm.runInContext('cameraHandoff.active||chatPauseGate.active',c),false);
+ const pending=vm.runInContext('pendingCameraContinuation',c);
+ if(action==='off'||action==='speaker-change')assert.equal(pending,'');
+ else {assert.doesNotThrow(()=>JSON.parse(pending));assert.equal(JSON.parse(pending).captured,action!=='capture-failure')}
+ vm.runInContext('setChatMode(false)',c);delete c.Date;
+}
+console.log('PASS: >60s analysis blocks reconnect; OFF/speaker switch discards stale results; capture failure releases gate; escaped context stays valid JSON');

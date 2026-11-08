@@ -152,13 +152,19 @@ export default class Camera implements RobotCamera {
   }
 
   #closeCamera(): void {
-    if (this.#camera) trace('[camera] close\n')
-    this.#stopCamera()
-    if (this.#camera) trace('[camera] native close begin\n')
-    this.#camera?.close()
-    if (this.#camera) trace('[camera] native close done\n')
-    this.#camera = undefined
-    this.#running = false
+    const camera = this.#camera
+    let failure: unknown
+    try { this.#stopCamera() } catch (error) { failure = error }
+    try {
+      if (camera) trace('[camera] native close begin\n')
+      camera?.close()
+      if (camera) trace('[camera] native close done\n')
+    } catch (error) { failure ??= error }
+    finally {
+      this.#camera = undefined
+      this.#running = false
+    }
+    if (failure) throw failure
   }
 
   #startCamera(): void {
@@ -172,14 +178,20 @@ export default class Camera implements RobotCamera {
   }
 
   #stopCamera(): void {
-    if (this.#camera && this.#running) {
-      trace('[camera] native stop begin\n')
-      this.#camera.stop()
-      trace('[camera] native stop done\n')
-    }
-    closeFrame(this.#frame)
+    // Disposable buffers belong to the native camera: return them before stop detaches them.
+    const frame = this.#frame
     this.#frame = undefined
-    this.#running = false
+    let failure: unknown
+    try { closeFrame(frame) } catch (error) { failure = error }
+    try {
+      if (this.#camera && this.#running) {
+        trace('[camera] native stop begin\n')
+        this.#camera.stop()
+        trace('[camera] native stop done\n')
+      }
+    } catch (error) { failure ??= error }
+    finally { this.#running = false }
+    if (failure) throw failure
   }
 
   #readLatestFrame(): void {

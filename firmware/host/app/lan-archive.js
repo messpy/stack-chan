@@ -94,13 +94,15 @@ async function photo(robot,args={},fromConversation=false) {
  if(busy||(directChatStatus().cameraCaptureActive&&!fromConversation))throw new Error('Camera busy');
  busy=true;
  let frame,jpeg,result,stage='camera-start';
+ const started=Date.now();
+ const metrics=at=>{try{const h=heapStatus();trace('[archive-camera] stage='+at+' elapsedMs='+(Date.now()-started)+' internalFree='+h.internalFree+' internalLargest='+h.internalLargest+' psramFree='+h.psramFree+'\n')}catch(_){}};
  try {
   try {
-   trace('[archive-camera] stage='+stage+'\n');
+   metrics(stage);
    frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});
    if(!frame){stage='frame-wait';throw new Error('No camera frame')}
    stage='jpeg-encode';
-   trace('[archive-camera] stage=frame-ready\n');
+   metrics('frame-ready');
    const tag=id(),name='photo-'+tag+'.jpg';
    jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
    stage='sd-save';
@@ -114,8 +116,7 @@ async function photo(robot,args={},fromConversation=false) {
    try {
     await releaseCameraResources(robot.camera,frame,(at)=>trace('[archive-camera] cleanup failed stage='+at+'\n'));
     try{
-      const heap=heapStatus();
-      trace('[archive-camera] stage=camera-released free='+(heap?.internalFree??-1)+' largest='+(heap?.internalLargest??-1)+'\n');
+      metrics('camera-released');
     }catch(_){trace('[archive-camera] stage=camera-released (heap metrics unavailable)\n')}
    } catch(e) {
     trace('[archive-camera] failed stage=camera-release type='+String(e?.name||'Error').slice(0,48)+'\n');
@@ -126,7 +127,7 @@ async function photo(robot,args={},fromConversation=false) {
   if(args.analyze!==false) {
    trace('[archive-camera] stage=analysis-start\n');
    Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
-   trace('[archive-camera] stage=analysis-complete\n');
+   metrics('analysis-complete');
   }
   return result;
  } finally {busy=false;}

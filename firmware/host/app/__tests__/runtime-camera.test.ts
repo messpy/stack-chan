@@ -245,3 +245,15 @@ test('routine stop then close releases native DMA and restores touch before the 
     'touch.stop','camera.start','camera.capture','camera.stop','touch.start',
   ])
 })
+
+for (const asynchronous of [false, true]) {
+  test(`runtime native close still runs after ${asynchronous ? 'async' : 'sync'} stop failure`, async () => {
+    let closed = 0
+    const runtime = new StackchanRuntimeCamera({camera:{
+      start(){}, stop(){if(asynchronous)return Promise.reject(new Error('stop failed'));throw new Error('stop failed')},
+      close(){closed++},async capture(){return undefined},
+    }})
+    await assert.rejects(async()=>runtime.close(),/stop failed/)
+    assert.equal(closed,1)
+  })
+}

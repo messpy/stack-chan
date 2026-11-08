@@ -11,13 +11,13 @@
       }
     },
     "esp32/m5stack_cores3": {
-      "include": ["./manifest_device.json"],
+      "include": ["./manifest_device_cores3.json"],
       "modules": {
         "camera": "./device/camera"
       }
     },
     "esp32/m5stackchan_cores3": {
-      "include": ["./manifest_device.json"],
+      "include": ["./manifest_device_cores3.json"],
       "modules": {
         "camera": "./device/camera"
       }

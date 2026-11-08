@@ -39,3 +39,5 @@ Gemini image recognition defaults to `gemini-3.1-flash-lite` with low thinking a
 AIの返答と画像認識の全文にも適用します。オフラインの下端ボタンがあるときは吹き出しを上へずらします。オフライン音声は速度80で文節ごとに間を入れ、時刻は「じゅうよじ」「さんじゅっぷん」のような読みへ変換します。表示窓を使うため長い文章もPiuの16bit座標範囲に依存せず、画面から外れたらアニメーションを止めます。参照したメーカー実装は `m5stack/StackChan` の `firmware/main/stackchan/avatar/skins/default/speech_bubble.cpp` の `LV_LABEL_LONG_MODE_SCROLL_CIRCULAR` です。
 
 AI選択画面は選択中サービスと会話ON/OFFを表示し、「会話を始める」「会話を終了」で切り替えます。オフラインの下部選択肢にも「AIと会話」「AI選択」があります。オンライン開始時にはオフライン操作を閉じ、話者選択を経て接続します。読み上げ中の同時開始は防止します。`/chat/test` は `provider` を指定してマイク送信なしの接続確認ができます。アラーム停止用の24pxフォントには「停止中」の字形も含めます。
+
+For the official StackChan CoreS3 platform use `npm run build:archive:m5stackchan_cores3`; the older `build:archive` targets generic SDK CoreS3. See [PR90 lifecycle review](../../docs/release-notes/pr90-camera-audio-handoff.md) for verification limits and the approval-gated update script.
