@@ -29,7 +29,7 @@ import {analyzeJPEG,visionStatus} from 'archive-vision';
 import {startAlarmSettings,openAlarmSettings,showRingingAlarm,hideRingingAlarm} from 'archive-alarm-ui';
 import {alarmSoundCommand,playAlarmSound} from 'archive-alarm-sound';
 import {startWeb,openControl,controlStatus} from 'archive-web';
-import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat,beginCameraHandoff,finishCameraHandoff} from 'archive-direct-chat';
+import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat,beginCameraHandoff,finishCameraHandoff,quarantineCameraHandoff,isCameraHandoffUnsafe} from 'archive-direct-chat';
 import {recordMemory,history,deviceHistory,currentSpeaker,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
 import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
 import {acceptAudioChunk} from 'archive-audio-upload';
@@ -114,12 +114,17 @@ async function cameraPreview(robot) {
   if(!frame)throw new Error('カメラの画像を取得できませんでした');
   return encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
  }finally{
-  try{frame?.close?.();}finally{try{robot.camera.close();}finally{busy=false;if(paused)resumeDirectChat();}}
+  try{frame?.close?.();}finally{
+    try{robot.camera.close();}
+    catch(error){quarantineCameraHandoff(true);throw error;}
+    finally{busy=false;if(paused)resumeDirectChat();}
+  }
  }
 }
 async function photo(robot,args={},fromConversation=false) {
   const wasBusy=busy;
-  if(busy&&!fromConversation){traceConversation('CAMERA_ERROR','busy');throw new Error('Camera busy');}
+  // The conversation route must not bypass an existing camera/SD reservation.
+  if(busy){traceConversation('CAMERA_ERROR','busy');throw new Error('Camera busy');}
   busy=true;
   photoErrorClass='none';photoErrorStage='none';
   let frame,jpeg,result,cameraClosed=false,failureReported=false;
@@ -146,9 +151,13 @@ async function photo(robot,args={},fromConversation=false) {
       const closed=robot.camera.close();
       if(closed&&typeof closed.then==='function')
         throw new Error('CoreS3 still-photo close must be synchronous');
-      cameraClosed=true;
-      markPhotoPhase('CAMERA_CLOSED');
-      trace('[photo] camera close done\n');
+      // Even if driver close succeeds, a failed disposable frame release
+      // leaves ownership uncertain: retain the photo recovery guard.
+      if(!releaseError){
+        cameraClosed=true;
+        markPhotoPhase('CAMERA_CLOSED');
+        trace('[photo] camera close done\n');
+      }
     }catch(error){if(!releaseError)releaseError=error;}
     if(releaseError)throw releaseError;
   };
@@ -196,6 +205,8 @@ async function photo(robot,args={},fromConversation=false) {
       try{releaseCamera(frame);}
       catch(error){trace('[photo] incomplete camera release type='+String(error?.name||'Error').slice(0,48)+'\n');}
     }
+    // Never restart XiaoZhi or shared touch if native ownership is unknown.
+    if(!cameraClosed)quarantineCameraHandoff();
     // A failed native camera close is unsafe: keep the recovery watchdog armed.
     if(cameraClosed){
       try{photoRecoveryWatchdog(false);}catch(error){trace('[photo] watchdog disarm failed\n');}
@@ -266,7 +277,9 @@ async function record(robot) {
     return {name,frames:count,fps,audio:true,duration:5};
   }finally {
     if(audioPromise)await audioPromise;
-    try {robot.camera.close();}finally{busy=false;}
+    try {robot.camera.close();}
+    catch(error){quarantineCameraHandoff(true);throw error;}
+    finally{busy=false;}
   }
 }
 async function recordAudio(robot) {
@@ -331,6 +344,8 @@ export function startArchive(robot) {
     let photoHandoff=false,photoGuardArmed=false,photoStarted=false;
     try{
       if(request.op==='/photo'){
+        // Do not clear an existing emergency watchdog on a second request.
+        if(isCameraHandoffUnsafe())throw new Error('Camera release unconfirmed; reboot required');
         // Native guard must cover synchronous voice teardown too, not only
         // camera/JPEG. The previous hardware hang produced no VOICE_RELEASE.
         photoRecoveryWatchdog(true);
