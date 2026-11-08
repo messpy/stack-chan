@@ -76,7 +76,7 @@ export function archiveTranscript(role,text,eventId,image,speakerId) {
 }
 // Preview frames stay in RAM: no SD writes or cloud image recognition.
 async function cameraPreview(robot) {
- if(busy)throw new Error('本体で処理中です。会話や録画を停止してからお試しください');
+ if(busy||directChatStatus().cameraCaptureActive)throw new Error('本体で処理中です。会話や録画を停止してからお試しください');
  const paused=pauseDirectChat();
  if(busy){if(paused)resumeDirectChat();throw new Error('本体で処理中です');}
  busy=true;
@@ -91,14 +91,17 @@ async function cameraPreview(robot) {
 }
 async function photo(robot,args={},fromConversation=false) {
  // A detached camera tool must never take ownership of an already busy device.
- if(busy)throw new Error('Camera busy');busy=true;
+ if(busy||(directChatStatus().cameraCaptureActive&&!fromConversation))throw new Error('Camera busy');busy=true;
  let frame,jpeg,result;
  try{
+  trace('[archive-camera] stage=capture-start\n');
   frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});if(!frame)throw new Error('No camera frame');
+  trace('[archive-camera] stage=frame-ready\n');
   const tag=id(),name='photo-'+tag+'.jpg',image=name;
-  jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');save(image,[jpeg]);
+  jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');trace('[archive-camera] stage=jpeg-encoded\n');save(image,[jpeg]);
+  trace('[archive-camera] stage=jpeg-saved\n');
   result={name,image,width:frame.width,height:frame.height};
- }finally{try{frame?.close?.();}finally{try{robot.camera.stop();}finally{busy=false;}}}
+ }finally{try{frame?.close?.();}finally{try{robot.camera.stop();}finally{busy=false;trace('[archive-camera] stage=camera-released\n');}}}
  if(args.analyze!==false)Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
  return result;
 }
@@ -197,7 +200,7 @@ export function startArchive(robot) {
   globalThis.abort=(reason,exception)=>{try{writeUSB(JSON.stringify({event:'fatal',reason:String(reason),detail:String(exception).slice(0,300)}));}catch(_){};rebootUSB();return true;};
   monitor=createLANMonitor({robot,now:()=>Date.now(),repeat:(fn,ms)=>Timer.repeat(fn,ms),cancel:id=>Timer.clear(id),token:()=>randomHex(16),
     claim(){
-      if(offlineStatus().playing||reminderStatus().ringing||(busy&&!directChatStatus().busy))throw new Error('本体で処理中です');
+      if(offlineStatus().playing||reminderStatus().ringing||directChatStatus().cameraCaptureActive||(busy&&!directChatStatus().busy))throw new Error('本体で処理中です');
       const paused=pauseDirectChat();
       if(busy){if(paused)resumeDirectChat();throw new Error('本体で処理中です');}
       closeOffline();busy=true;trace('[monitor] started\n');
@@ -220,6 +223,7 @@ export function startArchive(robot) {
   async function execute(request){
     if(monitor.active&&!request.op.startsWith('/monitor/')&&!['/status','/volume','/chat/status','/files','/files/page','/network/status','/speaker/list','/settings/status','/reminders','/debug/status','/motor-status','/media/trash'].includes(request.op))throw new Error('動作確認を終了してから操作してください');
     const capture=['/face/save','/face/restore','/alarm-sound/preview','/motor/test','/motor/recover','/image/finish','/photo','/record','/audio','/chat-record'].includes(request.op);
+    if(capture&&directChatStatus().cameraCaptureActive)throw new Error('撮影処理中のため他の操作を開始できません');
     const paused=capture?pauseDirectChat():false;
     try{
       let result;
