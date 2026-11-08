@@ -104,3 +104,32 @@ console.log('PASS: next spoken turn starts at the previous cursor without replay
  assert.equal(model.planner.underruns,0);model.close();
 }
 console.log('PASS: native queue covers a 1.4-second JS stall without relying on main-thread callbacks');
+
+// Regression: a short but non-empty PCM tail must still reach AudioOut.Async.
+{
+  const ring=new SharedArrayBuffer(1024),written=[];let clock=0,tail=0
+  const model=new QueuedPlayback({
+    ring,rate:1000,prebufferMs:1,chunkBytes:128,slots:1,
+    now:()=>clock,ack:next=>tail=next,
+    write:(pcm,done)=>written.push({pcm:Uint8Array.from(pcm),done}),
+  })
+  model.drainMs=20
+  model.pump(256,false)
+  assert.equal(written.length,1)
+  written.shift().done(null)
+  clock=100
+  model.pump(256,false)
+  assert.equal(written.length,1)
+  written.shift().done(null)
+  clock=200
+  const plan=model.pump(280,false)
+  assert.equal(plan.underruns,0,'a non-empty partial PCM chunk is not starvation')
+  assert.equal(written.length,1,'remaining 24 bytes are queued immediately')
+  assert.equal(written[0].pcm.byteLength,24)
+  assert.equal(tail,280)
+  written.shift().done(null)
+  clock=300
+  assert.equal(model.pump(280,false).underruns,1,'a truly empty ring and native queue underruns')
+  model.close()
+}
+console.log('PASS: sub-chunk PCM no longer causes a false underrun or extra buffering');
