@@ -46,6 +46,24 @@ test('read-only /status is served while photo promise is still pending',async()=
   assert.equal(f.outbox[2].result.saved,true)
   assert.equal(f.pump.snapshot().active,false)
 })
+test('idle debug status reports USB operation snapshot without running normal command',async()=>{
+  let calls=0
+  const f=fixture(()=>{calls++;return {unused:true}})
+  f.push(1,'/debug/status')
+  f.pump.tick()
+  assert.equal(calls,0,'diagnostic should never run SD/application command')
+  assert.equal(f.outbox.length,1)
+  assert.equal(f.outbox[0].result.usbOperation.active,false)
+  assert.equal(f.outbox[0].result.usbOperation.phase,'JPEG_START')
+  f.push(2,'/debug/status','wrong-secret')
+  f.pump.tick()
+  assert.equal(f.outbox.length,1,'unauthenticated status must be ignored')
+  f.push(3,'/photo')
+  f.pump.tick()
+  await settle()
+  assert.equal(calls,1)
+  assert.equal(f.pump.snapshot().active,false)
+})
 test('overdue photo reports failure but remains locked until completion',async()=>{
   let resolvePhoto
   const f=fixture(()=>new Promise(resolve=>{resolvePhoto=resolve}),{timeoutMs:200})
