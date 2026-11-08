@@ -86,11 +86,11 @@ const cameraHandoff = createCameraHandoff({
     cameraRequest = ''
     if (success) {
       trace('[archive-camera] capture completed; reconnecting to report result\n')
-      robot?.showBalloon?.('撮影しました。会話を再接続しています。')
+      try { robot?.showBalloon?.('撮影しました。会話を再接続しています。') } catch (_) {}
     } else {
       error = '撮影に失敗しました'
       trace('[archive-camera] capture failed; reconnecting\n')
-      robot?.showBalloon?.('写真を撮れませんでした。会話を再接続しています。')
+      try { robot?.showBalloon?.('写真を撮れませんでした。会話を再接続しています。') } catch (_) {}
     }
     if (running()) {
       greetingPending = true
@@ -381,7 +381,7 @@ export function directChatStatus() {
     audio: { ...audioStats },
     memory: typeof heapStatus==='function'?heapStatus():null,
     playback:globalThis.stackchanPlaybackHealth||null,
-    busy: !!chat || connecting,
+    busy: !!chat || connecting || cameraHandoff.active,
     cameraCaptureActive: cameraHandoff.active,
     phase: state,
   }
@@ -746,6 +746,7 @@ async function connect() {
       if (chat !== instance&&!recognitionTurnCurrent()) throw new Error('会話が切り替わりました')
       if (name === 'camera_describe') {
         if (!photoHandler) throw new Error('Camera unavailable')
+        if (cameraHandoff.active) throw new Error('Camera busy')
         cameraRequest = String(args?.question || '写真を撮って確認する').slice(0, 180)
         // The original tool response is intentionally abandoned after closing
         // its session; the result is delivered in the next connection instead.
