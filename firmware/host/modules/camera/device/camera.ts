@@ -14,7 +14,7 @@ const DEFAULT_WIDTH = 176
 const DEFAULT_HEIGHT = 144
 const DEFAULT_IMAGE_TYPE: CameraImageType = 'rgb565le'
 const FORMAT_DISPOSABLE_BUFFER = 'buffer/disposable'
-const INITIAL_FRAME_TIMEOUT_MS = 500
+const INITIAL_FRAME_TIMEOUT_MS = 1800
 const INITIAL_FRAME_POLL_MS = 30
 const DEFAULT_CAPTURE_REQUEST: CameraCaptureRequest = {
   width: DEFAULT_WIDTH,
