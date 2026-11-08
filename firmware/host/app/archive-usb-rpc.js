@@ -34,6 +34,13 @@ export function createUSBRpcPump({read,write,execute,authenticate,inspect,arm,no
     try{request=JSON.parse(raw);}catch(_){return;}
     if(!request||!Number.isInteger(request.id)||!authenticate(request))return;
     arm();
+    // Return the same USB operation/RTC diagnostics whether idle or busy.
+    // Avoid SD and other application work in this diagnostic lane.
+    if(request.op==='/debug/status'){
+      try{safeReply({id:request.id,result:inspect(request.op,snapshot())});}
+      catch(_){safeReply({id:request.id,error:'Status unavailable'});}
+      return;
+    }
     if(pending){
       if(request.op==='/status'||request.op==='/debug/status'){
         let result;
