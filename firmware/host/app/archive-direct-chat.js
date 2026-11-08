@@ -1,5 +1,6 @@
 import {headDirectionFromText} from 'archive-head-motion'
 import {createCameraHandoff} from 'archive-camera-handoff'
+import {createChatPauseGate} from 'archive-chat-pause-gate'
 import {heapStatus,collectMemory} from 'archive-usb'
 import {checkVoiceMemory,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
 import { ollamaChat, ollamaModel, validOllamaModel, geminiTextChat, DEFAULT_GEMINI_TEXT_MODEL, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
@@ -58,11 +59,25 @@ let robot,
   owned = false
 let refreshAITalk
 let photoHandler, modeChanged
-let pendingCameraContinuation = '', cameraRequest = ''
+let pendingCameraContinuation = '', cameraRequest = '', releaseCameraHold
+const chatPauseGate = createChatPauseGate({
+  pause(reason){
+    if(chat || connecting)closeChat()
+    state=running()?'waiting':'off'
+    trace('[direct-chat] hold reason='+reason+'\n')
+  },
+  resume(reason){
+    if(running()){state='waiting';retryAt=0}
+    trace('[direct-chat] hold released reason='+reason+'\n')
+  },
+})
+export function holdDirectChat(reason='capture'){
+  return chatPauseGate.hold(reason)
+}
 const cameraHandoff = createCameraHandoff({
   async suspend() {
     // The original tool call cannot receive a result after its session closes.
-    closeChat()
+    releaseCameraHold = holdDirectChat('voice-camera')
     state = 'camera'
     await new Promise(resolve => Timer.set(resolve, 120))
     collectMemory()
@@ -72,6 +87,7 @@ const cameraHandoff = createCameraHandoff({
   },
   capture(args) { return photoHandler(args) },
   settle(outcome) {
+    try {
     const success = outcome.status === 'complete'
     const result = outcome.result
     const description = success && result?.analysis?.status === 'complete'
@@ -99,6 +115,11 @@ const cameraHandoff = createCameraHandoff({
     } else {
       pendingCameraContinuation = ''
       state = 'off'
+    }
+    } finally {
+      const release=releaseCameraHold
+      releaseCameraHold=undefined
+      release?.()
     }
   },
 })
@@ -383,6 +404,7 @@ export function directChatStatus() {
     playback:globalThis.stackchanPlaybackHealth||null,
     busy: !!chat || connecting || cameraHandoff.active,
     cameraCaptureActive: cameraHandoff.active,
+    cameraHoldActive: chatPauseGate.active,
     phase: state,
   }
 }
@@ -659,7 +681,7 @@ async function provision() {
   trace('[direct-chat] cloud configuration renewed\n')
 }
 async function connect() {
-  if (cameraHandoff.active || connecting || chat || !running()) return
+  if (chatPauseGate.active || cameraHandoff.active || connecting || chat || !running()) return
   if (enrollment.phase === 'confirming') return
   if (!getSettingsStatus().connected) {
     state = 'waiting'
@@ -1019,7 +1041,7 @@ export function pauseDirectChat() {
   return false
 }
 export function resumeDirectChat() {
-  if (running()) retryAt = 0
+  if (running() && !chatPauseGate.active) retryAt = 0
 }
 export async function provisionDirectChat() {
   await provision()
@@ -1179,7 +1201,7 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
   // Restore saved conversation mode; credentials must not turn an explicit OFF on.
   Timer.set(()=>restoreConversationOnBoot(onBoot),1000)
   Timer.repeat(() => {
-    if (!running()) return
+    if (!running() || chatPauseGate.active) return
     if (chat) {
       if (signature() !== connectionSignature) {
         closeChat()
