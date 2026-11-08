@@ -344,3 +344,20 @@ for (const action of ['exit', 'boot'] as const) {
     assert.equal(await freshResult, 'boot')
   })
 }
+
+test('offline Settings boot preserves saved Wi-Fi credentials and is a one-shot request', async () => {
+  const context = await setup()
+  const offline = await import('../offline-boot-request.js')
+  offline.consumeOfflineBootRequest()
+  context.preference.set('wifi', 'ssid', 'my-home')
+  context.preference.set('wifi', 'password', 'keep-this')
+  const result = context.startSetupMode(context.application)
+  assert.ok(context.view.lastContext)
+  context.view.lastContext.actions.bootOffline()
+  assert.equal(await result, 'boot')
+  assert.equal(context.preference.get('wifi', 'ssid'), 'my-home')
+  assert.equal(context.preference.get('wifi', 'password'), 'keep-this')
+  assert.equal(offline.consumeOfflineBootRequest(), true)
+  assert.equal(offline.consumeOfflineBootRequest(), false)
+  assert.equal(context.network.getStopCount(), 1)
+})
