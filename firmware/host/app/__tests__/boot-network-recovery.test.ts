@@ -26,6 +26,11 @@ test('boot Wi-Fi helper detects scan exhaustion from network-service failures', 
   assert.equal(bootWiFiFailureMessage('Access point "home-ap" not found'), '保存済みWi-Fiが見つかりません')
 })
 
+test('boot Wi-Fi helper identifies missing credentials without exposing details', () => {
+  assert.equal(classifyBootWiFiFailure('missing Wi-Fi credentials'), 'missing-credentials')
+  assert.equal(bootWiFiFailureMessage('missing Wi-Fi credentials'), 'Wi-Fiの設定がありません')
+})
+
 test('boot Wi-Fi helper classifies non-scan failures as connection-failed', () => {
   assert.equal(classifyBootWiFiFailure('authentication failed'), 'connection-failed')
   assert.equal(bootWiFiFailureMessage('authentication failed'), 'Wi-Fi接続に失敗しました')
