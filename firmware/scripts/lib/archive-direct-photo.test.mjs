@@ -43,7 +43,7 @@ test('XiaoZhi resources are closed before local photo and analysis is disabled',
   assert.match(chat,/export function pauseDirectChat\(\)[\s\S]*?closeChat\(\)/)
   assert.match(body,/finally\s*\{[\s\S]*finishCameraHandoff\(\)/)
   assert.match(lan,/args=>photo\(robot,\{\.\.\.args,analyze:args\?\.analyze!==false\},true\)/)
-  assert.match(lan,/robot\.camera\.close\(\)/)
+  assert.match(lan,/robot\.camera\.close\(stage=>markPhotoPhase\(stage\)\)/)
 })
 
 test('cloud camera tool cannot allocate native camera while voice owns internal SRAM',()=>{
