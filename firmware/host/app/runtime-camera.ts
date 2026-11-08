@@ -61,7 +61,8 @@ export class StackchanRuntimeCamera implements RobotCamera {
             this.#cameraActive = true
           },
           (error) => {
-            if (!wasActive) this.#resumeTouchPanel()
+            // Native start may have partially reserved I2C/DMA resources.
+            // Only a confirmed close may restore shared touch hardware.
             throw error
           },
         )
@@ -69,7 +70,7 @@ export class StackchanRuntimeCamera implements RobotCamera {
       traceMessage('[runtime-camera] start done\n')
       this.#cameraActive = true
     } catch (error) {
-      if (!wasActive) this.#resumeTouchPanel()
+      // Do not restart touch until the native camera is closed.
       throw error
     }
   }
@@ -93,16 +94,13 @@ export class StackchanRuntimeCamera implements RobotCamera {
         return result.then(
           () => finish(),
           (error) => {
-            this.#cameraActive = false
-            if (wasActive) this.#resumeTouchPanel()
+            // Keep the bus reserved on stop failure; close() may retry.
             throw error
           },
         )
       }
       finish()
     } catch (error) {
-      this.#cameraActive = false
-      if (wasActive) this.#resumeTouchPanel()
       throw error
     }
   }
@@ -116,8 +114,9 @@ export class StackchanRuntimeCamera implements RobotCamera {
       this.#resumeTouchPanel()
     }
     const fail = (error: unknown): never => {
-      this.#cameraActive = false
-      this.#resumeTouchPanel()
+      // Unsafe to restart touch: native stop/close did not confirm release.
+      // Retain the active/paused state until a successful retry or reboot.
+      traceMessage('[runtime-camera] close failed; touch remains paused\n')
       throw error
     }
     const finish = (): Promise<void> | void => {
@@ -152,7 +151,7 @@ export class StackchanRuntimeCamera implements RobotCamera {
       this.#cameraActive = true
       return frame
     } catch (error) {
-      if (!wasActive) this.#resumeTouchPanel()
+      // Upstream photo() attempts native close before touch may resume.
       throw error
     }
   }
@@ -183,7 +182,7 @@ export class StackchanRuntimeCamera implements RobotCamera {
       traceMessage('[runtime-camera] processor enter\n')
       return processor(frame)
     } catch (error) {
-      if (!wasActive) this.#resumeTouchPanel()
+      // A failed capture can leave the sensor allocated; do not race touch.
       throw error
     }
   }
