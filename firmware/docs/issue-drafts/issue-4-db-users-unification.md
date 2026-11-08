@@ -29,3 +29,12 @@ entities/profile_details/name_readingsを人物usersへ統合する設計を検�
 
 Issue: https://github.com/messpy/stack-chan/issues/4
 Base: `stackchan-super`
+
+
+## 2026-11-08: 実データ移行前の読み取り専用監査
+
+`firmware/scripts/sql/archive-memory-readonly-audit.sql` を追加。対象は**本体稼働中のSDではなく、読み取り専用で退避したSQLiteの別コピーのみ**。人物、robot、`stackchan-self`、名前の読み、プロフィール、未参照の関係、多人数メッセージの件数を取り、データ内容・会話本文・氏名を表示しない。PRAGMA query_only=ONを利用し、スキーマ変更をしない。
+
+結果を取るまでは`created_at`のバックフィルを行わず、`entities`等の旧テーブルと`user_profile` / `users` VIEWを削除しない。件数比較、旧参照、移行再実行/復旧の仕様を確定する。
+
+**未実施:** 実SDデータの取得、sqlite3集計の実行、CoreS3ビルド、互換移行。機能実装ではない。
