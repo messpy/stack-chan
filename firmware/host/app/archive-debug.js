@@ -169,3 +169,58 @@ export function createHealthLogger({sample,emit,now=()=>Date.now()}) {
     }catch(_){return false;}
   };
 }
+
+
+// At most one active and one closed session; never store transcript or identifiers.
+export function createVoiceTurnTracker({now=()=>Date.now(),emit=()=>{}}={}) {
+  let epoch=0,active=null,closed=null;
+  const timestamp=()=>{const n=now();return Number.isSafeInteger(n)&&n>=0?n:0;};
+  const send=stage=>{try{emit('[voice-turn] stage='+stage+' epoch='+epoch+'\n');}catch(_){}};
+  const fresh=()=>({
+    epoch:++epoch,startedAt:timestamp(),lastAsrAt:0,lastReplyAt:0,
+    postReplyAsrAt:0,asrTurns:0,replyTurns:0,lastNativeState:'unknown',
+    nativeStateAt:0,disconnectedAt:0,closedAt:0,failureClass:'none'
+  });
+  const allowed=['connected','speaking','listening','waiting','failed','disconnected'];
+  function begin(){
+    if(active)closed={...active,closedAt:timestamp()};
+    active=fresh();send('session-start');return epoch;
+  }
+  function mark(ticket,event,failureClass='none'){
+    if(!active||ticket!==active.epoch)return false;
+    const at=timestamp();
+    if(event==='asr-final'){
+      active.asrTurns++;
+      active.lastAsrAt=at;
+      if(active.lastReplyAt&&at>active.lastReplyAt)active.postReplyAsrAt=at;
+    }else if(event==='reply-text-final'){
+      active.replyTurns++;
+      active.lastReplyAt=at;
+    }else if(allowed.includes(event)){
+      if(active.lastNativeState===event&&event!=='failed'&&event!=='disconnected')return true;
+      active.lastNativeState=event;active.nativeStateAt=at;
+      if(event==='failed'||event==='disconnected'){
+        active.disconnectedAt=at;
+        active.failureClass=['network','memory-pressure','authentication','audio-upload-stalled',
+          'audio-input-stalled','other','none'].includes(failureClass)?failureClass:'other';
+      }
+    }else return false;
+    send(event);return true;
+  }
+  function end(failureClass='none'){
+    if(!active)return;
+    const t=timestamp();
+    if(!active.disconnectedAt&&failureClass!=='none'){
+      active.disconnectedAt=t;
+      active.failureClass=['network','memory-pressure','authentication','audio-upload-stalled',
+        'audio-input-stalled','other'].includes(failureClass)?failureClass:'other';
+    }
+    active.closedAt=t;
+    send('session-end');
+    closed={...active};active=null;
+  }
+  function snapshot(){
+    return {current:active?{...active}:null,previous:closed?{...closed}:null};
+  }
+  return {begin,mark,end,snapshot};
+}
