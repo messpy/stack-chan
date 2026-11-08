@@ -30,3 +30,15 @@ CoreS3単体で低負荷な画像差分監視を行い、ネットワークは�
 - ユニットテスト、CI、CoreS3ビルド、実機検証のエビデンスが揃うまでDraftを維持する。
 
 Issue: https://github.com/messpy/stack-chan/issues/19
+
+
+## 2026-11-08: P1画像差分プロトタイプ追加
+
+`firmware/scripts/lib/archive-camera-watch-policy.mjs` は、ESP32/カメラを一切触らない**Node検証専用の純粋関数**。RGB565LEからの小サイズグレースケール画像生成、輝度差の中央値補正、ROI、変化比率、2連続検知、5分クールダウンを実装し、同一画像/照明変化/局所移動/ROI/閾値のテストを追加。
+
+```bash
+cd firmware
+node --test scripts/lib/archive-camera-watch-policy.test.mjs
+```
+
+制約: **ファームウェアmanifestには追加していない**。監視UI・撮影スケジューラ・通知・保存機能は未実装。検知閾値は暫定で、カメラ移動/自動露光/サーボ動作を実機で確認しない限り誤検知を防げたとは言えない。既存撮影不具合#33とRAM不足#40の修正を優先。
