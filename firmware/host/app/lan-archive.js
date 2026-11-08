@@ -247,6 +247,8 @@ export function startArchive(robot) {
     release(){busy=false;}
   });
   async function execute(request){
+    if(webPrompt.active()&&['/chat/start','/chat/provider','/chat/configure','/speaker/select','/speaker/register','/recognition/mode','/chat/test'].includes(request.op))
+      throw new Error('ブラウザからのAI回答を待っています。完了後に操作してください');
     if(monitor.active&&!request.op.startsWith('/monitor/')&&!['/status','/volume','/chat/status','/files','/files/page','/network/status','/speaker/list','/settings/status','/reminders','/debug/status','/motor-status','/media/trash'].includes(request.op))throw new Error('動作確認を終了してから操作してください');
     const capture=['/face/save','/face/restore','/alarm-sound/preview','/motor/test','/motor/recover','/image/finish','/photo','/record','/audio','/chat-record'].includes(request.op);
     const paused=capture?pauseDirectChat():false;
