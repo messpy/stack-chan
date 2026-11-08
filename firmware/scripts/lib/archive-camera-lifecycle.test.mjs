@@ -120,3 +120,28 @@ test('RTC photo restart checkpoint is scalar and reported on both status lanes',
   assert.match(probe,/enabled is not False or recognition is not False/)
   assert.match(probe,/watchdogStage=/)
 })
+
+test('photo failure holds reconnect lock and watchdog until native release is confirmed', () => {
+  const direct=readFileSync(new URL('../../host/app/archive-direct-chat.js',import.meta.url),'utf8')
+  const photo=archive.slice(archive.indexOf('async function photo('),archive.indexOf('async function describeImage('))
+  const quarantine=direct.slice(direct.indexOf('export function quarantineCameraHandoff('),direct.indexOf('export function finishCameraHandoff()'))
+  const finish=direct.slice(direct.indexOf('export function finishCameraHandoff()'),direct.indexOf('export async function provisionDirectChat()'))
+  assert.match(photo,/if\(!cameraClosed\)quarantineCameraHandoff\(\)/)
+  assert.match(photo,/if\(cameraClosed\)\{[\s\S]*photoRecoveryWatchdog\(false\)/)
+  assert.match(quarantine,/photoHandoffUnsafe=true/)
+  assert.match(quarantine,/photoHandoffActive=true/)
+  assert.match(finish,/if\(photoHandoffUnsafe\)/)
+  assert.match(direct,/if \(photoHandoffActive \|\| connecting \|\| chat \|\| !running\(\)\) return/)
+  assert.match(archive,/if\(isCameraHandoffUnsafe\(\)\)throw/)
+  const runtime=readFileSync(new URL('../../host/app/runtime-camera.ts',import.meta.url),'utf8')
+  const close=runtime.slice(runtime.indexOf('  close(): ',runtime.indexOf('export class StackchanRuntimeCamera')),runtime.indexOf('  async capture(',runtime.indexOf('export class StackchanRuntimeCamera')))
+  const fail=close.slice(close.indexOf('const fail ='),close.indexOf('const finish ='))
+  assert.doesNotMatch(fail,/this\.#resumeTouchPanel\(\)/)
+  assert.doesNotMatch(fail,/this\.#cameraActive = false/)
+})
+
+test('conversation-origin photo does not bypass camera exclusivity', () => {
+  const photo=archive.slice(archive.indexOf('async function photo('),archive.indexOf('async function describeImage('))
+  assert.match(photo,/if\(busy\)\{traceConversation\('CAMERA_ERROR','busy'\);throw new Error\('Camera busy'\)/)
+  assert.doesNotMatch(photo,/busy&&!fromConversation/)
+})
