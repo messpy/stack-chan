@@ -13,7 +13,8 @@ let robot,
   error = '',
   minutes = 3,
   faceButtons,
-  menuPage = 0
+  menuPage = 0,
+  preservingAutomaticPreference = false
 export function offlineStatus() {
   return {
     available: true,
@@ -29,8 +30,9 @@ export function offlineStatus() {
 export async function offlineAction(action, options = {}) {
   if (!['boot', 'hello', 'time', 'status', 'timer', 'stop'].includes(action)) throw new Error('操作を選んでください')
   if (playing) throw new Error('お話し中です')
+  if(action!=='boot')globalThis.stackchanIdleActivity?.('offline-action')
   // Boot greeting must not overwrite the persisted AI/recognition mode.
-  if (action !== 'boot') await actions.stopCloud()
+  if (action !== 'boot' && !preservingAutomaticPreference) await actions.stopCloud()
   if (!actions.claim()) throw new Error('本体で別の処理をしています')
   playing = true
   let unlock
@@ -80,6 +82,7 @@ export async function offlineAction(action, options = {}) {
   }
 }
 export function closeOffline() {
+  preservingAutomaticPreference=false
   closeFaceButtons()
   robot.hideBalloon?.()
 }
@@ -167,8 +170,11 @@ function showFaceButtons(mode) {
   faceButtons = strip
   robot.ui.addEffect(strip, 'archive-offline-choices')
 }
-export function openOffline() {
-  actions.stopCloud()
+export function openOffline(options={}) {
+  // Automatic fallback is temporary. Only an explicit manual offline choice
+  // may persist cloud OFF to SD.
+  preservingAutomaticPreference=options.automatic===true
+  if(!preservingAutomaticPreference)actions.stopCloud()
   robot.ui.application.behavior.closeDrawer?.()
   robot.ui.showFace()
   showFaceButtons('home')

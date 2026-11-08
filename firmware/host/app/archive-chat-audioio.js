@@ -3,7 +3,7 @@
 import { writePcmRing } from 'archivePcmRingWriter'
 import ChatAudioIOBase from 'ChatAudioIO'
 import AudioIn from 'embedded:io/audio/in'
-import AudioOut from 'embedded:io/audio/out'
+import AudioOut from 'stackchanAsyncAudioOut'
 import { QueuedPlayback } from 'archive-playback-buffer'
 import Worker from 'worker'
 import Timer from 'timer'
@@ -14,6 +14,13 @@ function pcmPeak(samples, stride = 1) {
   let peak = 0
   for (let i = 0; i < samples.length; i += stride) peak = Math.max(peak, Math.abs(samples[i]))
   return peak
+}
+
+// Used only after the existing no-progress deadline has expired.
+export function audioStallReason(health, now) {
+  return health?.provider === 'xiaozhi' && health.lastInputAt > 0 && now >= health.lastInputAt && now - health.lastInputAt <= 20000
+    ? 'Microphone upload stalled'
+    : 'Microphone PCM stalled'
 }
 
 export default class ChatAudioIO extends ChatAudioIOBase {
@@ -38,8 +45,45 @@ export default class ChatAudioIO extends ChatAudioIOBase {
     this.onGlyphPush = options.onGlyphPush ?? callback
   }
 
+  configureAudio(message) {
+    if (message.outputSampleRate !== undefined && message.outputSampleRate !== this.outputSampleRate) this.closePlayback()
+    super.configureAudio(message)
+  }
+
+  notifyMicrophoneActivity(active) {
+    // An old session must not repaint the current session's LED.
+    if (globalThis.stackchanAudioHealth === this.audioHealth) globalThis.stackchanMicrophoneActivity?.(active)
+  }
+
+  refreshMicrophoneActivity() {
+    if (this.closed) return
+    const health=this.audioHealth, now=Date.now()
+    const capturedAt=health?.lastInputAt??0, sentAt=health?.lastSentAt??0
+    const capturing=!!this.input&&!!this.microphone&&health?.input==='running'&&this.state===ChatAudioIO.SPEAKING&&capturedAt>0&&now>=capturedAt&&now-capturedAt<3000
+    this.notifyMicrophoneActivity(capturing&&(health.provider!=='xiaozhi'||(health.uploadEnabled&&sentAt>0&&now>=sentAt&&now-sentAt<3000)))
+  }
+
+  clearInputHealthMonitor() {
+    if(this.inputHealthTimer!==undefined){Timer.clear(this.inputHealthTimer);this.inputHealthTimer=undefined}
+  }
+
+  changeMicrophone(value) {
+    super.changeMicrophone(value)
+    this.refreshMicrophoneActivity()
+  }
+
+  uploadState(message) {
+    const health = this.audioHealth
+    if (!health) return
+    health.uploadEnabled = message.enabled === true
+    if (Number.isSafeInteger(message.sentAt)) health.lastSentAt = message.sentAt
+    if (Number.isSafeInteger(message.droppedBytes)) health.overrunBytes = message.droppedBytes
+    this.refreshMicrophoneActivity()
+  }
+
   ensureInput() {
     if (this.closed || this.input) return
+    this.clearInputHealthMonitor()
     this.closePlayback()
     this.output?.close()
     this.output = null
@@ -48,7 +92,13 @@ export default class ChatAudioIO extends ChatAudioIOBase {
       onReadable: () => this.captureInput(input),
     })
     this.input = input
+    if(this.audioHealth){this.audioHealth.input='running';this.audioHealth.output='closed';this.audioHealth.lastInputAt=0}
     input.start()
+    // Expire green even if PCM callbacks stop altogether. One bounded timer,
+    // disposed before input replacement/output/close; no additional reconnect.
+    this.inputHealthTimer=Timer.repeat(()=>{
+      if(this.input===input)this.refreshMicrophoneActivity()
+    },1000)
   }
 
   captureInput(input) {
@@ -56,6 +106,7 @@ export default class ChatAudioIO extends ChatAudioIOBase {
     // Queued notifications may contain stale sizes; read current availability.
     const data = input.read()
     if (!data?.byteLength) return
+    if(this.audioHealth)this.audioHealth.lastInputAt=Date.now()
     if (!this.ready) {
       this.ready = true
       if (this.state !== ChatAudioIO.DISCONNECTED) this.onStateChanged(this.state)
@@ -90,7 +141,10 @@ export default class ChatAudioIO extends ChatAudioIOBase {
     this.releaseAudio();this.state=ChatAudioIO.DISCONNECTED;this.onStateChanged(this.state)
   }
   releaseAudio(){
+    this.clearInputHealthMonitor()
     this.closePlayback()
+    if(this.audioHealth){this.audioHealth.input='closed';this.audioHealth.output='closed';this.audioHealth.uploadEnabled=false}
+    this.notifyMicrophoneActivity(false)
     const input=this.input,output=this.output;this.input=null;this.output=null;this.ready=false
     try{input?.close()}finally{output?.close()}
   }
@@ -99,37 +153,44 @@ export default class ChatAudioIO extends ChatAudioIOBase {
     const reason=String(message?.string||'')
     if(/network|connection.*clos|socket|disconnect/i.test(reason)&&this.deferTerminalPlayback(ChatAudioIO.FAILED,reason))return
     if(this.closed)return
+    if(this.audioHealth)this.audioHealth.lastError=/memory|allocat/i.test(reason)?'memory':/PCM|audio|playback|Opus/i.test(reason)?'audio':'transport'
     this.releaseAudio();this.error=reason;this.state=ChatAudioIO.FAILED;this.onStateChanged(this.state)
   }
 
   closePlayback(){
     const playback=this.playback;this.playback=undefined;
-    if(playback){Timer.clear(playback.timer);playback.queue.close();}
+    if(playback){if(playback.timer!==undefined)Timer.clear(playback.timer);playback.queue?.close();playback.health.active=false;}
+    if(this.audioHealth)this.audioHealth.output='closed'
   }
 
   close(){
     if(this.closed)return
     this.closed=true
     try{this.releaseAudio()}finally{
-      try{this.worker?.terminate()}finally{this.worker=null;this.inputBuffer=null;this.outputBuffer=null;this.barrier=null}
+      try{this.worker?.terminate()}finally{this.worker=null;if(this.audioHealth)this.audioHealth.worker='closed';this.inputBuffer=null;this.outputBuffer=null;this.barrier=null}
     }
   }
 
   ensureOutput() {
     if (this.output) return
+    this.clearInputHealthMonitor()
     this.input?.close();this.input=null;this.ready=false
+    if(this.audioHealth)this.audioHealth.input='closed'
+    this.notifyMicrophoneActivity(false)
     const rate=this.outputSampleRate||24000
     // Async inherits the SDK base class, bypassing CoreS3's synchronous wrapper.
     if(globalThis.amp)globalThis.amp.sampleRate=rate
     // Six <=4096-byte DMA descriptors in the ESP32 driver: conservatively
     // retain the output for all of them after the final native completion.
     const drainBytes=6*4096
-    const playback={rate,drainUntil:0,maxWritable:drainBytes,lastLevel:-1,health:{underruns:0,bufferedMs:0,queuedMs:0,prebuffering:true,mode:'native-async',maximumPumpGapMs:0}}
+    const playback={rate,drainUntil:0,maxWritable:drainBytes,lastLevel:-1,health:{active:true,sampleRate:rate,underruns:0,bufferedMs:0,queuedMs:0,prebuffering:true,mode:'native-async',maximumPumpGapMs:0}}
     const output=new AudioOut.Async({sampleRate:rate,channels:1,onWritable:size=>{
       playback.maxWritable=Math.max(playback.maxWritable,size&~1)
       if(playback.queue)playback.queue.drainMs=Math.ceil(playback.maxWritable*1000/(rate*2))+80
     }})
     playback.output=output
+    this.output=output;this.playback=playback
+    try {
     playback.queue=new QueuedPlayback({ring:this.outputBuffer,tail:this.outputBufferTail,rate,prebufferMs:this.playbackPrebufferMs??600,
       write:(bytes,done)=>output.write(bytes,done),now:()=>Date.now(),
       ack:next=>{this.outputBufferTail=next;Atomics.store(this.barrier,0,next);Atomics.notify(this.barrier,0)},
@@ -141,6 +202,8 @@ export default class ChatAudioIO extends ChatAudioIOBase {
     playback.timer=Timer.repeat(()=>this.pumpPlayback(output,playback),20)
     this.pumpPlayback(output,playback)
     if(this.output===output)output.start()
+    if(this.audioHealth&&this.output===output)this.audioHealth.output='running'
+    } catch(error) { this.releaseAudio(); throw error }
   }
 
   pumpPlayback(output,playback){
@@ -173,6 +236,7 @@ export default class ChatAudioIO extends ChatAudioIOBase {
       Timer.set(()=>{
         if(this.output!==playback.output||this.state!==ChatAudioIO.WAITING||!this.worker)return
         playback.health.drained=true
+        playback.health.drainedAt=Date.now()
         if(playback.terminal){
           const terminal=playback.terminal;this.closePlayback();this.output?.close();this.output=null;
           this.state=terminal.state;this.error=terminal.error;this.onStateChanged(this.state);return
@@ -196,6 +260,8 @@ export default class ChatAudioIO extends ChatAudioIOBase {
     this.immediateInputReady = usesNativePcmRing
     if (usesNativePcmRing || specifier === 'archiveGeminiLive') this.inputSampleRate = 16000
 
+    this.audioHealth={provider:specifier==='xiaozhiV1'?'xiaozhi':'gemini',worker:'starting',input:'closed',output:'closed',uploadEnabled:false,lastInputAt:0,lastSentAt:0,overrunBytes:0,overruns:0,lastError:'none'}
+    globalThis.stackchanAudioHealth=this.audioHealth
     const worker = new Worker(specifier, {
       static: specifier === 'archiveGeminiLive' ? 1024 * 1024 : 512 * 1024,
       chunk: {
@@ -211,6 +277,7 @@ export default class ChatAudioIO extends ChatAudioIOBase {
       nativeStack: 24 * 1024,
       priority: 4,
     })
+    this.audioHealth.worker='running'
     // Shared PCM ring (~1.92 s of 16 kHz mono). Main writes via native
     // downmix; the Opus task reads it. Do not copy samples in JS or wait
     // for a Worker ACK — both previously dropped mic frames.
@@ -227,7 +294,7 @@ export default class ChatAudioIO extends ChatAudioIOBase {
       postMessage: (message) => {
         if (message.id === 'sendAudio') {
           message = { ...message, channels: this.input?.channels ?? 1 }
-          globalThis.stackchanMicrophoneActivity?.()
+          this.refreshMicrophoneActivity()
         }
         if (message.id !== 'sendAudio' || !usesNativePcmRing) {
           worker.postMessage(message)
@@ -235,7 +302,8 @@ export default class ChatAudioIO extends ChatAudioIOBase {
         }
         if (!this.inputBuffer || !pcmRing || !pcmRingState) return
         try {
-          writePcmRing(pcmRing, pcmRingState, this.inputBuffer, message.offset, message.size, message.channels ?? 1)
+          const written=writePcmRing(pcmRing, pcmRingState, this.inputBuffer, message.offset, message.size, message.channels ?? 1)
+          if(written===0&&message.size>0)this.audioHealth.overruns++
         } catch (error) {
           this.failed({ string: `PCM ring write failed: ${String(error?.message ?? error)}` })
         }

@@ -1,4 +1,5 @@
 import {fileURLToPath} from 'node:url';
+import {createVoiceTurnTracker,memoryReasonCode} from './archive-diagnostic-fixture.mjs';
 import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';
 const root=fileURLToPath(new URL('../../host/app/',import.meta.url));let data={api:{gemini:'DUMMY_KEY'},conversationProvider:'gemini',chatMode:false,directChat:{cloudConsent:true,endpoint:'wss://api.tenclass.net/test',deviceId:'00:00:00:00:00:00',clientId:'test-client',accessToken:'dummy',provisionedAt:Date.now()}};
 const sql=new DatabaseSync(':memory:');let sequence=0,databaseCalls=0;const memContext=vm.createContext({native:()=>((q,args)=>{databaseCalls++;return sql.prepare(q).all(...args)})});const sd=new vm.SyntheticModule(['withSDCard'],function(){this.setExport('withSDCard',fn=>fn({createDirectory(){},scan(){return []}}));},{context:memContext});const vault=new vm.SyntheticModule(['randomHex','getSettings'],function(){this.setExport('randomHex',()=>('person-'+(++sequence)));this.setExport('getSettings',()=>data);},{context:memContext});const module=new vm.SourceTextModule(fs.readFileSync(root+'archive-memory.js','utf8'),{context:memContext});await module.link(name=>name==='stackchan-sdcard'?sd:vault);await module.evaluate();const memory=module.namespace;
@@ -10,6 +11,7 @@ let opened=0,connections=[];class Chat{constructor(o){this.options=o;connections
 const c={DEFAULT_GEMINI_TEXT_MODEL:'gemini-test-text',geminiTextChat:async()=> 'Gemini文字回答',XiaoZhiRecognitionIO:class{},RecognitionTTS:class{stream(text,volume,done){done()}cancel(){}},getSettings:()=>data,changeSettings:fn=>fn(data),...Object.fromEntries(['currentSpeaker','identifySpeaker','users','saveUser','history','beginConversation'].map(k=>[k,memory[k]])),setXiaoZhiVision(){},setVisionProvisioner(){},openSpeakerChooser(){opened++;},startSpeakerChooser(){},getSettingsStatus:()=>({connected:true}),DEFAULT_GEMINI_MODEL:'gemini-test',ChatService:Chat,ChatState:{FAILED:0,DISCONNECTED:1,CONNECTED:4,SPEAKING:5,LISTENING:6,WAITING:7},ArchiveChatAudioIO:class{},createXiaozhiV1Connection:opts=>opts,Timer:{set:()=>1,clear(){},repeat:()=>1},trace(){},listDeviceTools:()=>[],memoryTools:[{name:'conversation_identify'}],visionTools:[],callMemory(){},URL,robotStub:{showBalloon(){},ui:{showFace(){},application:{behavior:{},distribute(){}}},drawer:{setDrawerButtonState(){}},audio:{volume:.1,acquireExclusive:()=>()=>{}}}};
 const schema=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-button-schema.js')).toString('base64'));const registration=await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-speaker-registration.js')).toString('base64'));c.VoiceRegistration=registration.VoiceRegistration;c.enrollmentInstructions=registration.enrollmentInstructions;c.registrationName=registration.registrationName;c.explicitSpeakerName=registration.explicitSpeakerName;c.ollamaChat=async()=> 'Ollama回答';c.ollamaModel=()=>data.ollamaModel||'gemma4:31b';c.validOllamaModel=v=>/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,99}$/.test(v);c.OLLAMA_SPEECH_INSTRUCTIONS='音声だけ。ollama_replyを呼ぶ';c.ollamaSpeechTool={name:'ollama_reply'};c.speakerButtons=schema.speakerButtons;const headTestURL='data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-head-motion.js','utf8').replace("import Timer from 'timer'","const Timer={set:fn=>fn()}" )).toString('base64');c.headDirectionFromText=(await import(headTestURL)).headDirectionFromText;
 c.collectMemory=()=>{};c.heapStatus=()=>({});Object.assign(c,await import('data:text/javascript;base64,'+Buffer.from(fs.readFileSync(root+'archive-memory-policy.js','utf8')).toString('base64')));
+c.createVoiceTurnTracker=createVoiceTurnTracker;c.memoryReasonCode=memoryReasonCode;c.markHeap=()=>{};
 vm.createContext(c);vm.runInContext(fs.readFileSync(root+'archive-direct-chat.js','utf8').replace(/^import [\s\S]*? from '[^']+';?\s*$/gm,'').replace(/export /g,''),c);vm.runInContext('robot=robotStub;claim=()=>true;release=()=>{};',c);
 vm.runInContext('setChatMode(true)',c);assert.equal(vm.runInContext('directChatStatus().requiresSpeaker',c),true);assert.equal(opened,0);await vm.runInContext('connect()',c);assert.equal(connections.length,1);assert.ok(connections[0].config.instructions.includes('conversation_identify'));
 const selected=vm.runInContext('selectSpeaker({id:'+JSON.stringify(alice.id)+',name:"Alice"})',c);assert.equal(selected.historyRead,3);await vm.runInContext('connect()',c);assert.equal(connections.length,2);assert.ok(connections[1].config.instructions.includes('Alice'));assert.ok(!connections[1].config.instructions.includes('Bob専用'));assert.ok(Object.keys(connections[1].tools).includes('conversation_identify'));
@@ -194,8 +196,8 @@ class AdapterBase{constructor(){this.onStateChanged=()=>{}}ensureInput(){}}
 let forwarded;
 class AdapterWorker{postMessage(message){forwarded=message}terminate(){}}
 const resumeTimers=[];
-const adapterContext=vm.createContext({Timer:{set:fn=>{resumeTimers.push(fn);return resumeTimers.length}},ChatAudioIOBase:AdapterBase,Worker:AdapterWorker,SharedArrayBuffer,trace(){},writePcmRing(){},globalThis:{}});
-vm.runInContext(fs.readFileSync(root+'archive-chat-audioio.js','utf8').replace(/^import .*$/gm,'').replace('export default class ChatAudioIO','class ChatAudioIO').replace(/^export class /gm,'class '),adapterContext);
+const adapterContext=vm.createContext({Timer:{set:fn=>{resumeTimers.push(fn);return resumeTimers.length},repeat:()=>1,clear(){}},ChatAudioIOBase:AdapterBase,Worker:AdapterWorker,SharedArrayBuffer,trace(){},writePcmRing(){},globalThis:{}});
+vm.runInContext(fs.readFileSync(root+'archive-chat-audioio.js','utf8').replace(/^import .*$/gm,'').replace('export default class ChatAudioIO','class ChatAudioIO').replace(/^export class /gm,'class ').replace(/^export function /gm,'function '),adapterContext);
 for(const channels of [1,2]){
  adapterContext.channelCount=channels;
  vm.runInContext("var adapter=new ChatAudioIO();adapter.input={channels:channelCount};adapter.createWorker('archiveGeminiLive');adapter.worker.postMessage({id:'sendAudio',offset:0,size:960})",adapterContext);
@@ -213,7 +215,7 @@ console.log('XiaoZhi PCM ring: native converter uses actual input channels as we
 
 let audioCallback,actualReads=0,postedFrames=[];
 AdapterBase.SPEAKING=4;AdapterBase.DISCONNECTED=0;
-adapterContext.AudioIn=class{constructor(options){audioCallback=options.onReadable;this.channels=1}start(){}read(){actualReads++;return actualReads===1?new Int16Array([1,2,3,4]).buffer:undefined}};
+adapterContext.AudioIn=class{constructor(options){audioCallback=options.onReadable;this.channels=1}start(){}close(){}read(){actualReads++;return actualReads===1?new Int16Array([1,2,3,4]).buffer:undefined}};
 adapterContext.frame=m=>postedFrames.push(m);
 vm.runInContext("adapter=new ChatAudioIO();adapter.microphone=true;adapter.inputBuffer=new SharedArrayBuffer(512);adapter.inputBufferSize=512;adapter.inputBufferOffset=0;adapter.state=4;adapter.ready=true;adapter.onInputLevelChanged=()=>{};adapter.worker={postMessage:frame};adapter.ensureInput()",adapterContext);
 audioCallback(99999);audioCallback(99999);
@@ -238,6 +240,7 @@ vm.runInContext('adapter.state=6',adapterContext);pumpPlayback();assert.equal(cl
 completeNative(null);pumpPlayback();const drainAt=vm.runInContext('adapter.playback.drainUntil',adapterContext);
 playbackClock=drainAt-1;pumpPlayback();assert.equal(closedOutput,false);assert.equal(resumeTimers.length,0);
 playbackClock=drainAt+1;pumpPlayback();assert.equal(resumeTimers.length,1);pumpPlayback();assert.equal(resumeTimers.length,1);resumeTimers.shift()();assert.equal(closedOutput,true);
+assert.equal(adapterContext.globalThis.stackchanPlaybackHealth.drainedAt,playbackClock);
 console.log('Native playback drain: queued completion and DMA allowance precede microphone restart; only one deferred transition: PASS');
 
 AdapterBase.FAILED=-1;adapterContext.stateChanges=[];

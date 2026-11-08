@@ -104,3 +104,13 @@ console.log('PASS: next spoken turn starts at the previous cursor without replay
  assert.equal(model.planner.underruns,0);model.close();
 }
 console.log('PASS: native queue covers a 1.4-second JS stall without relying on main-thread callbacks');
+
+{
+ const ring=new SharedArrayBuffer(1024);let callback;
+ const queue=new QueuedPlayback({ring,prebufferMs:1,write:(_pcm,done)=>callback=done,ack(){}});
+ queue.pump(100,true);callback(null);callback(Error('duplicate completion'));
+ assert.equal(queue.pending,0);assert.equal(queue.free.length,16);assert.equal(queue.error,undefined);
+ const errorQueue=new QueuedPlayback({ring,prebufferMs:1,write:(_pcm,done)=>done(Error('I2S short write')),ack(){throw Error('must not acknowledge failed write')}});
+ assert.throws(()=>errorQueue.pump(100,true),/I2S short write/);assert.equal(errorQueue.pending,0);
+}
+console.log('PASS: duplicate completions cannot reuse a native slot twice; immediate I2S failure stops queue before ACK');

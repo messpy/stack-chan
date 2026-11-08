@@ -6,7 +6,7 @@ class SMBus{readBuffer(_reg,b){b.set(registers);}readUint8(){return 0;}writeUint
 class Node{constructor(_,o){Object.assign(this,o);this.children=[];}add(n){this.children.push(n);}}
 const context=vm.createContext({Date:ClockDate,trace(){},device:{io:{SMBus},i2c:{internal:{}}},String:Object.assign(String,{fromArrayBuffer:b=>Buffer.from(b).toString()})});
 let failSpeech=false;
-const deps={time:{default:{get ticks(){return ticks;},set(seconds){wall=seconds*1000;}}},timer:{default:{repeat(fn,ms){callbacks.push({fn,ms});return 1;},set(fn){fn();return 1;}}},'archive-vault':{getSettings:()=>settings,changeSettings:fn=>{fn(settings);saved++;},randomHex:()=>String(saved).padStart(8,'0')},Resource:{default:class{constructor(){return Buffer.from(fs.readFileSync(new URL('../../host/app/reminder-tools.json',import.meta.url)));}}},'archive-alarm-sound':{playAlarmSound:async()=>true,stopAlarmSound(){}},'archive-offline-tts':{TTS:class{stream(text,volume,done){spoken.push({text,volume});done(failSpeech?new Error('speaker failed'):undefined);}}},'piu/MC':{Container:Node,Label:Node,Text:Node,Skin:class{},Style:class{}},'ui-theme':{uiFont:()=>''},'archive-ui-button':{createUIButton:(d,m,l)=>({...d,...l,press:()=>m[d.method]()})}};
+const deps={'archive-head-motion':{headMoveTool:{name:'head_move',inputSchema:{type:'object',properties:{}}},moveHead:()=>{throw Error('No head motion in offline test')}},'archive-volume':{getVolume:()=>({percent:10}),setVolume:percent=>({percent})},time:{default:{get ticks(){return ticks;},set(seconds){wall=seconds*1000;}}},timer:{default:{repeat(fn,ms){callbacks.push({fn,ms});return 1;},set(fn){fn();return 1;}}},'archive-vault':{getSettings:()=>settings,changeSettings:fn=>{fn(settings);saved++;},randomHex:()=>String(saved).padStart(8,'0')},Resource:{default:class{constructor(){return Buffer.from(fs.readFileSync(new URL('../../host/app/reminder-tools.json',import.meta.url)));}}},'archive-alarm-sound':{playAlarmSound:async()=>true,stopAlarmSound(){}},'archive-offline-tts':{TTS:class{stream(text,volume,done){spoken.push({text,volume});done(failSpeech?new Error('speaker failed'):undefined);}}},'piu/MC':{Container:Node,Label:Node,Text:Node,Skin:class{},Style:class{}},'ui-theme':{uiFont:()=>''},'archive-ui-button':{createUIButton:(d,m,l)=>({...d,...l,press:()=>m[d.method]()})}};
 const cache=new Map();async function load(name){if(cache.has(name))return cache.get(name);let module;
 if(deps[name]){const values=deps[name];module=new vm.SyntheticModule(Object.keys(values),function(){for(const [k,v]of Object.entries(values))this.setExport(k,v);},{context});}
 else if(['archive-local-clock','archive-tools','archive-reminder-time','archive-offline','archive-offline-speech'].includes(name))module=new vm.SourceTextModule(fs.readFileSync(new URL('../../host/app/'+name+'.js',import.meta.url),'utf8'),{context});
@@ -54,6 +54,17 @@ console.log('PASS: one offline timer per start panel; queued/repeated releases a
 
 for(let i=0;i<5&&!overlays[0].children.some(b=>b.method==='timer');i++)overlays[0].children.find(b=>b.method==='next').press();overlays[0].children.find(b=>b.method==='timer').press();const failedStart=overlays[0].children.find(b=>b.method==='start'),countBeforeFailure=settings.reminders.filter(r=>r.kind==='timer').length;failSpeech=true;await assert.rejects(()=>failedStart.press(),/設定済み/);await failedStart.press();assert.equal(settings.reminders.filter(r=>r.kind==='timer').length,countBeforeFailure+1);assert.ok(!overlays[0].children.some(b=>b.method==='start'));failSpeech=false;
 console.log('PASS: a successfully saved timer remains one-shot even if acknowledgement speech fails');
+
+// Automatic fallback must be reversible and must not write a user-selected OFF.
+const savedOffCount=stoppedCloud;
+offline.openOffline({automatic:true});
+assert.equal(stoppedCloud,savedOffCount,'automatic offline must never call stopCloud');
+await offline.offlineAction('hello');
+assert.equal(stoppedCloud,savedOffCount,'local speech while automatically offline must not persist OFF');
+offline.closeOffline();
+await offline.offlineAction('time');
+assert.equal(stoppedCloud,savedOffCount+1,'ordinary explicit offline actions keep manual policy');
+console.log('PASS: auto offline preserves user AI preference even after a local speech action');
 
 const bootResult=await offline.offlineAction('boot');
 assert.equal(bootResult.text,'スタックチャン');

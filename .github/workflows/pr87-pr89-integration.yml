@@ -1,0 +1,70 @@
+name: PR87 PR89 Integration
+on:
+  push:
+    branches: [integration/pr87-pr89-20261108]
+  pull_request:
+    branches: [stackchan-super]
+    paths: ['firmware/**', '.github/workflows/pr87-pr89-integration.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: integration-87-89-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/checkout@v4
+        with:
+          repository: Moddable-OpenSource/moddable
+          ref: 80076c48f5ab87ce29de728071b7408599071a12
+          path: .ci-moddable
+      - name: Install Node dependencies
+        working-directory: firmware
+        run: npm ci
+      - name: TypeScript and unit tests
+        working-directory: firmware
+        run: npm run test:unit
+      - name: Archive regression including both feature suites
+        working-directory: firmware
+        env:
+          MODDABLE: ${{ github.workspace }}/.ci-moddable
+        run: node --experimental-vm-modules --test --test-concurrency=1 scripts/lib/archive-*.test.mjs
+      - name: Python diagnostics and native audio regressions
+        working-directory: firmware
+        run: python3 -m unittest scripts/test_archive_lan_diagnostics.py scripts/test_async_audio_output.py scripts/test_pcm_ring_channel.py scripts/test_recognition_pcm.py
+      - name: Syntax and whitespace
+        working-directory: firmware
+        run: |
+          node --check host/app/lan-archive.js
+          node --check host/app/archive-direct-chat.js
+          node --check host/app/archive-web-prompt.js
+          node --check host/app/archive-debug.js
+          python3 -m py_compile scripts/archive-lan-diagnostics.py
+          git diff --check HEAD^ HEAD
+  cores3-clean-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          target-branch: 80076c48f5ab87ce29de728071b7408599071a12
+      - name: Generate throwaway private manifest
+        working-directory: firmware
+        run: npm run init:archive
+      - name: Clean CoreS3 Archive build (no flash)
+        working-directory: firmware
+        shell: bash
+        run: |
+          source "$HOME/.local/share/xs-dev-export.sh"
+          npm run clean
+          npm run build:archive
+      - name: Verify image
+        run: test -s firmware/dist/bin/esp32/m5stack_cores3/release/stack-chan-host/xs_esp32.bin
