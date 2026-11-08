@@ -40,6 +40,7 @@
       "./experimental-mini-app-loader",
       "./experimental-mini-app-piu",
       "./experimental-mini-app-registration",
+      "./offline-boot-request",
       "./setup-mode",
       "./settings-status",
       "./volume-preview",
