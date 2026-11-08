@@ -67,7 +67,12 @@ function photoDiagnostic(){
 const photoStageCodes={
   HANDOFF_BEGIN:1,VOICE_RELEASE:6,RAM_CHECK:7,RAM_READY:8,CAMERA_START:9,
   CAMERA_CAPTURE:10,JPEG_START:11,JPEG_DONE:12,SD_SAVE_START:13,
-  CAMERA_SAVE:14,CAMERA_CLOSED:15
+  CAMERA_SAVE:14,CAMERA_CLOSED:15,
+  FRAME_RELEASE_BEGIN:16,FRAME_RELEASE_DONE:17,
+  CAMERA_CLOSE:18,CAMERA_STOP_BEGIN:19,CAMERA_STOP_DONE:20,
+  CAMERA_NATIVE_CLOSE_BEGIN:21,CAMERA_NATIVE_CLOSE_DONE:22,
+  TOUCH_RESUME_BEGIN:23,TOUCH_RESUME_DONE:24,
+  PHOTO_PROCESSOR_DONE:25
 };
 function markPhotoPhase(phase){
   photoProgress=phase;
@@ -143,12 +148,18 @@ async function photo(robot,args={},fromConversation=false) {
     markPhotoPhase('FRAME_RELEASE');
     trace('[photo] frame release begin\n');
     let releaseError;
-    try{captured?.close?.();trace('[photo] frame release done\n');}
+    markPhotoPhase('FRAME_RELEASE_BEGIN');
+    try{
+      captured?.close?.();
+      markPhotoPhase('FRAME_RELEASE_DONE');
+      trace('[photo] frame release done\n');
+    }
     catch(error){releaseError=error;}
     markPhotoPhase('CAMERA_CLOSE');
     trace('[photo] camera close begin\n');
     try{
-      const closed=robot.camera.close();
+      // Native stop, close and touch restore each record a checkpoint in RTC.
+      const closed=robot.camera.close(stage=>markPhotoPhase(stage));
       if(closed&&typeof closed.then==='function')
         throw new Error('CoreS3 still-photo close must be synchronous');
       // Even if driver close succeeds, a failed disposable frame release
@@ -198,6 +209,7 @@ async function photo(robot,args={},fromConversation=false) {
     result=await robot.camera.captureWithProcessor(
       {width:176,height:144,imageType:'rgb565le'},processFrame
     );
+    markPhotoPhase('PHOTO_PROCESSOR_DONE');
     trace('[photo] processor returned to photo\n');
   }catch(error){reportFailure(error);throw error;}
   finally{
