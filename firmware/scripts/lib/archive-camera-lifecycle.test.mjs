@@ -14,7 +14,7 @@ test('runtime camera holds touch/I2C paused from capture until native camera clo
   assert.match(capture, /catch\s*\(error\)/)
   assert.doesNotMatch(capture, /finally\s*\{\s*if\s*\(!wasActive\)\s*this\.#resumeTouchPanel\(\)/)
 
-  const closeStart = runtime.indexOf('  close(): ', classStart)
+  const closeStart = runtime.indexOf('  close(onStage?: ', classStart)
   const close = runtime.slice(closeStart, captureStart)
   assert.match(close, /this\.#camera\.close\?\.\(\)/)
   assert.match(close, /this\.#resumeTouchPanel\(\)/)
@@ -35,8 +35,8 @@ test('photo processes JPEG/SD in runtime capture continuation before closing DMA
   assert.doesNotMatch(processor, /\bawait\b/)
   const closed=photo.slice(photo.indexOf('  const releaseCamera=captured=>'),photo.indexOf('  const processFrame=captured=>'))
   assert.match(closed, /captured\?\.close\?\.\(\)/)
-  assert.match(closed, /robot\.camera\.close\(\)/)
-  assert.ok(closed.indexOf('captured?.close?.()')<closed.indexOf('robot.camera.close()'))
+  assert.match(closed, /robot\.camera\.close\(stage=>markPhotoPhase\(stage\)\)/)
+  assert.ok(closed.indexOf('captured?.close?.()')<closed.indexOf('robot.camera.close(stage=>'))
   assert.match(closed, /markPhotoPhase\('CAMERA_CLOSED'\)/)
   assert.ok(processor.indexOf('CAMERA_CAPTURE') < processor.indexOf('JPEG_START'))
   assert.ok(processor.indexOf('JPEG_START') < processor.indexOf('JPEG_DONE'))
@@ -134,7 +134,7 @@ test('photo failure holds reconnect lock and watchdog until native release is co
   assert.match(direct,/if \(photoHandoffActive \|\| connecting \|\| chat \|\| !running\(\)\) return/)
   assert.match(archive,/if\(isCameraHandoffUnsafe\(\)\)throw/)
   const runtime=readFileSync(new URL('../../host/app/runtime-camera.ts',import.meta.url),'utf8')
-  const close=runtime.slice(runtime.indexOf('  close(): ',runtime.indexOf('export class StackchanRuntimeCamera')),runtime.indexOf('  async capture(',runtime.indexOf('export class StackchanRuntimeCamera')))
+  const close=runtime.slice(runtime.indexOf('  close(onStage?: ',runtime.indexOf('export class StackchanRuntimeCamera')),runtime.indexOf('  async capture(',runtime.indexOf('export class StackchanRuntimeCamera')))
   const fail=close.slice(close.indexOf('const fail ='),close.indexOf('const finish ='))
   assert.doesNotMatch(fail,/this\.#resumeTouchPanel\(\)/)
   assert.doesNotMatch(fail,/this\.#cameraActive = false/)
@@ -144,4 +144,35 @@ test('conversation-origin photo does not bypass camera exclusivity', () => {
   const photo=archive.slice(archive.indexOf('async function photo('),archive.indexOf('async function describeImage('))
   assert.match(photo,/if\(busy\)\{traceConversation\('CAMERA_ERROR','busy'\);throw new Error\('Camera busy'\)/)
   assert.doesNotMatch(photo,/busy&&!fromConversation/)
+})
+
+test('crash checkpoints distinguish frame release, native stop and close, and touch restoration',()=>{
+  const photo=archive.slice(archive.indexOf('async function photo('),archive.indexOf('async function describeImage('))
+  for(const [stage,code] of [
+    ['CAMERA_SAVE',14],['FRAME_RELEASE_BEGIN',16],['FRAME_RELEASE_DONE',17],
+    ['CAMERA_CLOSE',18],['CAMERA_STOP_BEGIN',19],['CAMERA_STOP_DONE',20],
+    ['CAMERA_NATIVE_CLOSE_BEGIN',21],['CAMERA_NATIVE_CLOSE_DONE',22],
+    ['TOUCH_RESUME_BEGIN',23],['TOUCH_RESUME_DONE',24],['PHOTO_PROCESSOR_DONE',25]
+  ]) {
+    assert.match(archive,new RegExp(stage+':'+code+'\\b'))
+  }
+  assert.match(photo,/markPhotoPhase\('FRAME_RELEASE_BEGIN'\)/)
+  assert.match(photo,/captured\?\.close\?\.\(\)/)
+  assert.match(photo,/markPhotoPhase\('FRAME_RELEASE_DONE'\)/)
+  assert.match(photo,/robot\.camera\.close\(stage=>markPhotoPhase\(stage\)\)/)
+  assert.match(runtime,/checkpoint\('CAMERA_STOP_BEGIN'\)/)
+  assert.match(runtime,/checkpoint\('CAMERA_STOP_DONE'\)/)
+  assert.match(runtime,/checkpoint\('CAMERA_NATIVE_CLOSE_BEGIN'\)/)
+  assert.match(runtime,/checkpoint\('CAMERA_NATIVE_CLOSE_DONE'\)/)
+  assert.match(runtime,/checkpoint\('TOUCH_RESUME_BEGIN'\)/)
+  assert.match(runtime,/checkpoint\('TOUCH_RESUME_DONE'\)/)
+  assert.match(photo,/markPhotoPhase\('PHOTO_PROCESSOR_DONE'\)/)
+})
+
+test('idle USB debug status uses read-only inspection path',()=>{
+  const pump=readFileSync(new URL('../../host/app/archive-usb-rpc.js',import.meta.url),'utf8')
+  assert.match(pump,/if\(request\.op==='\/debug\/status'\)/)
+  assert.match(pump,/result:inspect\(request\.op,snapshot\(\)\)/)
+  assert.match(archive,/inspect:\(op,pending\)=>op==='\/debug\/status'/)
+  assert.match(archive,/usbOperation:\{\.\.\.pending,phase:photoProgress,watchdogReset:photoRecoveryTriggered\(\),watchdogStage:photoRecoveryLastCheckpoint\(\)/)
 })
