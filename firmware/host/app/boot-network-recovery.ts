@@ -3,7 +3,7 @@ import type { NetworkReadyResult } from './boot-services.js'
 
 export type BootWiFiRecoveryChoice = 'retry' | 'offline'
 
-export type BootWiFiFailureKind = 'scan-exhausted' | 'connection-failed'
+export type BootWiFiFailureKind = 'missing-credentials' | 'scan-exhausted' | 'connection-failed'
 type OfflineNetworkReadyResult = Extract<NetworkReadyResult, { status: 'skipped' }>
 
 export function shouldRetryBootWiFiAttempt(attempt: number, maxAttempts: number): boolean {
@@ -12,6 +12,7 @@ export function shouldRetryBootWiFiAttempt(attempt: number, maxAttempts: number)
 
 export function classifyBootWiFiFailure(reason: string): BootWiFiFailureKind {
   const normalized = reason.toLowerCase()
+  if (normalized.includes('missing wi-fi credentials') || normalized.includes('no wi-fi ssid') || normalized.includes('no wi-fi password')) return 'missing-credentials'
   if (normalized.includes('not found') || normalized.includes('scan exhausted')) {
     return 'scan-exhausted'
   }
@@ -19,6 +20,7 @@ export function classifyBootWiFiFailure(reason: string): BootWiFiFailureKind {
 }
 
 export function bootWiFiFailureMessage(reason: string): string {
+  if (classifyBootWiFiFailure(reason) === 'missing-credentials') return localize('boot.wifiMissing')
   if (classifyBootWiFiFailure(reason) === 'scan-exhausted') {
     return localize('boot.wifiNotFound')
   }
