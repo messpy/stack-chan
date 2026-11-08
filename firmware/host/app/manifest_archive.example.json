@@ -42,6 +42,8 @@
     "archive-web-page": "./archive-web-page",
     "archive-direct-chat": "./archive-direct-chat",
     "archive-camera-handoff": "./archive-camera-handoff",
+    "archive-camera-release": "./archive-camera-release",
+    "archive-chat-pause-gate": "./archive-chat-pause-gate",
     "archive-offline": "./archive-offline",
     "archive-offline-policy": "./archive-offline-policy",
     "archive-offline-speech": "./archive-offline-speech",
