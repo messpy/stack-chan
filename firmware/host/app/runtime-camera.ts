@@ -105,13 +105,17 @@ export class StackchanRuntimeCamera implements RobotCamera {
     }
   }
 
-  close(): Promise<void> | void {
+  close(onStage?: (stage: string) => void): Promise<void> | void {
+    // Optional, archive-only numeric RTC checkpoint callback; no SD writes.
+    const checkpoint = (stage: string) => onStage?.(stage)
     const done = () => {
       traceMessage('[runtime-camera] close done\n')
       this.#cameraActive = false
       // The touch sensor shares CoreS3 internal I2C pins with camera SCCB.
       // Never restart it until the native camera has released its bus.
+      checkpoint('TOUCH_RESUME_BEGIN')
       this.#resumeTouchPanel()
+      checkpoint('TOUCH_RESUME_DONE')
     }
     const fail = (error: unknown): never => {
       // Unsafe to restart touch: native stop/close did not confirm release.
@@ -121,8 +125,16 @@ export class StackchanRuntimeCamera implements RobotCamera {
     }
     const finish = (): Promise<void> | void => {
       try {
+        checkpoint('CAMERA_NATIVE_CLOSE_BEGIN')
         const result = this.#camera.close?.()
-        if (isThenable(result)) return result.then(() => done(), fail)
+        if (isThenable(result)) return result.then(
+          () => {
+            checkpoint('CAMERA_NATIVE_CLOSE_DONE')
+            done()
+          },
+          fail,
+        )
+        checkpoint('CAMERA_NATIVE_CLOSE_DONE')
         done()
       } catch (error) {
         fail(error)
@@ -131,8 +143,16 @@ export class StackchanRuntimeCamera implements RobotCamera {
 
     try {
       traceMessage('[runtime-camera] close begin\n')
+      checkpoint('CAMERA_STOP_BEGIN')
       const result = this.#camera.stop()
-      if (isThenable(result)) return result.then(() => finish(), fail)
+      if (isThenable(result)) return result.then(
+        () => {
+          checkpoint('CAMERA_STOP_DONE')
+          return finish()
+        },
+        fail,
+      )
+      checkpoint('CAMERA_STOP_DONE')
       return finish()
     } catch (error) {
       return fail(error)
