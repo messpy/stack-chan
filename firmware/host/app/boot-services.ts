@@ -125,7 +125,7 @@ async function startStoredWiFi(
     })
     const result = networkReadyResultForRecoveryChoice(choice, lastReason)
     if (result) {
-      trace(`[network] ${result.reason}\n`)
+      trace(`[network] offline boot chosen: ${classifyBootWiFiFailure(lastReason)}\n`)
       return result
     }
     trace('[network] retrying Wi-Fi by user request\n')
