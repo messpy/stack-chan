@@ -90,7 +90,10 @@ export function createLANMonitor(deps) {
         frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'})
         if(!frame)throw new Error('カメラの画像を取得できませんでした')
         return deps.jpeg(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le')
-      }finally{try{frame?.close?.()}finally{robot.camera.stop()}}
+      }finally{
+        if(deps.releaseCamera)await deps.releaseCamera(frame)
+        else try{frame?.close?.()}finally{await robot.camera.stop()}
+      }
     })()
     try{return await s.camera}finally{s.camera=null}
   }
