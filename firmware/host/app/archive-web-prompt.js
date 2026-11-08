@@ -67,5 +67,5 @@ export function createWebPromptController(actions) {
     });
     return summary(turn);
   }
-  return { send, result };
+  return { send, result, active: () => pending !== null };
 }
