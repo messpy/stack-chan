@@ -90,7 +90,8 @@ async function cameraPreview(robot) {
  }
 }
 async function photo(robot,args={},fromConversation=false) {
- const wasBusy=busy;if(busy&&!fromConversation)throw new Error('Camera busy');busy=true;
+ // A detached camera tool must never take ownership of an already busy device.
+ if(busy)throw new Error('Camera busy');busy=true;
  let frame,jpeg,result;
  try{
   frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});if(!frame)throw new Error('No camera frame');
