@@ -1,4 +1,5 @@
 import { loadPreferenceConfig } from 'loadPreference'
+import { requestOfflineBoot } from 'offline-boot-request'
 import { DOMAIN, PREF_KEYS } from 'consts'
 import { getLocalizationLanguage, normalizeLocale, type SupportedLocale, setLocalizationLanguage } from 'localization'
 import { NetworkConnectionState, type NetworkConnectionState as NetworkState } from 'network-state'
@@ -16,7 +17,7 @@ import {
   settingsViews,
 } from 'settings-view'
 import Speaker from 'speaker'
-import { clearStoredWiFiCredentials, connectStoredWiFi, stopStoredWiFiConnection } from 'stored-wifi'
+import { connectStoredWiFi, stopStoredWiFiConnection } from 'stored-wifi'
 import { applyTimezone as applySystemTimezone, normalizeTimezoneId, type TimezoneId } from 'timezone-settings'
 import { canonicalizeVolume, resolveVolumePreference } from 'volume-model'
 import { VolumePreviewQueue } from 'volume-preview'
@@ -86,7 +87,7 @@ export function startSetupMode(application: SettingsApplication): Promise<SetupM
       actions: {
         exit: () => finish('back'),
         boot: () => finish('boot'),
-        bootOffline: clearWiFiAndBootOffline,
+        bootOffline: bootOfflinePreservingWiFi,
         navigate: showView,
         scanWifi: scanNetworks,
         cancelWifiScan,
@@ -111,12 +112,12 @@ export function startSetupMode(application: SettingsApplication): Promise<SetupM
       )
     }
 
-    function clearWiFiAndBootOffline() {
-      clearStoredWiFiCredentials()
-      status['wifi.ssid'] = ''
-      status['wifi.password'] = ''
+    function bootOfflinePreservingWiFi() {
+      // A one-shot runtime choice is not permission to erase stored credentials.
+      stopStoredWiFiConnection()
+      requestOfflineBoot()
       status.wifi = SettingsStatusValue.NOT_CONNECTED
-      trace('[network] saved Wi-Fi credentials cleared for offline boot\n')
+      trace('[network] offline boot selected; saved Wi-Fi credentials preserved\n')
       finish('boot')
     }
 
