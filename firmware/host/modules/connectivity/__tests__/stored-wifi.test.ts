@@ -63,6 +63,7 @@ function installBareSpecifierPackages(): void {
     hasDefaultExport: true,
   })
   writeAliasPackage(hostRoot, 'stored-wifi', resolve(modulesRoot, 'connectivity/stored-wifi.js'))
+  writeAliasPackage(hostRoot, 'timer', resolve(modulesRoot, 'testing/fakes/timer.js'), { hasDefaultExport: true })
 }
 
 async function setup(values: Record<string, unknown> = {}, configValues: Record<string, unknown> = {}) {
@@ -212,4 +213,44 @@ test('startHostBootServices exposes failed network readiness with a traceable re
     reason: 'authentication failed',
   })
   assert.ok(traces.includes('[network] connection failed: authentication failed\n'))
+})
+
+test('unresponsive scan times out without holding the boot splash', async () => {
+  const { networkManager, traces } = await setup({
+    'wifi.ssid': 'test-ap',
+    'wifi.password': 'test-pass',
+  })
+  const timer = (await import('../../testing/fakes/timer.js')).default
+  timer.reset()
+  const { startHostBootServices } = await import('../../../app/boot-services.js')
+  const services = startHostBootServices({ wifi: { maxAttempts: 1, attemptTimeoutMs: 100 } })
+  const started = networkManager.getStartedConnections().at(-1)
+  assert.ok(started)
+  const stopsBefore = networkManager.getStopCount()
+  timer.advance(99)
+  assert.equal(networkManager.getStopCount(), stopsBefore)
+  timer.advance(1)
+  assert.deepEqual(await services.connectivity.network.ready, {
+    status: 'failed',
+    reason: 'boot Wi-Fi attempt timed out',
+  })
+  assert.equal(networkManager.getStopCount(), stopsBefore + 1)
+  assert.ok(traces.includes('[network] boot Wi-Fi attempt timeout (scan or connect)\\n'.replace('\\n', '\n')))
+  started.onConnected?.()
+  assert.equal(networkManager.getStopCount(), stopsBefore + 1)
+})
+
+test('successful connection cancels the boot scan/connect timeout', async () => {
+  const { networkManager, traces } = await setup({
+    'wifi.ssid': 'test-ap',
+    'wifi.password': 'test-pass',
+  })
+  const timer = (await import('../../testing/fakes/timer.js')).default
+  timer.reset()
+  const { startHostBootServices } = await import('../../../app/boot-services.js')
+  const services = startHostBootServices({ wifi: { maxAttempts: 1, attemptTimeoutMs: 100 } })
+  networkManager.completeLastConnection()
+  assert.deepEqual(await services.connectivity.network.ready, { status: 'connected' })
+  timer.advance(500)
+  assert.ok(!traces.some((line) => line.includes('boot Wi-Fi attempt timeout')))
 })
