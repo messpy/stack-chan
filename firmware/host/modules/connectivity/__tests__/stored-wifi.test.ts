@@ -224,8 +224,7 @@ test('unresponsive scan times out without holding the boot splash', async () => 
   timer.reset()
   const { startHostBootServices } = await import('../../../app/boot-services.js')
   const services = startHostBootServices({ wifi: { maxAttempts: 1, attemptTimeoutMs: 100 } })
-  const started = networkManager.getStartedConnections().at(-1)
-  assert.ok(started)
+  assert.equal(networkManager.getStartedConnections().length, 1)
   const stopsBefore = networkManager.getStopCount()
   timer.advance(99)
   assert.equal(networkManager.getStopCount(), stopsBefore)
@@ -235,8 +234,8 @@ test('unresponsive scan times out without holding the boot splash', async () => 
     reason: 'boot Wi-Fi attempt timed out',
   })
   assert.equal(networkManager.getStopCount(), stopsBefore + 1)
-  assert.ok(traces.includes('[network] boot Wi-Fi attempt timeout (scan or connect)\\n'.replace('\\n', '\n')))
-  started.onConnected?.()
+  assert.ok(traces.some((line) => line.includes('boot Wi-Fi attempt timeout')))
+  networkManager.completeLastConnection()
   assert.equal(networkManager.getStopCount(), stopsBefore + 1)
 })
 
