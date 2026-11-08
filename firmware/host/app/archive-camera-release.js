@@ -5,7 +5,7 @@ export async function releaseCameraResources(camera,frame,report=()=>{}) {
   let firstError
   const attempt=async (stage,operation)=>{
     try {await operation()}
-    catch(error){if(!firstError)firstError=error;report(stage,error)}
+    catch(error){if(!firstError)firstError=error;try{report(stage,error)}catch(_){}}
   }
   await attempt('frame-close',()=>frame?.close?.())
   await attempt('camera-stop',()=>camera.stop())
