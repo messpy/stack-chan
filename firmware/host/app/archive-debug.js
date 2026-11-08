@@ -89,6 +89,19 @@ export function markHeap(stage, heap, emit) {
   return summary;
 }
 
+function turnSummary(t){
+  if(!t || typeof t!=='object')return null;
+  const native=['unknown','connected','speaking','listening','waiting','failed','disconnected'];
+  const reason=['none','network','memory-pressure','authentication','audio-upload-stalled','audio-input-stalled','other'];
+  return {
+    epoch:count(t.epoch),startedAt:count(t.startedAt),lastAsrAt:count(t.lastAsrAt),
+    lastReplyAt:count(t.lastReplyAt),postReplyAsrAt:count(t.postReplyAsrAt),
+    asrTurns:count(t.asrTurns),replyTurns:count(t.replyTurns),
+    lastNativeState:native.includes(t.lastNativeState)?t.lastNativeState:'unknown',
+    nativeStateAt:count(t.nativeStateAt),disconnectedAt:count(t.disconnectedAt),
+    closedAt:count(t.closedAt),failureClass:reason.includes(t.failureClass)?t.failureClass:'other'
+  };
+}
 export function diagnosticSnapshot({heap, chat, photo, debug, servo, ui, idle, network, resetCode, uptime, now}) {
   const c = chat || {}, p = photo || {}, d = debug || {};
   return {
@@ -107,6 +120,7 @@ export function diagnosticSnapshot({heap, chat, photo, debug, servo, ui, idle, n
       enabled: c.enabled === true, recognitionMode: c.recognitionMode === true,
       failureClass: ['retrying', 'failed', 'error'].includes(c.state) ? memoryReasonCode(c.detail) : 'none',
       memoryRecovery:{failures:count(c.memoryRecovery?.failures),stopped:c.memoryRecovery?.stopped===true,limit:count(c.memoryRecovery?.limit)},
+      turn:{current:turnSummary(c.voiceTurn?.current),previous:turnSummary(c.voiceTurn?.previous)},
       // A prior preflight is intentionally retained across reconnects; this is not live heap.
       lastMemoryAdmission:c.memoryAdmission ? {
         status:['pass','blocked','unmeasured'].includes(c.memoryAdmission.status)?c.memoryAdmission.status:'unknown',
@@ -124,7 +138,11 @@ export function diagnosticSnapshot({heap, chat, photo, debug, servo, ui, idle, n
       phase: tag(c.audioPhase), provider: tag(c.pipeline?.provider), input: tag(c.pipeline?.input), output: tag(c.pipeline?.output),
       worker: tag(c.pipeline?.worker), uploadEnabled: c.pipeline?.uploadEnabled === true,
       lastInputAt: count(c.pipeline?.lastInputAt), lastSentAt: count(c.pipeline?.lastSentAt),
-      lastASRAt: count(c.audio?.lastTranscriptAt), overrunBytes: count(c.pipeline?.overrunBytes), overruns: count(c.pipeline?.overruns),
+      lastASRAt: count(c.audio?.lastTranscriptAt),
+      // Socket acceptance after the latest reply-text-final event; not proof of a second ASR.
+      postReplySentAt: c.voiceTurn?.current?.lastReplyAt>0&&c.pipeline?.uploadEnabled===true&&
+        Number(c.pipeline?.lastSentAt)>c.voiceTurn.current.lastReplyAt?count(c.pipeline.lastSentAt):null,
+      overrunBytes: count(c.pipeline?.overrunBytes), overruns: count(c.pipeline?.overruns),
       sampleRate: count(c.playback?.sampleRate), underruns: count(c.playback?.underruns),
       bufferedMs: count(c.playback?.bufferedMs), queuedMs: count(c.playback?.queuedMs),
       playbackActive: c.playback?.active === true, reconnectCount: count(c.reconnectCount),
@@ -154,7 +172,9 @@ export function createHealthLogger({sample,emit,now=()=>Date.now()}) {
       // Re-sanitize even when supplied by a caller: never serialize raw status.
       const s=diagnosticSnapshot(sample());
       const signature=JSON.stringify([s.chat.state,s.chat.provider,s.chat.failureClass,
-        s.chat.memoryRecovery.stopped,s.audio.input,s.audio.output,s.audio.worker,
+        s.chat.memoryRecovery.stopped,s.chat.turn.current?.asrTurns,s.chat.turn.current?.replyTurns,
+        s.chat.turn.current?.lastNativeState,s.chat.turn.previous?.closedAt,
+        s.audio.postReplySentAt,s.audio.input,s.audio.output,s.audio.worker,
         s.audio.uploadEnabled,s.audio.lastError,s.network.connected,s.ui,s.idle.stage,s.idle.displayed,s.photo.phase]);
       if(signature===previous&&at-lastEmit<30000)return false;
       const line='[health] '+JSON.stringify(s)+'\n';
@@ -168,4 +188,59 @@ export function createHealthLogger({sample,emit,now=()=>Date.now()}) {
       previous=signature;lastEmit=at;return true;
     }catch(_){return false;}
   };
+}
+
+
+// At most one active and one closed session; never store transcript or identifiers.
+export function createVoiceTurnTracker({now=()=>Date.now(),emit=()=>{}}={}) {
+  let epoch=0,active=null,closed=null;
+  const timestamp=()=>{const n=now();return Number.isSafeInteger(n)&&n>=0?n:0;};
+  const send=stage=>{try{emit('[voice-turn] stage='+stage+' epoch='+epoch+'\n');}catch(_){}};
+  const fresh=()=>({
+    epoch:++epoch,startedAt:timestamp(),lastAsrAt:0,lastReplyAt:0,
+    postReplyAsrAt:0,asrTurns:0,replyTurns:0,lastNativeState:'unknown',
+    nativeStateAt:0,disconnectedAt:0,closedAt:0,failureClass:'none'
+  });
+  const allowed=['connected','speaking','listening','waiting','failed','disconnected'];
+  function begin(){
+    if(active)closed={...active,closedAt:timestamp()};
+    active=fresh();send('session-start');return epoch;
+  }
+  function mark(ticket,event,failureClass='none'){
+    if(!active||ticket!==active.epoch)return false;
+    const at=timestamp();
+    if(event==='asr-final'){
+      active.asrTurns++;
+      active.lastAsrAt=at;
+      if(active.lastReplyAt&&at>active.lastReplyAt)active.postReplyAsrAt=at;
+    }else if(event==='reply-text-final'){
+      active.replyTurns++;
+      active.lastReplyAt=at;
+    }else if(allowed.includes(event)){
+      if(active.lastNativeState===event&&event!=='failed'&&event!=='disconnected')return true;
+      active.lastNativeState=event;active.nativeStateAt=at;
+      if(event==='failed'||event==='disconnected'){
+        active.disconnectedAt=at;
+        active.failureClass=['network','memory-pressure','authentication','audio-upload-stalled',
+          'audio-input-stalled','other','none'].includes(failureClass)?failureClass:'other';
+      }
+    }else return false;
+    send(event);return true;
+  }
+  function end(failureClass='none'){
+    if(!active)return;
+    const t=timestamp();
+    if(!active.disconnectedAt&&failureClass!=='none'){
+      active.disconnectedAt=t;
+      active.failureClass=['network','memory-pressure','authentication','audio-upload-stalled',
+        'audio-input-stalled','other'].includes(failureClass)?failureClass:'other';
+    }
+    active.closedAt=t;
+    send('session-end');
+    closed={...active};active=null;
+  }
+  function snapshot(){
+    return {current:active?{...active}:null,previous:closed?{...closed}:null};
+  }
+  return {begin,mark,end,snapshot};
 }
