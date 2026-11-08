@@ -36,7 +36,7 @@
   "settings.scanning": "スキャン中",
   "settings.boot": "起動",
   "settings.offlineTitle": "オフライン起動",
-  "settings.offlineConfirm": "保存済みのSSIDとパスワードを消去して\nオフラインで起動しますか？",
+  "settings.offlineConfirm": "Wi-Fi設定を保持したまま、今回だけ\\nオフラインで起動しますか？",
   "settings.cancel": "キャンセル",
   "settings.clearAndBoot": "消去して起動",
   "settings.wifiTitle": "Wi-Fi設定",
@@ -92,5 +92,7 @@
   "drawer.recordAndPlay": "録音と再生",
   "drawer.color.light": "白",
   "drawer.color.dark": "黒",
-  "drawer.colorScheme": "配色"
+  "drawer.colorScheme": "配色",
+  "boot.wifiMissing": "Wi-Fiの設定がありません",
+  "settings.offlineBoot": "オフライン起動"
 }
