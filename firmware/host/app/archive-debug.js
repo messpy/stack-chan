@@ -89,6 +89,19 @@ export function markHeap(stage, heap, emit) {
   return summary;
 }
 
+function turnSummary(t){
+  if(!t || typeof t!=='object')return null;
+  const native=['unknown','connected','speaking','listening','waiting','failed','disconnected'];
+  const reason=['none','network','memory-pressure','authentication','audio-upload-stalled','audio-input-stalled','other'];
+  return {
+    epoch:count(t.epoch),startedAt:count(t.startedAt),lastAsrAt:count(t.lastAsrAt),
+    lastReplyAt:count(t.lastReplyAt),postReplyAsrAt:count(t.postReplyAsrAt),
+    asrTurns:count(t.asrTurns),replyTurns:count(t.replyTurns),
+    lastNativeState:native.includes(t.lastNativeState)?t.lastNativeState:'unknown',
+    nativeStateAt:count(t.nativeStateAt),disconnectedAt:count(t.disconnectedAt),
+    closedAt:count(t.closedAt),failureClass:reason.includes(t.failureClass)?t.failureClass:'other'
+  };
+}
 export function diagnosticSnapshot({heap, chat, photo, debug, servo, ui, idle, network, resetCode, uptime, now}) {
   const c = chat || {}, p = photo || {}, d = debug || {};
   return {
@@ -107,6 +120,7 @@ export function diagnosticSnapshot({heap, chat, photo, debug, servo, ui, idle, n
       enabled: c.enabled === true, recognitionMode: c.recognitionMode === true,
       failureClass: ['retrying', 'failed', 'error'].includes(c.state) ? memoryReasonCode(c.detail) : 'none',
       memoryRecovery:{failures:count(c.memoryRecovery?.failures),stopped:c.memoryRecovery?.stopped===true,limit:count(c.memoryRecovery?.limit)},
+      turn:{current:turnSummary(c.voiceTurn?.current),previous:turnSummary(c.voiceTurn?.previous)},
       // A prior preflight is intentionally retained across reconnects; this is not live heap.
       lastMemoryAdmission:c.memoryAdmission ? {
         status:['pass','blocked','unmeasured'].includes(c.memoryAdmission.status)?c.memoryAdmission.status:'unknown',
@@ -124,7 +138,11 @@ export function diagnosticSnapshot({heap, chat, photo, debug, servo, ui, idle, n
       phase: tag(c.audioPhase), provider: tag(c.pipeline?.provider), input: tag(c.pipeline?.input), output: tag(c.pipeline?.output),
       worker: tag(c.pipeline?.worker), uploadEnabled: c.pipeline?.uploadEnabled === true,
       lastInputAt: count(c.pipeline?.lastInputAt), lastSentAt: count(c.pipeline?.lastSentAt),
-      lastASRAt: count(c.audio?.lastTranscriptAt), overrunBytes: count(c.pipeline?.overrunBytes), overruns: count(c.pipeline?.overruns),
+      lastASRAt: count(c.audio?.lastTranscriptAt),
+      // Socket acceptance after the latest reply-text-final event; not proof of a second ASR.
+      postReplySentAt: c.voiceTurn?.current?.lastReplyAt>0&&c.pipeline?.uploadEnabled===true&&
+        Number(c.pipeline?.lastSentAt)>c.voiceTurn.current.lastReplyAt?count(c.pipeline.lastSentAt):null,
+      overrunBytes: count(c.pipeline?.overrunBytes), overruns: count(c.pipeline?.overruns),
       sampleRate: count(c.playback?.sampleRate), underruns: count(c.playback?.underruns),
       bufferedMs: count(c.playback?.bufferedMs), queuedMs: count(c.playback?.queuedMs),
       playbackActive: c.playback?.active === true, reconnectCount: count(c.reconnectCount),
@@ -154,7 +172,9 @@ export function createHealthLogger({sample,emit,now=()=>Date.now()}) {
       // Re-sanitize even when supplied by a caller: never serialize raw status.
       const s=diagnosticSnapshot(sample());
       const signature=JSON.stringify([s.chat.state,s.chat.provider,s.chat.failureClass,
-        s.chat.memoryRecovery.stopped,s.audio.input,s.audio.output,s.audio.worker,
+        s.chat.memoryRecovery.stopped,s.chat.turn.current?.asrTurns,s.chat.turn.current?.replyTurns,
+        s.chat.turn.current?.lastNativeState,s.chat.turn.previous?.closedAt,
+        s.audio.postReplySentAt,s.audio.input,s.audio.output,s.audio.worker,
         s.audio.uploadEnabled,s.audio.lastError,s.network.connected,s.ui,s.idle.stage,s.idle.displayed,s.photo.phase]);
       if(signature===previous&&at-lastEmit<30000)return false;
       const line='[health] '+JSON.stringify(s)+'\n';
