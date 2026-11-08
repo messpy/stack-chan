@@ -46,9 +46,9 @@ export class QueuedPlayback {
     if(!this.active)return {next:this.tail,complete:false};
     if(this.error)throw this.error;
     const available=()=>head>=this.tail?head-this.tail:this.ring.byteLength-this.tail+head;
-    // Do not confuse an empty network ring with starvation while native PCM/DMA
-    // still covers the next arriving frame. Only rebuffer after that cushion ends.
-    if(this.planner.primed&&!finished&&!this.pending&&this.now()>=this.hardwareUntil&&available()<this.chunkBytes){
+    // Play any non-empty sub-chunk PCM when the hardware drain has finished.
+    // Rebuffer only once both the native queue and the network ring run empty.
+    if(this.planner.primed&&!finished&&!this.pending&&this.now()>=this.hardwareUntil&&available()===0){
       this.planner.primed=false;this.planner.underruns++;
       this.planner.threshold=Math.min(this.planner.maxThreshold,this.planner.threshold*2);
     }
