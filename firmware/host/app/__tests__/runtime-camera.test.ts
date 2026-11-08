@@ -217,3 +217,31 @@ test('StackchanRuntimeCamera resumes touchPanel when camera start fails', async 
   await assert.rejects(async () => runtime.camera.start(), /camera start failed/)
   assert.deepEqual(events, ['touch.stop', 'camera.start', 'touch.start'])
 })
+
+test('routine stop then close releases native DMA and restores touch before the next capture', async () => {
+  const events: string[] = []
+  const camera: RobotCamera = {
+    available: true,
+    start() {events.push('camera.start')},
+    stop() {events.push('camera.stop')},
+    close() {events.push('camera.close')},
+    async capture() {events.push('camera.capture');return frame()},
+  }
+  const touchPanel = {
+    stop() {events.push('touch.stop')},
+    start() {events.push('touch.start')},
+  }
+  const runtime = new StackchanRuntimeCamera({camera,touchPanel})
+  runtime.camera.start()
+  await runtime.camera.capture()
+  await runtime.camera.stop()
+  await runtime.camera.close()
+  runtime.camera.start()
+  await runtime.camera.capture()
+  await runtime.camera.stop()
+  assert.deepEqual(events,[
+    'touch.stop','camera.start','camera.capture','camera.stop','touch.start',
+    'camera.stop','camera.close',
+    'touch.stop','camera.start','camera.capture','camera.stop','touch.start',
+  ])
+})
