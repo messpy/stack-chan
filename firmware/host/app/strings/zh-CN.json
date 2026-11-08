@@ -36,7 +36,7 @@
   "settings.scanning": "正在扫描",
   "settings.boot": "启动",
   "settings.offlineTitle": "离线启动",
-  "settings.offlineConfirm": "清除已保存的SSID和密码\n并离线启动吗？",
+  "settings.offlineConfirm": "保留已保存的 Wi-Fi 信息，\\n本次离线启动吗？",
   "settings.cancel": "取消",
   "settings.clearAndBoot": "清除并启动",
   "settings.wifiTitle": "Wi-Fi设置",
@@ -92,5 +92,7 @@
   "drawer.recordAndPlay": "录音并播放",
   "drawer.color.light": "白色",
   "drawer.color.dark": "黑色",
-  "drawer.colorScheme": "配色"
+  "drawer.colorScheme": "配色",
+  "boot.wifiMissing": "未配置 Wi-Fi",
+  "settings.offlineBoot": "离线启动"
 }
