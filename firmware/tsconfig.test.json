@@ -194,6 +194,9 @@
       "settings-status-model": [
         "./host/modules/ui/views/settings/settings-status-model.ts"
       ],
+      "offline-boot-request": [
+        "./host/app/offline-boot-request.ts"
+      ],
       "boot-network-recovery": [
         "./host/app/boot-network-recovery.ts"
       ],
