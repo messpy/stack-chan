@@ -29,3 +29,19 @@
 - 後続コミットでソース・テストを追加し、CI・CoreS3ビルド・実機試験が完了するまではDraftのままにする。
 
 関連Issue: https://github.com/messpy/stack-chan/issues/8
+
+
+## 2026-11-08: 現行コードの会話経路（再調査）
+
+`stackchan-super` の `archive-direct-chat.js` / `archive-memory.js` を確認した事実:
+- `conversationInstructions()` は `currentSpeaker()` からプロフィールを取り、`history({user_id,limit:3})` の**直近3メッセージ**を参考にする（3往復ではない）。本文は1件あたり240文字に縮めている。
+- GeminiテキストとOllamaテキストの `[system,user]` プロンプトには `conversationInstructions()` が使われる。
+- Gemini Liveは接続時 `instructions` を設定し、通常は同関数を使う。ただしOllama音声分岐には専用 `OLLAMA_SPEECH_INSTRUCTIONS` が渡される。話者切替後の同一接続への再投入可否は未検証。
+- XiaoZhi接続の通常経路は`createXiaozhiV1Connection` とツール戻り値に依存する。実際にリモートAIへ情報が届いたかはエンドツーエンドで検証が必要。
+- `archive-memory.js` の `identifySpeaker()` は`person`と`recent`を返し、識別時のプロフィール提供経路が別にある。Web会話入力を増やす #82 にも再利用するべき。
+
+**不整合の候補:** 同じ文脈生成がテキスト/Live/音声で分散している。特に`OLLAMA_SPEECH_INSTRUCTIONS` がプロフィール参照を含まないケースの仕様を決定する。XiaoZhiは外部サーバーへ一律に同じsystem promptを適用できるとは限らない。既存プロバイダーの責務を先に調べる。
+
+**次の実装設計:** `getConversationContext()` を境界とし、既存`person`・`recent`取得の上限、未識別/ゲストの最小化、時刻の有効性、秘密情報の除外、送信先ごとの可否をユニットテストで固定する。人物切替や接続再試行時には古いセッションの結果を捨てる。DBのJOIN変更はこのIssueの前提ではない。
+
+**未実施:** 全providerの到達性E2E、メモリ実測、音声の会話プロンプト共有化。
