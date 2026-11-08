@@ -64,7 +64,7 @@ test('photo recovery watchdog runs independently of JS during camera/JPEG/SD and
   assert.match(native, /sc_photo_recovery_cookie = SC_PHOTO_RECOVERY_MAGIC/)
   assert.match(native, /esp_reset_reason\(\) == ESP_RST_SW/)
   assert.match(usb, /photoRecoveryTriggered = native\('xs_archive_photo_watchdog_triggered'\)/)
-  assert.match(archive, /usbOperation:\{active:false,phase:photoProgress,watchdogReset:photoRecoveryTriggered\(\),watchdogStage:photoRecoveryLastCheckpoint\(\)\}/)
+  assert.match(archive, /usbOperation:\{active:false,phase:photoProgress,watchdogReset:photoRecoveryTriggered\(\),watchdogStage:photoRecoveryLastCheckpoint\(\),\.\.\.photoDiagnostic\(\)\}/)
   assert.match(usb, /photoRecoveryWatchdog = native\('xs_archive_photo_watchdog'\)/)
   assert.ok(photo.indexOf('photoRecoveryWatchdog(true)')>=0)
   assert.ok(photo.indexOf('photoRecoveryWatchdog(true)')<photo.indexOf('robot.camera.captureWithProcessor'))
