@@ -1059,7 +1059,10 @@ export function beginCameraHandoff() {
   }
 }
 // Leave the reconnect lock in place after a failed frame/driver close.
-export function quarantineCameraHandoff() {
+export function quarantineCameraHandoff(armRecovery=false) {
+  if(armRecovery){
+    try{photoRecoveryWatchdog(true)}catch(_){trace('[vision] emergency photo watchdog unavailable\n')}
+  }
   photoHandoffUnsafe=true
   photoHandoffActive=true
   state='waiting'
