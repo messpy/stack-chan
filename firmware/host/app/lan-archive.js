@@ -50,6 +50,20 @@ let lastError='';
 let audioUpload;
 let server;
 let photoProgress='idle';
+let photoErrorClass='none',photoErrorStage='none';
+// Camera error category from PR #55, with only bounded non-sensitive labels.
+function cameraFailureClass(error){
+  const message=String(error?.message||'').slice(0,240).toLowerCase();
+  if(/out.of.memory|no.?mem|memory|alloc|malloc|heap|0x101/.test(message))return 'memory';
+  if(/busy|already in use|resource in use/.test(message))return 'busy';
+  if(/i2c|sccb|\\bbus\\b|sensor|probe|gc0308/.test(message))return 'sensor-bus';
+  if(/timeout|timed out/.test(message))return 'timeout';
+  if(/not found|not available|unavailable|not detected/.test(message))return 'unavailable';
+  return 'unknown';
+}
+function photoDiagnostic(){
+  return {errorClass:photoErrorClass,errorStage:photoErrorStage};
+}
 const photoStageCodes={
   HANDOFF_BEGIN:1,VOICE_RELEASE:6,RAM_CHECK:7,RAM_READY:8,CAMERA_START:9,
   CAMERA_CAPTURE:10,JPEG_START:11,JPEG_DONE:12,SD_SAVE_START:13,
@@ -107,12 +121,15 @@ async function photo(robot,args={},fromConversation=false) {
   const wasBusy=busy;
   if(busy&&!fromConversation){traceConversation('CAMERA_ERROR','busy');throw new Error('Camera busy');}
   busy=true;
+  photoErrorClass='none';photoErrorStage='none';
   let frame,jpeg,result,cameraClosed=false,failureReported=false;
   const reportFailure=error=>{
     if(failureReported)return;
     failureReported=true;
+    photoErrorStage=photoProgress;
+    photoErrorClass=cameraFailureClass(error);
     markPhotoPhase('CAMERA_ERROR');
-    trace('[photo] failed type='+String(error?.name||'Error').slice(0,48)+'\n');
+    trace('[photo] failed type='+String(error?.name||'Error').slice(0,48)+' class='+photoErrorClass+' stage='+photoErrorStage+'\n');
     traceConversation('CAMERA_ERROR',String(error?.name||'Error')+' '+String(error?.message||'').slice(0,180));
   };
   // The CoreS3 native camera close is synchronous. Do not resume touch/voice
@@ -441,7 +458,7 @@ export function startArchive(robot) {
       else if(request.op==='/record')result=await record(robot);
       else if(request.op==='/status'){
         let sd=false;try{files(()=>{});sd=true;}catch(e){lastError=String(e);}
-        result={sd,camera:robot.camera.available!==false,busy:busy&&!directChatStatus().busy,usbOperation:{active:false,phase:photoProgress,watchdogReset:photoRecoveryTriggered(),watchdogStage:photoRecoveryLastCheckpoint()},chat:directChatStatus(),lastError,headTouch:!!robot.touchPanel,headSample:Array.from(robot.touchPanel?.sample??[]),transport:'usb+wifi',petting:'m5stack/StackChan',wifi:getSettingsStatus(),wifiDisplay:wifiDisplayStatus(),firmware:'stack-chan + M5Stack petting + USB archive'};
+        result={sd,camera:robot.camera.available!==false,busy:busy&&!directChatStatus().busy,usbOperation:{active:false,phase:photoProgress,watchdogReset:photoRecoveryTriggered(),watchdogStage:photoRecoveryLastCheckpoint(),...photoDiagnostic()},chat:directChatStatus(),lastError,headTouch:!!robot.touchPanel,headSample:Array.from(robot.touchPanel?.sample??[]),transport:'usb+wifi',petting:'m5stack/StackChan',wifi:getSettingsStatus(),wifiDisplay:wifiDisplayStatus(),firmware:'stack-chan + M5Stack petting + USB archive'};
       }else if(['/media/delete','/media/restore','/media/trash'].includes(request.op)){
         if(busy&&!directChatStatus().busy&&request.op!=='/media/trash')throw new Error('撮影・録音が終わってから操作してください');
         result=files(root=>mediaTrash(root,request.op==='/media/trash'?'list':request.op.slice(7),request.args||{}));
@@ -485,8 +502,8 @@ export function startArchive(robot) {
     authenticate:request=>request.token===token,
     arm:armDebugDrain,
     inspect:(op,pending)=>op==='/debug/status'
-      ? {...debugLogStatus(),usbOperation:{...pending,phase:photoProgress,watchdogReset:photoRecoveryTriggered(),watchdogStage:photoRecoveryLastCheckpoint()}}
-      : {busy:true,usbOperation:{...pending,phase:photoProgress,watchdogReset:photoRecoveryTriggered(),watchdogStage:photoRecoveryLastCheckpoint()},
+      ? {...debugLogStatus(),usbOperation:{...pending,phase:photoProgress,watchdogReset:photoRecoveryTriggered(),watchdogStage:photoRecoveryLastCheckpoint(),...photoDiagnostic()}}
+      : {busy:true,usbOperation:{...pending,phase:photoProgress,watchdogReset:photoRecoveryTriggered(),watchdogStage:photoRecoveryLastCheckpoint(),...photoDiagnostic()},
          camera:robot.camera.available!==false,chat:{state:'busy'}},
     trace,
     now:()=>Time.ticks,
