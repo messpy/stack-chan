@@ -56,7 +56,7 @@ function cameraFailureClass(error){
   const message=String(error?.message||'').slice(0,240).toLowerCase();
   if(/out.of.memory|no.?mem|memory|alloc|malloc|heap|0x101/.test(message))return 'memory';
   if(/busy|already in use|resource in use/.test(message))return 'busy';
-  if(/i2c|sccb|\\bbus\\b|sensor|probe|gc0308/.test(message))return 'sensor-bus';
+  if(/i2c|sccb|\bbus\b|sensor|probe|gc0308/.test(message))return 'sensor-bus';
   if(/timeout|timed out/.test(message))return 'timeout';
   if(/not found|not available|unavailable|not detected/.test(message))return 'unavailable';
   return 'unknown';
