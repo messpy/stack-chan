@@ -62,6 +62,8 @@ let refreshAITalk
 let photoHandler, modeChanged
 // Prevent the reconnect timer (2s cadence) from racing camera DMA/JPEG/SD.
 let photoHandoffActive=false
+// A failed native camera close must quarantine camera/voice until reset.
+let photoHandoffUnsafe=false
 let greetingPending = true,
   conversationProviderSeen,
   introText = ''
@@ -1039,6 +1041,7 @@ export function resumeDirectChat() {
 // Photo handoff is exclusive. Never reconnect while native camera or SD owns
 // resources, even if capture exceeds the ordinary 30-second retry delay.
 export function beginCameraHandoff() {
+  if (photoHandoffUnsafe) throw new Error('カメラ解放が確認できません。再起動が必要です')
   if (photoHandoffActive) throw new Error('カメラ撮影中です')
   photoHandoffActive=true
   try {
@@ -1055,7 +1058,20 @@ export function beginCameraHandoff() {
     throw error
   }
 }
+// Leave the reconnect lock in place after a failed frame/driver close.
+export function quarantineCameraHandoff() {
+  photoHandoffUnsafe=true
+  photoHandoffActive=true
+  state='waiting'
+  retryAt=Number.MAX_SAFE_INTEGER
+  trace('[vision] camera release unconfirmed; voice reconnect blocked until reboot\n')
+}
+export function isCameraHandoffUnsafe(){return photoHandoffUnsafe}
 export function finishCameraHandoff() {
+  if(photoHandoffUnsafe){
+    trace('[vision] unsafe camera handoff retained\n')
+    return
+  }
   if(!photoHandoffActive)return
   photoHandoffActive=false
   if(running()) {
