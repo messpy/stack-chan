@@ -36,7 +36,7 @@ import {startSettings,openSettings,closeSettings,getSettingsStatus,vaultSelfTest
 import {startDeviceTools,setAlarmDisplay,setAlarmMotion,callDeviceTool,listDeviceTools,reminderStatus} from 'archive-tools';
 import Time from 'time';
 import {getM5StackChanDriver} from 'm5stackchan-servo-driver';
-import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG} from 'archive-usb';
+import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG,heapStatus} from 'archive-usb';
 import Base64 from 'base64';
 import config from 'mc/config';
 import {HttpServerService, Response} from 'http-server-service';
@@ -77,7 +77,7 @@ export function archiveTranscript(role,text,eventId,image,speakerId) {
 }
 // Preview frames stay in RAM: no SD writes or cloud image recognition.
 async function cameraPreview(robot) {
- if(busy||directChatStatus().cameraCaptureActive)throw new Error('本体で処理中です。会話や録画を停止してからお試しください');
+ if((busy&&!directChatStatus().busy)||directChatStatus().cameraCaptureActive)throw new Error('本体で処理中です。会話や録画を停止してからお試しください');
  const release=holdDirectChat('camera-preview');
  busy=true;
  let frame;
@@ -113,7 +113,8 @@ async function photo(robot,args={},fromConversation=false) {
   } finally {
    try {
     await releaseCameraResources(robot.camera,frame,(at)=>trace('[archive-camera] cleanup failed stage='+at+'\n'));
-    trace('[archive-camera] stage=camera-released\n');
+    const heap=heapStatus();
+    trace('[archive-camera] stage=camera-released free='+(heap?.internalFree??-1)+' largest='+(heap?.internalLargest??-1)+'\n');
    } catch(e) {
     trace('[archive-camera] failed stage=camera-release type='+String(e?.name||'Error').slice(0,48)+'\n');
     throw e;
