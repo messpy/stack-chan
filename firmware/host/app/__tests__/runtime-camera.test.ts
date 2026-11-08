@@ -189,7 +189,7 @@ test('StackchanRuntimeCamera keeps touch paused after capture until native camer
   assert.deepEqual(events, ['touch.stop', 'camera.capture', 'camera.stop', 'touch.start'])
 })
 
-test('StackchanRuntimeCamera resumes touchPanel on capture exception', async () => {
+test('StackchanRuntimeCamera keeps touch paused after capture exception until confirmed close', async () => {
   const events: string[] = []
   const camera: RobotCamera = {
     start() {},
@@ -202,10 +202,12 @@ test('StackchanRuntimeCamera resumes touchPanel on capture exception', async () 
   }
   const runtime = new StackchanRuntimeCamera({camera, touchPanel})
   await assert.rejects(() => runtime.camera.capture(), /sensor failed/)
-  assert.deepEqual(events, ['touch.stop', 'camera.capture', 'touch.start'])
+  assert.deepEqual(events, ['touch.stop', 'camera.capture'])
+  await runtime.camera.close()
+  assert.deepEqual(events, ['touch.stop', 'camera.capture', 'camera.stop', 'touch.start'])
 })
 
-test('StackchanRuntimeCamera resumes touchPanel when camera start fails', async () => {
+test('StackchanRuntimeCamera keeps touch paused when camera start fails until confirmed close', async () => {
   const events: string[] = []
   const camera: RobotCamera = {
     start() {
@@ -232,5 +234,57 @@ test('StackchanRuntimeCamera resumes touchPanel when camera start fails', async 
   const runtime = new StackchanRuntimeCamera({ camera, touchPanel })
 
   await assert.rejects(async () => runtime.camera.start(), /camera start failed/)
-  assert.deepEqual(events, ['touch.stop', 'camera.start', 'touch.start'])
+  assert.deepEqual(events, ['touch.stop', 'camera.start'])
+  await runtime.camera.close()
+  assert.deepEqual(events, ['touch.stop', 'camera.start', 'camera.stop', 'touch.start'])
+})
+
+test('failed native close retains touch lock until successful retry', async () => {
+  const events: string[] = []
+  let failClose = true
+  const camera: RobotCamera = {
+    start() { events.push('camera.start') },
+    stop() { events.push('camera.stop') },
+    close() {
+      events.push('camera.close')
+      if (failClose) throw new Error('I2C busy')
+    },
+    async capture() { return frame() },
+  }
+  const touchPanel = {
+    stop() { events.push('touch.stop') },
+    start() { events.push('touch.start') },
+  }
+  const runtime = new StackchanRuntimeCamera({camera, touchPanel})
+  await runtime.camera.start()
+  await assert.rejects(async () => runtime.camera.close(), /I2C busy/)
+  assert.deepEqual(events, ['touch.stop', 'camera.start', 'camera.stop', 'camera.close'])
+  failClose = false
+  await runtime.camera.close()
+  assert.deepEqual(events, ['touch.stop', 'camera.start', 'camera.stop', 'camera.close', 'camera.stop', 'camera.close', 'touch.start'])
+})
+
+test('failed native stop must not resume shared touch before successful close', async () => {
+  const events: string[] = []
+  let failStop = true
+  const camera: RobotCamera = {
+    start() { events.push('camera.start') },
+    stop() {
+      events.push('camera.stop')
+      if (failStop) throw new Error('stop failed')
+    },
+    close() { events.push('camera.close') },
+    async capture() { return frame() },
+  }
+  const touchPanel = {
+    stop() { events.push('touch.stop') },
+    start() { events.push('touch.start') },
+  }
+  const runtime = new StackchanRuntimeCamera({camera, touchPanel})
+  await runtime.camera.start()
+  await assert.rejects(async () => runtime.camera.stop(), /stop failed/)
+  assert.deepEqual(events, ['touch.stop', 'camera.start', 'camera.stop'])
+  failStop = false
+  await runtime.camera.close()
+  assert.deepEqual(events, ['touch.stop', 'camera.start', 'camera.stop', 'camera.stop', 'camera.close', 'touch.start'])
 })
