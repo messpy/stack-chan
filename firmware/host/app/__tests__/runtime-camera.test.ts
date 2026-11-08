@@ -288,3 +288,49 @@ test('failed native stop must not resume shared touch before successful close', 
   await runtime.camera.close()
   assert.deepEqual(events, ['touch.stop', 'camera.start', 'camera.stop', 'camera.stop', 'camera.close', 'touch.start'])
 })
+
+test('photo teardown callback identifies the last completed native stage', () => {
+  const events: string[] = []
+  const camera: RobotCamera = {
+    start() { events.push('camera.start') },
+    stop() { events.push('camera.stop') },
+    close() { events.push('camera.close') },
+    async capture() { return frame() },
+  }
+  const touchPanel = {
+    stop() { events.push('touch.stop') },
+    start() { events.push('touch.start') },
+  }
+  const runtime = new StackchanRuntimeCamera({camera, touchPanel})
+  runtime.camera.start()
+  const result = runtime.close(stage => events.push(stage))
+  assert.equal(result, undefined)
+  assert.deepEqual(events, [
+    'touch.stop','camera.start',
+    'CAMERA_STOP_BEGIN','camera.stop','CAMERA_STOP_DONE',
+    'CAMERA_NATIVE_CLOSE_BEGIN','camera.close','CAMERA_NATIVE_CLOSE_DONE',
+    'TOUCH_RESUME_BEGIN','touch.start','TOUCH_RESUME_DONE',
+  ])
+})
+
+test('photo teardown callback stops at native close failure; touch stays paused', async () => {
+  const events: string[] = []
+  const camera: RobotCamera = {
+    start() { events.push('camera.start') },
+    stop() { events.push('camera.stop') },
+    close() { events.push('camera.close'); throw new Error('native close stuck') },
+    async capture() { return frame() },
+  }
+  const touchPanel = {
+    stop() { events.push('touch.stop') },
+    start() { events.push('touch.start') },
+  }
+  const runtime = new StackchanRuntimeCamera({camera, touchPanel})
+  runtime.camera.start()
+  await assert.rejects(async () => runtime.close(stage => events.push(stage)), /native close stuck/)
+  assert.deepEqual(events, [
+    'touch.stop','camera.start',
+    'CAMERA_STOP_BEGIN','camera.stop','CAMERA_STOP_DONE',
+    'CAMERA_NATIVE_CLOSE_BEGIN','camera.close',
+  ])
+})
