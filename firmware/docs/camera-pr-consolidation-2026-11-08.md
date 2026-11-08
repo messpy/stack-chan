@@ -35,4 +35,4 @@ Until hardware acceptance is successful, all supersession is **code review / bra
 
 ## Duplicate-PR handling
 
-Use PR #58 as the sole camera feature/integration review. The original PRs remain visible as historical review/audit trails; close as **superseded** only after confirming no unique camera behavior has been dropped. Closing a PR is not merging it, and cannot substitute for a hardware acceptance test. Do not merge PR #58 until actual camera operation succeeds.
+Use PR #58 as the sole camera feature/integration review. On 2026-11-08, duplicate camera reviews **#47, #55, #56 and #57 were closed as superseded, not merged**. Their source branches and comments remain available for audit, and PR #55's unique standalone diagnostics remain archived there. PR #31 and #39 remain open for their unrelated functionality; do not merge them wholesale into #58. Closing a PR is not merging it, and cannot substitute for a hardware acceptance test. Do not merge PR #58 until actual camera operation succeeds.
