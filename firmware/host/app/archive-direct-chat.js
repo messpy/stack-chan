@@ -1106,6 +1106,10 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
               },
               { left: 12, right: 12, top: 136, height: 40 },
             )),
+            new ActionButton(
+              { label: 'AI時刻設定', onTap: () => robot.ui.application.behavior.launchMiniApp('archive-ai-schedule') },
+              { left: 12, right: 12, top: 184, height: 36 },
+            ),
           ],
         }),
       }
