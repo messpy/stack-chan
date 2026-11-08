@@ -18,7 +18,8 @@ test('runtime camera holds touch/I2C paused from capture until native camera clo
   const close = runtime.slice(closeStart, captureStart)
   assert.match(close, /this\.#camera\.close\?\.\(\)/)
   assert.match(close, /this\.#resumeTouchPanel\(\)/)
-  assert.match(close, /return result\.then\(\(\) => finish\(\), fail\)/)
+  assert.match(close, /return finish\(\)/)
+  assert.match(close, /checkpoint\('CAMERA_STOP_DONE'\)/)
 })
 
 test('photo processes JPEG/SD in runtime capture continuation before closing DMA frame',()=>{
