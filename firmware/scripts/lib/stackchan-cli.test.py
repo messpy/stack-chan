@@ -57,6 +57,23 @@ class CLITest(unittest.TestCase):
             self.r.cmd('injected',['python3','-c','import sys;print("diagnostic");sys.exit(7)'])
         self.assertIn('diagnostic',(self.r.run/'injected.log').read_text())
 
+    def test_kernel_usb_log_collection_uses_portable_grep(self):
+        commands = []
+        def fake_cmd(name, argv, *args, **kwargs):
+            commands.append((name, argv))
+            return self.r.run / (name + '.log')
+        with patch.object(self.r, 'cmd', side_effect=fake_cmd), \
+             patch.object(self.r, 'confirm'), \
+             patch.object(self.r, 'identity', return_value={'port': '/dev/ttyACM0'}), \
+             patch.object(self.r, 'own_usb', return_value=contextlib.nullcontext()), \
+             patch.object(self.r, 'unoccupied'), \
+             patch.object(self.r, 'capture'):
+            self.r.logs()
+        name, argv = commands[0]
+        self.assertEqual(name, 'kernel-usb')
+        self.assertIn('grep -Ei', argv[2])
+        self.assertNotIn(' rg ', argv[2])
+
     def test_timeout_stops_child(self):
         with self.assertRaises(m.subprocess.TimeoutExpired):
             self.r.cmd('timeout',['python3','-c','import time;time.sleep(10)'],timeout=.05)
