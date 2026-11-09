@@ -371,7 +371,7 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
         self.log('WARN', 'ログ収集の終了は正常起動・撮影成功の判定ではありません。')
 
     def logs(self):
-        self.cmd('kernel-usb', ['bash', '-c', "journalctl -k --since '-30 min' --no-pager -o short-iso | rg -i 'usb|ttyACM|cdc_acm|oom|out of memory' || test ${PIPESTATUS[0]} -eq 0"])
+        self.cmd('kernel-usb', ['bash', '-c', "journalctl -k --since '-30 min' --no-pager -o short-iso | grep -Ei 'usb|ttyACM|cdc_acm|oom|out of memory' || test ${PIPESTATUS[0]} -eq 0"])
         # Do not dump raw hub logs or general journal entries containing private values.
         source = pathlib.Path('/mnt/data/Development/stackchan/hub/logs/diagnostic.log')
         if source.exists():
