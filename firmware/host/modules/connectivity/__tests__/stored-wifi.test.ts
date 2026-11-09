@@ -211,5 +211,55 @@ test('startHostBootServices exposes failed network readiness with a traceable re
     status: 'failed',
     reason: 'authentication failed',
   })
-  assert.ok(traces.includes('[network] connection failed: authentication failed\n'))
+  assert.ok(traces.includes('[network] connection failed: connection-failed\n'))
+})
+
+
+test('Wi-Fi scan without callbacks cannot block startup past its deadline', async () => {
+  const { networkManager, traces } = await setup({ 'wifi.ssid': 'ap', 'wifi.password': 'secret' })
+  const timer = (await import('../../testing/fakes/timer.js')).default
+  timer.reset()
+  const { startHostBootServices } = await import('../../../app/boot-services.js')
+  const services = startHostBootServices({ wifi: { maxAttempts: 1, attemptTimeoutMs: 100 } })
+  assert.equal(networkManager.getStartedConnections().length, 1)
+  const stopped = networkManager.getStopCount()
+  timer.advance(99)
+  assert.equal(networkManager.getStopCount(), stopped)
+  timer.advance(1)
+  assert.deepEqual(await services.connectivity.network.ready, {
+    status: 'failed', reason: 'boot Wi-Fi attempt timed out',
+  })
+  assert.equal(networkManager.getStopCount(), stopped + 1)
+  assert.ok(traces.some(s => s.includes('boot Wi-Fi attempt timeout')))
+  networkManager.completeLastConnection()
+  assert.equal(networkManager.getStopCount(), stopped + 1)
+})
+
+test('connected Wi-Fi cancels its scan/connect deadline', async () => {
+  const { networkManager, traces } = await setup({ 'wifi.ssid': 'ap', 'wifi.password': 'secret' })
+  const timer = (await import('../../testing/fakes/timer.js')).default
+  timer.reset()
+  const { startHostBootServices } = await import('../../../app/boot-services.js')
+  const services = startHostBootServices({ wifi: { maxAttempts: 1, attemptTimeoutMs: 100 } })
+  networkManager.completeLastConnection()
+  assert.deepEqual(await services.connectivity.network.ready, { status: 'connected' })
+  timer.advance(500)
+  assert.ok(!traces.some(s => s.includes('boot Wi-Fi attempt timeout')))
+})
+
+test('missing credentials select offline without writing preferences', async () => {
+  const { networkManager } = await setup()
+  const { startHostBootServices } = await import('../../../app/boot-services.js')
+  const { resumeBootWiFi } = await import('../../../app/boot-network-recovery.js')
+  const services = startHostBootServices({ wifi: {
+    promptRecoveryChoice: async status => {
+      assert.equal(status.message, 'Wi-Fiの設定がありません')
+      return 'offline'
+    },
+  } })
+  assert.deepEqual(await services.connectivity.network.ready, {
+    status: 'skipped', reason: 'offline start selected: missing-credentials',
+  })
+  assert.deepEqual(networkManager.getStartedConnections(), [])
+  resumeBootWiFi()
 })
