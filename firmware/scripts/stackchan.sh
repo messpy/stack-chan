@@ -161,14 +161,28 @@ class Runner:
         self.log('CHECK', 'HOST=' + os.uname().nodename + ' SHA=' + self.head + ' REPO=' + str(self.repo))
         self.log('CHECK', 'DISK_FREE_GiB=' + str(round(shutil.disk_usage(self.repo).free / 2**30, 1)))
         self.cmd('host-uptime', ['uptime'])
-        if not any((self.a.test, self.a.build, self.a.write, self.a.logs)):
-            try: self.log('CHECK', 'USB=' + self.identity()['port'])
-            except RuntimeError: self.log('WARN', 'USB not visible/ambiguous; --check did not open or reset a device')
-            state = subprocess.run(['systemctl','--user','show',SERVICE,'-p','ActiveState','-p','Result','-p','ExecMainStatus'], capture_output=True, text=True)
-            if state.returncode: self.log('WARN', 'user systemd bus unavailable; service state unknown')
-            else:
-                for line in state.stdout.splitlines(): self.log('CHECK', line)
+        if getattr(self.a, 'check', False) or not any((self.a.test, self.a.build, self.a.write, self.a.logs)):
+            self.check_usb()
         self.log('INFO', 'No GitHub merge/push, SD backup, settings erase or photo request. Flash backup retained.')
+
+    def check_usb(self):
+        usb_error = None
+        try: self.log('CHECK', 'USB=' + self.identity()['port'])
+        except RuntimeError as error: usb_error = error
+        state = subprocess.run(['systemctl','--user','show',SERVICE,'-p','ActiveState','-p','Result','-p','ExecMainStatus'], capture_output=True, text=True)
+        if state.returncode: self.log('WARN', 'HUB: user systemd bus unavailable; service state unknown')
+        else:
+            for line in state.stdout.splitlines(): self.log('CHECK', 'HUB.' + line)
+        if usb_error:
+            journal = subprocess.run(['journalctl','-k','--since','-15 min','--no-pager','-o','short-iso'],capture_output=True,text=True)
+            path = self.run / 'usb-kernel.log'
+            lines = [line for line in journal.stdout.splitlines() if re.search(r'usb|ttyACM|cdc_acm',line,re.I)]
+            path.write_text('\n'.join(lines[-200:]) + '\n')
+            self.log('ERROR', 'USB preflight failed; no port opened. KERNEL_LOG=' + str(path))
+            raise usb_error
+        if state.returncode:
+            self.step = 'hub-state'
+            raise RuntimeError('cannot verify hub service state; preflight incomplete')
 
     def setup_env(self):
         # Only source the known SDK exports; never evaluate user input as shell code.

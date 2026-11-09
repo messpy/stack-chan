@@ -49,3 +49,5 @@ python3 firmware/scripts/lib/stackchan-cli.test.py
 ```
 
 このテストは制御フローと故障時の振る舞いの検証です。ビルド・USB書き込み・CoreS3正常起動の実機検証を代替しません。
+
+`--check` のUSB未検出・複数候補は失敗終了します。hubの `HUB.Result=success` はサービスの前回終了結果であり、USB認識成功ではありません。USB識別失敗時は同じ実行フォルダの `usb-kernel.log` に直近15分のUSB関連カーネルログも保存します。`--all` の事前確認でもUSBを確認し、未認識のまま長いテスト・ビルドへ進みません。

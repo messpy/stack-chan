@@ -163,6 +163,26 @@ class CLITest(unittest.TestCase):
             self.assertEqual(m.main(['--yes','--check','--log-root',str(self.root/'yes-mode')]),0)
         self.assertEqual(captured,[True])
 
+    def test_missing_usb_is_failure_even_when_hub_result_success(self):
+        self.r.identity=lambda:(_ for _ in ()).throw(RuntimeError('USB missing'))
+        result=types.SimpleNamespace(returncode=0,stdout='Result=success\nActiveState=inactive\n')
+        with patch.object(m.subprocess,'run',return_value=result),self.assertRaisesRegex(RuntimeError,'USB missing'):
+            self.r.check_usb()
+        self.assertTrue((self.r.run/'usb-kernel.log').exists())
+
+    def test_hub_labels_do_not_imply_usb_success(self):
+        lines=[];self.r.log=lambda level,line:lines.append(line)
+        self.r.identity=lambda:dict(port='/dev/ttyACM0')
+        result=types.SimpleNamespace(returncode=0,stdout='Result=success\nActiveState=inactive\n')
+        with patch.object(m.subprocess,'run',return_value=result):self.r.check_usb()
+        self.assertIn('HUB.Result=success',lines)
+        self.assertNotIn('Result=success',lines)
+
+    def test_unknown_hub_state_is_incomplete_preflight(self):
+        self.r.identity=lambda:dict(port='/dev/ttyACM0')
+        with patch.object(m.subprocess,'run',return_value=types.SimpleNamespace(returncode=1,stdout='')),self.assertRaisesRegex(RuntimeError,'preflight incomplete'):
+            self.r.check_usb()
+
     def layout(self):
         self.r.bin.mkdir(parents=True)
         p=self.r.fw/'dist/tmp/esp32/m5stackchan_cores3/release/stack-chan-host/xsProj-esp32s3/build/flasher_args.json'
