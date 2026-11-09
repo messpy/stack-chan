@@ -1,4 +1,4 @@
-import { createContextInitializer, createAsyncContextInitializer, type StartupComponentEvent, type StartupComponent, type StartupComponentState, type StartupScreenDiagnostics } from 'context-startup'
+import { createContextInitializer, createAsyncContextInitializer, type ContextInitializer, type StartupComponentEvent, type StartupComponent, type StartupComponentState, type StartupScreenDiagnostics } from 'context-startup'
 import loadPreferences, { loadModConfig, loadPreferenceConfig } from 'loadPreference'
 import System from 'embedded:system'
 import { runContextCreatedBehaviors, type StackchanAppBehavior } from 'app-behavior'
@@ -177,7 +177,7 @@ async function main() {
       config: preferences,
     }))
     if (Modules.has('lan-archive')) {
-      const archive = initialize('archive-import', () => Modules.importNow('lan-archive')) as { startArchive: (context: StackchanContext, initialize?: typeof initialize) => void }
+      const archive = initialize('archive-import', () => Modules.importNow('lan-archive')) as { startArchive: (context: StackchanContext, initialize?: ContextInitializer) => void }
       initialize('archive-start', () => archive.startArchive(context!, initialize))
     }
     trace('[main] app behaviors ready\n')
@@ -200,7 +200,6 @@ async function main() {
       trace(`[main] cleanup error ${startupErrorClass(closeError)}\n`)
     }
     trace(`[main] startup failed phase=${phase} error=${startupErrorClass(error)}\n`)
-    trace(`[main] startup detail: ${error instanceof Error ? error.message : 'unknown'}\n`)
     if (
       globalEnv.application === failedApplication &&
       (!failedApplication ||

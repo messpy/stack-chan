@@ -33,7 +33,8 @@ mainの5操作を確認。Dock hook、mini-app登録、awaitされたbehavior ho
 - TypeScript test project noEmit PASS。
 - Archive UI: ファイル集計29件、28 PASS / 1 FAIL / 0 SKIP。失敗はarchive-screen-copyの `spawnSync cc EPERM`。隔離環境の子プロセス制約で、全テストPASSとはしない。
 - 新規テストハーネスの初回はmockのrunLaunchBehaviors export不足で失敗。mock修正後上記9件PASS。
-- CoreS3ビルド・成果物照合: 後続の結果を追記する。
+- 最初のCoreS3ビルドはmainの自己参照型注釈TS2502で失敗。ContextInitializerの明示型に修正して再ビルドする。ログ `/home/kmac/work/stackchan-runs/run-20261109-175633-5mxvhopi/build.log`。
+- CoreS3再ビルド・成果物照合: 後続の結果を追記する。
 
 ## 次の実機検証
 
