@@ -1,4 +1,4 @@
-import {heapStatus,initDebugLog,pushDebugLog,popDebugLog,debugLogStatus,usbConnected,writeDebugUSB} from 'archive-usb';
+import {heapStatus,initDebugLog,pushDebugLog,popDebugLog,debugLogStatus,usbConnected,writeDebugUSB,startupCheckpoint,startupCheckpointStatus} from 'archive-usb';
 import Timer from 'timer';
 let installed=false,draining=false,armed=false;
 export function armDebugDrain(){armed=true;}
@@ -35,3 +35,35 @@ export function startDebugDrain(){
   },100);
 }
 export {debugLogStatus};
+
+const startupPhases=['initialization','launch','network','context','behavior','ready','unknown'];
+const startupErrors=['none','Error','TypeError','RangeError','ReferenceError','SyntaxError','URIError','unknown'];
+let startupState,startupTimer,startupTicks=0;
+export function recordStartupCheckpoint(phase,error){
+  try{
+    const index=startupPhases.indexOf(phase),stage=index<0?6:index;
+    let kind=error===undefined?'none':startupErrors.includes(error?.name)?error.name:'unknown';
+    let reason='none',site='';
+    if(error!==undefined){
+      const message=String(error?.message||'').toLowerCase();
+      reason=/memory|alloc|heap/.test(message)?'memory':/sd|file|mount|storage/.test(message)?'storage':/wifi|network|socket|dns/.test(message)?'network':'unclassified';
+      const match=String(error?.stack||'').match(/([A-Za-z0-9_-]+\.(?:js|ts):[0-9]+(?::[0-9]+)?)/);
+      if(match)site=match[1];
+    }
+    startupCheckpoint(stage,startupErrors.indexOf(kind));
+    startupState={phase:startupPhases[stage],error:kind,reason,site};
+    startupTicks=0;
+    sendStartupCheckpoint();
+    if(startupTimer===undefined)startupTimer=Timer.repeat(()=>{
+      if(++startupTicks>300){Timer.clear(startupTimer);startupTimer=undefined;return;}
+      sendStartupCheckpoint();
+    },1000);
+  }catch(_){/* Diagnostics must never replace the original startup result. */}
+}
+function sendStartupCheckpoint(){
+  try{
+    if(!startupState||!usbConnected())return;
+    const memory=heapStatus();
+    writeDebugUSB(JSON.stringify({event:'startup',...startupState,...startupCheckpointStatus(),internalFree:memory.internalFree,internalLargest:memory.internalLargest,psramFree:memory.psramFree}));
+  }catch(_){}
+}

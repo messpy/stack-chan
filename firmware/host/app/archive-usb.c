@@ -263,3 +263,38 @@ void xs_archive_recognition_pcm(xsMachine *the) {
 }
 
 void xs_archive_collect_memory(xsMachine *the) { xsCollectGarbage(); }
+
+// Scalar-only RTC startup evidence. Never stores messages, credentials or pointers.
+#include "esp_attr.h"
+#define SC_BOOT_MAGIC 0x53434231u
+typedef struct { uint32_t magic, sequence, stage, error; } ScBootRecord;
+static RTC_NOINIT_ATTR ScBootRecord sc_boot_rtc;
+static ScBootRecord sc_boot_previous;
+static int sc_boot_initialized;
+static void sc_boot_init(void) {
+    if(sc_boot_initialized)return;
+    sc_boot_initialized=1;
+    if(sc_boot_rtc.magic==SC_BOOT_MAGIC && sc_boot_rtc.stage<=6 && sc_boot_rtc.error<=7)
+        sc_boot_previous=sc_boot_rtc;
+    else memset(&sc_boot_previous,0,sizeof(sc_boot_previous));
+    sc_boot_rtc=(ScBootRecord){SC_BOOT_MAGIC,sc_boot_previous.sequence+1,0,0};
+}
+void xs_archive_startup_checkpoint(xsMachine *the) {
+    sc_boot_init();
+    int stage=xsmcToInteger(xsArg(0)),error=xsmcToInteger(xsArg(1));
+    if(stage<0||stage>6||error<0||error>7)xsRangeError("Invalid startup checkpoint");
+    sc_boot_rtc.stage=(uint32_t)stage;sc_boot_rtc.error=(uint32_t)error;
+}
+void xs_archive_startup_status(xsMachine *the) {
+    sc_boot_init();xsmcVars(1);xsmcSetNewObject(xsResult);
+#define SC_BOOT_FIELD(name,value) xsmcSetInteger(xsVar(0),(int)(value));xsmcSet(xsResult,xsID(name),xsVar(0))
+    SC_BOOT_FIELD("sequence",sc_boot_rtc.sequence);
+    SC_BOOT_FIELD("stage",sc_boot_rtc.stage);
+    SC_BOOT_FIELD("errorCode",sc_boot_rtc.error);
+    SC_BOOT_FIELD("previousValid",sc_boot_previous.magic==SC_BOOT_MAGIC);
+    SC_BOOT_FIELD("previousSequence",sc_boot_previous.sequence);
+    SC_BOOT_FIELD("previousStage",sc_boot_previous.stage);
+    SC_BOOT_FIELD("previousError",sc_boot_previous.error);
+    SC_BOOT_FIELD("resetReason",esp_reset_reason());
+#undef SC_BOOT_FIELD
+}

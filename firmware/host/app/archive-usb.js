@@ -23,3 +23,6 @@ export const heapStatus = native('xs_archive_heap_status');
 export const prepareRecognitionPCM = native('xs_archive_recognition_pcm');
 
 export const collectMemory = native('xs_archive_collect_memory');
+
+export const startupCheckpoint = native('xs_archive_startup_checkpoint');
+export const startupCheckpointStatus = native('xs_archive_startup_status');

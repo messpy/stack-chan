@@ -101,8 +101,15 @@ function waitForBootWiFiRecoveryChoice(status: BootWiFiStatus & { reason: string
 }
 
 async function main() {
+  let startupCheckpoint: ((phase: string, error?: unknown) => void) | undefined
+  const markStartup = (phase: string, error?: unknown) => { try { startupCheckpoint?.(phase, error) } catch {} }
   try {
-    if (Modules.has('archive-debug')) (Modules.importNow('archive-debug') as { installDebugLog: () => void }).installDebugLog()
+    if (Modules.has('archive-debug')) {
+      const diagnostics = Modules.importNow('archive-debug') as { installDebugLog: () => void; recordStartupCheckpoint?: (phase: string, error?: unknown) => void }
+      diagnostics.installDebugLog()
+      startupCheckpoint = diagnostics.recordStartupCheckpoint
+      markStartup('initialization')
+    }
   } catch { trace('[debug] log initialization unavailable\n') }
   try {
     if (Modules.has('archive-screen')) (Modules.importNow('archive-screen') as { installScreenCapture: () => void }).installScreenCapture()
@@ -123,6 +130,7 @@ async function main() {
     // Launch behaviors run before startHostBootServices so the splash screen is
     // visible while network setup blocks.
     phase = 'launch'
+    markStartup(phase)
     const launch = await prepareAppLaunch(appBehaviors, prepareExperimentalMiniApps)
     trace(`[main] onLaunch shouldCreateContext=${launch.shouldCreateContext}\n`)
     if (!launch.shouldCreateContext) {
@@ -135,6 +143,7 @@ async function main() {
     const experimentalMiniApps = launch.prepared
 
     phase = 'network'
+    markStartup(phase)
     const bootServices = startHostBootServices({
       wifi: {
         onStatusChanged: showWiFiConnectionStatus,
@@ -144,6 +153,7 @@ async function main() {
     const networkReady = await bootServices.connectivity.network.ready
     trace(`[main] network ready: ${networkReady.status}\n`)
     phase = 'context'
+    markStartup(phase)
     const preferences = loadPreferenceConfig()
     const ownedDock = dockRuntime
     context = createStackchanContext(preferences, {
@@ -152,6 +162,7 @@ async function main() {
       closeHandlers: ownedDock ? [() => ownedDock.close()] : undefined,
     })
     phase = 'behavior'
+    markStartup(phase)
     ownedDock?.onContextCreated(context)
     registerExperimentalMiniApps(experimentalMiniApps, context.ui.miniApps)
     trace('[main] app context created\n')
@@ -161,8 +172,11 @@ async function main() {
     })
     if (Modules.has('lan-archive')) (Modules.importNow('lan-archive') as { startArchive: (context: StackchanContext) => void }).startArchive(context)
     trace('[main] app behaviors ready\n')
+    markStartup('ready')
     installModManagerShortcut()
   } catch (error) {
+    // Save failure before cleanup, which can itself fail or block.
+    markStartup(phase, error)
     // A newer/disposed view during async cleanup owns its screen. Do not
     // replace it with an older startup attempt's failure.
     const failedApplication = globalEnv.application

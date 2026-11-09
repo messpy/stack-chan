@@ -197,6 +197,19 @@ class CLITest(unittest.TestCase):
         base=['esptool','--before','no-reset','--after','no-reset']
         self.assertEqual(self.r.connection_command(base),base)
 
+    def test_structured_startup_packets_are_decoded_without_private_text(self):
+        packet=dict(event='startup',phase='context',error='TypeError',reason='memory',site='compose.js:123',
+                    sequence=2,stage=3,previousValid=1,previousSequence=1,previousStage=2,previousError=0,resetReason=1,
+                    internalFree=100,internalLargest=80,psramFree=200,message='secret-password')
+        result=m.safe_line('@SC '+json.dumps(packet))
+        self.assertIn('[main] startup failed phase=context error=TypeError',result)
+        self.assertIn('previousStage=2',result)
+        self.assertNotIn('secret-password',result)
+        packet.update(phase='ready',error='none',reason='none',site='')
+        self.assertIn('[main] app behaviors ready',m.safe_line('@SC '+json.dumps(packet)))
+        packet['phase']='secret-password'
+        self.assertIsNone(m.safe_line('@SC '+json.dumps(packet)))
+
     def layout(self):
         self.r.bin.mkdir(parents=True)
         p=self.r.fw/'dist/tmp/esp32/m5stackchan_cores3/release/stack-chan-host/xsProj-esp32s3/build/flasher_args.json'

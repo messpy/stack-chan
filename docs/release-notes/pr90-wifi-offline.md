@@ -20,3 +20,11 @@ configuration change or flash operation was performed during this investigation.
 The reported physical startup error still requires its displayed phase/message
 or a captured startup log. These software tests do not establish its cause or
 prove physical offline startup succeeds.
+
+Startup evidence follow-up (release impact: patch): early scalar-only USB startup
+packets no longer depend on Archive initialization/RPC arming. Failure is saved
+before cleanup, and RTC records current/previous phase/sequence/error class.
+The host collector decodes only allowlisted startup JSON, preserving no exception
+message or conversation. Timer retries are bounded and cannot diagnose a stopped
+JS VM live; RTC may survive a software reset but not power loss. Hardware startup
+cause remains unconfirmed until the diagnostic build is exercised.
