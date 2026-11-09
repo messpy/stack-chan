@@ -17,6 +17,7 @@ import { DOMAIN } from 'consts'
 import type { DrawerButtonViewSpec } from 'drawer'
 import { DynamixelDriver } from 'dynamixel-driver'
 import IMU from 'imu'
+import { createOptionalIMU } from 'optional-imu'
 import { createJitomeFace } from 'jitome-face'
 import Led from 'led'
 import { M5StackChanServoDriver } from 'm5stackchan-servo-driver'
@@ -218,8 +219,13 @@ export function createStackchanContext(
     trace('[main] using top touch-panel provider\n')
   }
   const touchPanel = initialize('touch-panel', () => touchPanelConstructor ? new TouchPanel(touchPanelConstructor, (config as { archiveM5Pet?: boolean }).archiveM5Pet ? { swipeThreshold: 40 } : {}) : undefined)
+  // IMU is an optional input. A sensor/I2C initialization error must not
+  // prevent the Face, buttons, touchscreen, audio or camera from starting.
   const imu = globalEnv.device?.sensor?.IMU
-    ? initialize('imu', () => new IMU(globalEnv.device!.sensor!.IMU as ConstructorParameters<typeof IMU>[0]))
+    ? initialize('imu', () => createOptionalIMU(
+        () => new IMU(globalEnv.device!.sensor!.IMU as ConstructorParameters<typeof IMU>[0]),
+        () => trace('[IMU] unavailable; orientation and motion detection disabled for this boot\n'),
+      ))
     : undefined
   const microphone = initialize('microphone', () => Modules.has('audio-in') ? new Microphone() : undefined)
   const camera = initialize('camera', () => new Camera())

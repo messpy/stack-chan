@@ -12,6 +12,7 @@
     "moduleResolution": "NodeNext",
     "paths": {
       "context-startup": ["./host/app/context-startup"],
+      "optional-imu": ["./host/app/optional-imu"],
       "piu/MC": [
         "./node_modules/@moddable/typings/piu/MC.d.ts"
       ],
