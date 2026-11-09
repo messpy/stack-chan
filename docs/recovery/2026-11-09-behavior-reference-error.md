@@ -34,8 +34,20 @@ mainの5操作を確認。Dock hook、mini-app登録、awaitされたbehavior ho
 - Archive UI: ファイル集計29件、28 PASS / 1 FAIL / 0 SKIP。失敗はarchive-screen-copyの `spawnSync cc EPERM`。隔離環境の子プロセス制約で、全テストPASSとはしない。
 - 新規テストハーネスの初回はmockのrunLaunchBehaviors export不足で失敗。mock修正後上記9件PASS。
 - 最初のCoreS3ビルドはmainの自己参照型注釈TS2502で失敗。ContextInitializerの明示型に修正して再ビルドする。ログ `/home/kmac/work/stackchan-runs/run-20261109-175633-5mxvhopi/build.log`。
-- CoreS3再ビルド・成果物照合: 後続の結果を追記する。
+- CoreS3 Archive再ビルド PASS（m5stackchan_cores3 / ESP-IDF 6.1）。ソースSHA `f971dcc8ba1eec79e583bfe7a3eaffe1a4fcc482`。ログ `/home/kmac/work/stackchan-runs/run-20261109-175657-fqst198j/build.log`。
+- 3成果物のサイズ/SHA256をreceiptと独立再照合し一致。`xs_esp32.bin` 7,333,296 bytes / SHA256 `f931de15d0aa57a904965b71c7989eeccd93f037fa1269c7ede72be96fb00b83`。flash target/layout/NVS非重複は既存CLIで検証。詳細は `/home/kmac/work/stackchan-behavior-evidence-20261109/artifacts.json`。
+- 既存バックアップを再読取りし16,777,216 bytesと保存済みSHA256の一致を確認。
+- 新ビルドは未書込み。このエージェントのデバイス名前空間からttyACMにアクセスできないため、ユーザー報告のUSB復旧を否定せず、本体操作は未実施。
 
 ## 次の実機検証
 
 既存 `~/stackchan.sh` のみ使用する。USB同一性・16MiBバックアップ・SHA256・成果物照合を省略しない。新しいcheckpointで起動失敗component/siteを取得する。書込検証、ready観測、公式Face表示は別判定。実機でのFace/タッチ/オフライン/カメラ・音声復帰は未確認。
+
+
+最新の専用作業先・成功済みビルドから更新する場合、kmacの通常端末のtmux内で:
+
+```bash
+bash ~/stackchan.sh --write --reset usb --yes
+```
+
+`--yes`でも同一性/バックアップ/SHA256確認は省略しない。エラー時停止しログパスを表示する。書込み後はCLIの指示どおり短いRSTで起動し、component/site付きのboot-stages.logと本体Faceを確認する。この文書だけの追記でビルドはやり直さない。
