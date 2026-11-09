@@ -52,33 +52,34 @@ Gemini/Ollama handoff, transport retry, >60s blocking, OFF and speaker changes.
 
 ## Hardware update (requires explicit approval)
 
-`firmware/scripts/stackchan-pr90-update.sh` is an interactive preparation/update
-script. It has **not** been exercised on a real device. Run it inside tmux after
-reviewing the final commit and obtaining approval. Source the SDK/ESP-IDF exports
-first. Supply the original private manifest separately; the CI-only generated
-configuration is refused as the source. It is copied locally, with only the new
-module definitions and official-target dependencies synchronized. The previous
-ignored configuration is backed up privately.
+`firmware/scripts/stackchan.sh` is the single local entry point. On kmac,
+`~/stackchan.sh` links to this file. Paths to the preserved original private
+manifest, Node, SDK/IDF exports and the known USB unit are configured internally.
+No arguments means read-only `--check`. See [operation instructions](../stackchan-cli.md).
 
 ```sh
-EXPECTED_SHA=<reviewed-40-character-SHA> \
-PORT=/dev/serial/by-id/<verified-device> \
-PRIVATE_MANIFEST=/path/to/original/firmware/host/app/manifest_archive_private.json \
-SD_BACKUP_DIR=/path/to/sd-backup-with-SHA256SUMS \
-bash firmware/scripts/stackchan-pr90-update.sh
+bash ~/stackchan.sh --check
+bash ~/stackchan.sh --test --build
+bash ~/stackchan.sh --write
+bash ~/stackchan.sh --logs --seconds 90
+# Explicit complete workflow, inside tmux; still asks before device access/write:
+bash ~/stackchan.sh --all
 ```
 
-The script verifies the PR ref, runs regression checks and the official build,
-validates an existing SD backup checksum manifest, identifies the USB unit by
-VID/PID/serial/physical location, and preserves the hub's original active state.
-It asks separately before reset/16MiB flash backup and before writing. It checks
-backup length/SHA256 and image hashes. It writes only bootloader/partition/app
-images, never erases the whole flash or initializes SD. Passive boot collection
-is bounded to 90s and keeps stage/RAM/state markers, excluding transcripts.
-A changed USB identity stops the write; no capture request is sent or retried.
-The backup/config/log directory is private and may contain credentials; never
-publish it. Cancellation after backup may leave the board in bootloader mode.
-Rollback writes the verified full backup at offset 0, with separate approval.
+There is no auto-fetch, checkout, merge, configuration erase or photo request.
+`--repo` and `--sha` select an existing worktree/reviewed HEAD without changing it.
+Build records source/SDK/configuration/image fingerprints; `--write` reuses only
+matching artifacts and validates the CoreS3 partition layout to protect NVS.
+SD backup is waived by the user's instruction. A verified private 16MiB flash
+backup and separate yes/no write approval are retained. The board must already
+be in manual download mode: no automatic DTR/RTS reset is attempted by esptool.
+After writing, bounded passive startup capture is armed and the user presses RST.
+Only allowlisted startup/reset lines are saved; startup detail text is omitted
+because it can contain private values. Capture completion is not boot acceptance.
+The hub is restored only if it was active before the operation. Failures and
+signals stop further work and print the failing STEP, command and log path.
+SIGKILL or host power loss cannot run service cleanup; recover a previously active
+hub manually with `systemctl --user start stackchan-hub.service`.
 
 Successful flashing or a JPEG filename is not hardware acceptance. Confirm boot
 identity, debug/status, official Face/touch, new decodable JPEG, SD close, image
