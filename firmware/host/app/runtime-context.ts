@@ -1,3 +1,4 @@
+import { createContextInitializer, type ContextInitializer } from 'context-startup'
 import type { BorrowedAudioBuffer, OwnedAudioBuffer } from 'audio-buffer'
 import type {
   AudioCapability,
@@ -35,6 +36,7 @@ type RuntimeContextConstructorParam = RuntimeAudioConstructorParam &
   RuntimeInputConstructorParam &
   RuntimeLightingConstructorParam &
   MotionControllerConstructorParam & {
+    initialize?: ContextInitializer
     connectivity?: ConnectivityCapability
     remoteConversationSession?: RemoteConversationSession
     closeHandlers?: ReadonlyArray<() => void | Promise<void>>
@@ -68,24 +70,25 @@ export class StackchanRuntimeContext implements StackchanContext {
   #ownedResources: OwnedResources
 
   constructor(params: RuntimeContextConstructorParam) {
+    const initialize = params.initialize ?? createContextInitializer()
     this.#ownedResources = new OwnedResources(params.closeHandlers)
     this.#paused = false
-    this.#motionController = new MotionController(params, {
+    this.#motionController = initialize('runtime-motion', () => new MotionController(params, {
       isPaused: () => this.#paused,
-    })
-    this.#uiRuntime = new StackchanRuntimeUI(params.ui, {
+    }))
+    this.#uiRuntime = initialize('runtime-ui', () => new StackchanRuntimeUI(params.ui, {
       getContext: () => this,
       getPose: () => this.#motionController.pose,
       getGazePoint: () => this.#motionController.gazePoint,
       isPaused: () => this.#paused,
-    })
-    this.#audioRuntime = new StackchanRuntimeAudio(params, {
+    }))
+    this.#audioRuntime = initialize('runtime-audio', () => new StackchanRuntimeAudio(params, {
       onMouthOpenChanged: (value) => this.setMouthOpen(value),
-    })
-    this.#inputRuntime = new StackchanRuntimeInput(params)
-    this.#cameraRuntime = new StackchanRuntimeCamera(params)
-    this.#lightingRuntime = new StackchanRuntimeLighting(params)
-    this.#updateFaceHandler = Timer.repeat(this.#updateFace, INTERVAL_FACE)
+    }))
+    this.#inputRuntime = initialize('runtime-input', () => new StackchanRuntimeInput(params))
+    this.#cameraRuntime = initialize('runtime-camera', () => new StackchanRuntimeCamera(params))
+    this.#lightingRuntime = initialize('runtime-lighting', () => new StackchanRuntimeLighting(params))
+    this.#updateFaceHandler = initialize('runtime-timer', () => Timer.repeat(this.#updateFace, INTERVAL_FACE))
     void this.#updateFaceHandler
     this.#faceCapability = this.createFaceCapability()
     this.#motionCapability = this.createMotionCapability()

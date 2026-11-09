@@ -18,6 +18,7 @@
     "sourceMap": true,
     "target": "es2024",
     "paths": {
+      "context-startup": ["./host/app/context-startup"],
       "media-player": [
         "./host/modules/audio/platforms/m5stackchan-cores3/media-player.ts"
       ],

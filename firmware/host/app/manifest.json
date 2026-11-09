@@ -35,6 +35,7 @@
       "./boot-network-recovery",
       "./boot-services",
       "./compose",
+      "./context-startup",
       "./capabilities",
       "./dock",
       "./experimental-mini-app-loader",

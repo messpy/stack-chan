@@ -86,3 +86,10 @@ bash ~/stackchan.sh --recover-usb --usb-path 1-1 --yes
 内部ポート、すでに無効なポート、認識済みの別機器は拒否します。権限がなければサービス停止やポート変更の前に停止します。再有効化はfinallyで実行し、既知VID/PID・serial・物理経路で本体が20秒以内に再認識された場合だけ復旧成功とします。SIGKILL/電源断では後処理は保証できません。終了時にも未認識ならフラッシュせず、ログを保存して終了します。`--write --reset usb` と組み合わせる場合も復旧確認に失敗すれば書き込みへ進みません。
 
 ツールや説明文だけを更新した場合、旧ビルドSHAと現在SHAのファームウェア入力が同一であることをGitオブジェクトで照合し、既存成果物を再利用できます。統一CLIとCLIテスト、ドキュメントだけを除外し、その他のソース/ビルド入力・SDK・IDF・元private manifest・成果物の変更は引き続き拒否します。ビルド証跡のSHAは改ざんせず保持します。
+
+
+2026-11-09 context復旧版では、sudo子プロセスは同じログインsession内の独立process groupで実行します。
+以前のstart_new_sessionではtty単位のsudo認証を失っていました。no-new-privilegesの隔離環境では
+引き続き停止します。詳しい根拠・実機source SHA・USB切り分けは
+[context/USB調査](recovery/2026-11-09-context-usb.md)を参照してください。
+起動エラー画面には秘密を含まない失敗componentとcheckpoint時のRAMを表示します。

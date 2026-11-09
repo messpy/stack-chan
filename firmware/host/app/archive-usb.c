@@ -1,5 +1,6 @@
 #include "xsmc.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "xsHost.h"
 #include "driver/usb_serial_jtag.h"
 #include "freertos/FreeRTOS.h"
@@ -8,7 +9,15 @@
 #include "archive-vault-crypto.h"
 
 #define ARCHIVE_USB_PACKET_LIMIT 20000
-static char line[ARCHIVE_USB_PACKET_LIMIT + 5];
+// Backport the lazy PSRAM receive buffer from PR #58 (273da02a).
+// Avoid reserving 20,005 internal-RAM bytes before context/Face initialization.
+#define ARCHIVE_USB_LINE_BYTES (ARCHIVE_USB_PACKET_LIMIT + 5)
+static char *line;
+static void ensureUSBReceiveBuffer(xsMachine *the) {
+    if (line) return;
+    line=heap_caps_malloc(ARCHIVE_USB_LINE_BYTES,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    if (!line) xsUnknownError("USB receive PSRAM unavailable");
+}
 static size_t used;
 static int dropping;
 static void ensureUSB(xsMachine *the) {
@@ -19,6 +28,7 @@ static void ensureUSB(xsMachine *the) {
 }
 void xs_archive_usb_read(xsMachine *the) {
     ensureUSB(the);
+    ensureUSBReceiveBuffer(the);
     unsigned char c;
     while (usb_serial_jtag_read_bytes(&c,1,0)==1) {
         if (c=='\n') {
@@ -26,7 +36,7 @@ void xs_archive_usb_read(xsMachine *the) {
             line[used]=0;used=0;
             if (strncmp(line,"@SC ",4)==0) {xsmcSetString(xsResult,line+4);return;}
         } else if(c!='\r' && !dropping) {
-            if (used<sizeof(line)-1) line[used++]=c;
+            if (used<ARCHIVE_USB_LINE_BYTES-1) line[used++]=c;
             else {dropping=1;used=0;}
         }
     }
@@ -156,7 +166,6 @@ void xs_archive_usb_connected(xsMachine *the) {
     xsmcSetBoolean(xsResult, usb_serial_jtag_is_connected());
 }
 
-#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include <stdarg.h>
 #include <stdio.h>
@@ -266,24 +275,30 @@ void xs_archive_collect_memory(xsMachine *the) { xsCollectGarbage(); }
 
 // Scalar-only RTC startup evidence. Never stores messages, credentials or pointers.
 #include "esp_attr.h"
-#define SC_BOOT_MAGIC 0x53434231u
-typedef struct { uint32_t magic, sequence, stage, error; } ScBootRecord;
+#define SC_BOOT_MAGIC 0x53434232u
+typedef struct { uint32_t magic, sequence, stage, error, component, internalFree, internalLargest, psramFree; } ScBootRecord;
 static RTC_NOINIT_ATTR ScBootRecord sc_boot_rtc;
 static ScBootRecord sc_boot_previous;
 static int sc_boot_initialized;
 static void sc_boot_init(void) {
     if(sc_boot_initialized)return;
     sc_boot_initialized=1;
-    if(sc_boot_rtc.magic==SC_BOOT_MAGIC && sc_boot_rtc.stage<=6 && sc_boot_rtc.error<=7)
+    if(sc_boot_rtc.magic==SC_BOOT_MAGIC && sc_boot_rtc.stage<=6 && sc_boot_rtc.error<=7 && sc_boot_rtc.component<32)
         sc_boot_previous=sc_boot_rtc;
     else memset(&sc_boot_previous,0,sizeof(sc_boot_previous));
-    sc_boot_rtc=(ScBootRecord){SC_BOOT_MAGIC,sc_boot_previous.sequence+1,0,0};
+    sc_boot_rtc=(ScBootRecord){.magic=SC_BOOT_MAGIC,.sequence=sc_boot_previous.sequence+1};
 }
 void xs_archive_startup_checkpoint(xsMachine *the) {
     sc_boot_init();
     int stage=xsmcToInteger(xsArg(0)),error=xsmcToInteger(xsArg(1));
-    if(stage<0||stage>6||error<0||error>7)xsRangeError("Invalid startup checkpoint");
-    sc_boot_rtc.stage=(uint32_t)stage;sc_boot_rtc.error=(uint32_t)error;
+    int component=xsmcArgc>2?xsmcToInteger(xsArg(2)):0;
+    if(stage<0||stage>6||error<0||error>7||component<0||component>=32)xsRangeError("Invalid startup checkpoint");
+    sc_boot_rtc.magic=0; // A reset mid-checkpoint invalidates the partial record.
+    sc_boot_rtc.stage=(uint32_t)stage;sc_boot_rtc.error=(uint32_t)error;sc_boot_rtc.component=(uint32_t)component;
+    sc_boot_rtc.internalFree=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+    sc_boot_rtc.internalLargest=heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+    sc_boot_rtc.psramFree=heap_caps_get_free_size(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    sc_boot_rtc.magic=SC_BOOT_MAGIC;
 }
 void xs_archive_startup_status(xsMachine *the) {
     sc_boot_init();xsmcVars(1);xsmcSetNewObject(xsResult);
@@ -295,6 +310,11 @@ void xs_archive_startup_status(xsMachine *the) {
     SC_BOOT_FIELD("previousSequence",sc_boot_previous.sequence);
     SC_BOOT_FIELD("previousStage",sc_boot_previous.stage);
     SC_BOOT_FIELD("previousError",sc_boot_previous.error);
+    SC_BOOT_FIELD("componentCode",sc_boot_rtc.component);
+    SC_BOOT_FIELD("previousComponent",sc_boot_previous.component);
+    SC_BOOT_FIELD("previousInternalFree",sc_boot_previous.internalFree);
+    SC_BOOT_FIELD("previousInternalLargest",sc_boot_previous.internalLargest);
+    SC_BOOT_FIELD("previousPsramFree",sc_boot_previous.psramFree);
     SC_BOOT_FIELD("resetReason",esp_reset_reason());
 #undef SC_BOOT_FIELD
 }

@@ -1,3 +1,4 @@
+import { createContextInitializer, type StartupComponent, type StartupComponentState, type StartupScreenDiagnostics } from 'context-startup'
 import loadPreferences, { loadModConfig, loadPreferenceConfig } from 'loadPreference'
 import System from 'embedded:system'
 import { runContextCreatedBehaviors, type StackchanAppBehavior } from 'app-behavior'
@@ -92,13 +93,20 @@ function waitForBootWiFiRecoveryChoice(status: BootWiFiStatus & { reason: string
 }
 
 async function main() {
-  let startupCheckpoint: ((phase: string, error?: unknown) => void) | undefined
-  const markStartup = (phase: string, error?: unknown) => { try { startupCheckpoint?.(phase, error) } catch {} }
+  let startupCheckpoint: ((phase: string, error?: unknown, component?: StartupComponent, state?: StartupComponentState) => void) | undefined
+  let startupSnapshot: (() => StartupScreenDiagnostics | undefined) | undefined
+  let contextComponent: StartupComponent = 'none'
+  const markStartup = (phase: string, error?: unknown, component: StartupComponent = 'none', state: StartupComponentState = 'begin') => { try { startupCheckpoint?.(phase, error, component, state) } catch {} }
+  const initialize = createContextInitializer(event => {
+    contextComponent = event.component
+    markStartup('context', event.error, event.component, event.state)
+  })
   try {
     if (Modules.has('archive-debug')) {
-      const diagnostics = Modules.importNow('archive-debug') as { installDebugLog: () => void; recordStartupCheckpoint?: (phase: string, error?: unknown) => void }
+      const diagnostics = Modules.importNow('archive-debug') as { installDebugLog: () => void; recordStartupCheckpoint?: typeof startupCheckpoint; startupDiagnosticSnapshot?: typeof startupSnapshot }
       diagnostics.installDebugLog()
       startupCheckpoint = diagnostics.recordStartupCheckpoint
+      startupSnapshot = diagnostics.startupDiagnosticSnapshot
       markStartup('initialization')
     }
   } catch { trace('[debug] log initialization unavailable\n') }
@@ -145,9 +153,10 @@ async function main() {
     trace(`[main] network ready: ${networkReady.status}\n`)
     phase = 'context'
     markStartup(phase)
-    const preferences = loadPreferenceConfig()
+    const preferences = initialize('preferences', loadPreferenceConfig)
     const ownedDock = dockRuntime
     context = createStackchanContext(preferences, {
+      initialize,
       connectivity: bootServices.connectivity,
       remoteConversationSession: ownedDock?.remoteConversationSession,
       closeHandlers: ownedDock ? [() => ownedDock.close()] : undefined,
@@ -167,7 +176,9 @@ async function main() {
     installModManagerShortcut()
   } catch (error) {
     // Save failure before cleanup, which can itself fail or block.
-    markStartup(phase, error)
+    markStartup(phase, error, phase === 'context' ? contextComponent : 'none', 'failed')
+    let diagnostic: StartupScreenDiagnostics | undefined
+    try { diagnostic = startupSnapshot?.() } catch {}
     // A newer/disposed view during async cleanup owns its screen. Do not
     // replace it with an older startup attempt's failure.
     const failedApplication = globalEnv.application
@@ -187,7 +198,7 @@ async function main() {
         (failedApplication.behavior === failedBehavior && failedApplication.first === failedContent))
     ) {
       try {
-        showStartupError({ phase, error, onRestart: () => System.restart?.() })
+        showStartupError({ phase, error, diagnostic, onRestart: () => System.restart?.() })
         installModManagerShortcut()
       } catch (displayError) {
         trace(`[main] startup error display failed ${startupErrorClass(displayError)}\n`)

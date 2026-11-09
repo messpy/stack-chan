@@ -263,6 +263,28 @@ class CLITest(unittest.TestCase):
         self.r.receipt.write_text(json.dumps(dict(sha='a'*40,sdk='old SDK',idf='idf',private='config')))
         with self.assertRaisesRegex(RuntimeError,'source/SDK'):self.r.verify_receipt()
 
+    def test_sudo_keeps_login_session_but_has_own_killable_process_group(self):
+        import os
+        executable=self.root/'sudo'
+        executable.write_text('#!/usr/bin/python3\nimport os,json\nprint(json.dumps(dict(sid=os.getsid(0),pgid=os.getpgrp())))\n')
+        executable.chmod(0o700)
+        log=self.r.cmd('sudo-session',[executable])
+        result=json.loads(log.read_text())
+        self.assertEqual(result['sid'],os.getsid(0))
+        self.assertNotEqual(result['pgid'],os.getpgrp())
+        # The former implementation creates a different login session and loses tty-scoped sudo cache.
+        previous=m.subprocess.check_output([str(executable)],start_new_session=True,text=True)
+        self.assertNotEqual(json.loads(previous)['sid'],os.getsid(0))
+
+    def test_startup_component_packet_preserves_frozen_failure_memory(self):
+        packet=dict(event='startup',phase='context',error='Error',reason='memory',site='',component='imu',componentState='failed',
+                    sequence=2,stage=3,previousValid=1,previousSequence=1,previousStage=2,previousError=0,resetReason=1,
+                    internalFree=100,internalLargest=80,psramFree=200,componentCode=9,previousComponent=4)
+        line=m.safe_line('@SC '+json.dumps(packet))
+        self.assertIn('component=imu state=failed',line);self.assertIn('previousComponent=4',line)
+        packet['component']='private-token'
+        self.assertIsNone(m.safe_line('@SC '+json.dumps(packet)))
+
     def layout(self):
         self.r.bin.mkdir(parents=True)
         p=self.r.fw/'dist/tmp/esp32/m5stackchan_cores3/release/stack-chan-host/xsProj-esp32s3/build/flasher_args.json'

@@ -1,6 +1,9 @@
+import {stripTypeScriptTypes} from 'node:module';
 import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
 let initialized=0,connected=false,tick,accept=false,pops=0;const queue=[],packets=[];
-const c=vm.createContext({initDebugLog:()=>initialized++,pushDebugLog:text=>queue.push(text),popDebugLog:()=>{pops++;return queue.shift();},debugLogStatus:()=>({queued:queue.length,dropped:0}),usbConnected:()=>connected,writeDebugUSB:text=>{if(!accept)return false;packets.push(JSON.parse(text));return true;},Timer:{repeat:fn=>tick=fn},trace(){}});
+const componentSource=stripTypeScriptTypes(fs.readFileSync(new URL('../../host/app/context-startup.ts',import.meta.url),'utf8'),{mode:'strip'}).replace(/export /g,'');
+const componentContext=vm.createContext({});vm.runInContext(componentSource,componentContext);const components=vm.runInContext('STARTUP_COMPONENTS',componentContext);
+const c=vm.createContext({STARTUP_COMPONENTS:components,initDebugLog:()=>initialized++,pushDebugLog:text=>queue.push(text),popDebugLog:()=>{pops++;return queue.shift();},debugLogStatus:()=>({queued:queue.length,dropped:0}),usbConnected:()=>connected,writeDebugUSB:text=>{if(!accept)return false;packets.push(JSON.parse(text));return true;},Timer:{repeat:fn=>tick=fn},trace(){}});
 vm.runInContext(fs.readFileSync(new URL('../../host/app/archive-debug.js',import.meta.url),'utf8').replace(/^import .*;$/gm,'').replace(/export \{.*\};/g,'').replace(/export /g,''),c);
 vm.runInContext('installDebugLog();installDebugLog();startDebugDrain()',c);assert.equal(initialized,1);tick();assert.equal(pops,0);
 connected=true;tick();assert.equal(pops,0);vm.runInContext('armDebugDrain()',c);tick();const failedPops=pops;assert.equal(packets.length,0);accept=true;tick();assert.ok(packets.some(p=>p.lines[0].includes('release logging enabled')));assert.ok(pops>=failedPops);
@@ -8,9 +11,9 @@ packets.length=0;const text='あ'.repeat(399)+'🙂'+'続き'.repeat(500)+'\n';c
 console.log('PASS: release trace installation, disconnected buffering, nonblocking retry and Unicode-safe bounded transport');
 
 // Startup evidence is independent from RPC arming and does not leak message/stack bodies.
-let online=false,nativeFails=false,wireFails=false;const checkpoints=[],startupPackets=[],ticks=[];
-const sc=vm.createContext({trace(){},initDebugLog(){},pushDebugLog(){},popDebugLog(){},debugLogStatus:()=>({}),
- usbConnected:()=>online,heapStatus:()=>({internalFree:100,internalLargest:80,psramFree:200}),
+let online=false,nativeFails=false,wireFails=false,freeMemory=100;const checkpoints=[],startupPackets=[],ticks=[];
+const sc=vm.createContext({STARTUP_COMPONENTS:components,trace(){},initDebugLog(){},pushDebugLog(){},popDebugLog(){},debugLogStatus:()=>({}),
+ usbConnected:()=>online,heapStatus:()=>({internalFree:freeMemory,internalLargest:80,psramFree:200}),
  startupCheckpoint:(...args)=>{if(nativeFails)throw Error('native failure');checkpoints.push(args)},
  startupCheckpointStatus:()=>({sequence:2,stage:3,errorCode:2,previousValid:1,previousSequence:1,previousStage:2,previousError:0,resetReason:1}),
  writeDebugUSB:text=>{if(wireFails)throw Error('USB unavailable');startupPackets.push(JSON.parse(text));return true},
@@ -28,3 +31,14 @@ vm.runInContext("recordStartupCheckpoint('ready')",sc);assert.equal(startupPacke
 wireFails=true;vm.runInContext("recordStartupCheckpoint('behavior',failure)",sc);assert.equal(checkpoints.at(-1)[0],4);
 nativeFails=true;assert.doesNotThrow(()=>vm.runInContext("recordStartupCheckpoint('context',failure)",sc));
 console.log('PASS: early unarmed startup evidence, disconnected checkpoint, bounded retry, error classification, private-data exclusion and diagnostic exception isolation');
+
+wireFails=false;nativeFails=false;
+vm.runInContext("recordStartupCheckpoint('context',failure,'imu','failed')",sc);
+assert.equal(startupPackets.at(-1).component,'imu');assert.equal(startupPackets.at(-1).componentState,'failed');
+assert.equal(checkpoints.at(-1)[2],components.indexOf('imu'));
+const snapshot=vm.runInContext('startupDiagnosticSnapshot()',sc);snapshot.component='secret-modification';
+assert.equal(vm.runInContext('startupDiagnosticSnapshot().component',sc),'imu');
+vm.runInContext("recordStartupCheckpoint('context',undefined,'driver','failed')",sc);
+assert.equal(startupPackets.at(-1).error,'unknown');
+
+freeMemory=1;ticks[0]();assert.equal(startupPackets.at(-1).internalFree,100,'transmission must retain memory at failure, not after cleanup');
