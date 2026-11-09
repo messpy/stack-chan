@@ -137,7 +137,7 @@ class CLITest(unittest.TestCase):
         path = os.ttyname(slave)
         original = builtins.open
         def opened(name, mode='r', *args, **kwargs):
-            return original(path if name == '/dev/tty' else name, mode, *args, **kwargs)
+            return original(os.dup(slave) if name == '/dev/tty' else name, mode, *args, **kwargs)
         os.write(master, answer)
         with patch('builtins.open', opened): self.r.confirm('test confirmation')
 
