@@ -32,7 +32,7 @@ bash ~/stackchan.sh --PR 90 --write --yes
 - STEP開始・成功・失敗・コマンド・ログ保存先を表示します。エラー時は次のSTEPへ進まず、ログ末尾を表示。Ctrl+C/HUP/TERM時も子プロセスを止め、元のhub状態を復旧します。SIGKILL・ホスト電源断後は自動復旧できません。
 - 書き込みはbootloader・partition table・appに限定。NVSとの重なりを検査し、フラッシュ全消去・SD初期化はしません。SDバックアップはユーザー指定で不要です。フラッシュバックアップの復元は別途承認後に行ってください。
 
-既定worktreeは `/home/kmac/work/stackchan-wifi-offline-review`。Node22、既存ESP-IDF6.1、既存Moddable SDK、元private manifestのパスは登録済みです。
+既定worktreeは `/home/kmac/work/stackchan-context-recovery-20261109`。Node22、既存ESP-IDF6.1、既存Moddable SDK、元private manifestのパスは登録済みです。
 
 ```bash
 # 他の既存worktreeを検証する場合（checkoutやfetchはしない）

@@ -73,3 +73,27 @@ bash ~/stackchan.sh --recover-usb --usb-path 1-1 --check --yes
 ポートの再有効化をfinallyで保証し、認識済み別機器・内部portは拒否する。
 全コントローラのreset/unbind、他のUSB機器の操作、NVS初期化、フラッシュ全消去はしない。
 復旧成功とファームウェア書き込み成功とFace表示成功は別々に記録する。
+
+## 検証結果（今回）
+
+- 新規コンポーネント故障注入/正常構築/画面の機密除去: 16 PASS / 0 FAIL。
+- CLI（sudoセッション保持/プロセスグループ分離を含む）: 42 PASS / 0 FAIL。
+- TypeScript test project noEmit: PASS。archive-debug既存/拡張smoke: PASS。
+- 全Unit: この環境の集計105中101 PASS / 4 FAIL / 0 SKIP。
+  失敗ファイルはfirmware-command/module-test-completion/module-test-runner/xsdb-session。
+  この環境ではローカルTCP待受/一部子プロセス起動がEPERMで拒否される。
+  更新後の全件PASSを主張しない。
+- Archive: 集計43中42 PASS / 1 FAIL / 0 SKIP。失敗は既存screen-copyのspawnSync cc EPERM。
+  ファイル単位smokeを含む集計で、新規16ケースとの単純加算はしない。
+- CoreS3 Archive公式build: PASS。最初の試行はcomponent registryへ接続できず設定段階で失敗。
+  旧成功buildとidf_component.ymlの一致を照合し、同一lock/managed_componentsソースをコピー・
+  SHA256照合して再実行。旧成功のfirmware imageやSDK設定を上書きしていない。
+  成功ログ: /home/kmac/work/stackchan-runs/run-20261109-170630-5rypfp8g/build.log
+- 新build mapの .bss.line は4バイト。旧20,005バイトから20,001バイトの内部BSS削減を確認。
+  実機の起動時heap/最大連続/PSRAM/stack不足の有無は未測定。
+- 今回はUSB未認識のためバックアップ/書き込みを開始していない。新build未書込み。
+  根本原因・公式Face表示・Wi-Fi復帰・撮影成功の実機受入は未完了。
+
+生成物は作業先firmware/dist/bin/esp32/m5stackchan_cores3/release/stack-chan-host/以下。
+ソース/SDK/設定/生成物の照合結果は同作業先firmware/dist/stackchan-build-receipt.json。
+GitHubへのpushはコード共有であり、merge/本体書き込み/起動成功とは異なる。
