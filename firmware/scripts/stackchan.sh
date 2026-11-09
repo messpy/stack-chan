@@ -102,9 +102,12 @@ class Runner:
 
     def confirm(self, message):
         # stdin is the embedded Python program; use the controlling terminal for consent.
-        with open('/dev/tty', 'r+') as tty:
-            tty.write('[CHECK] ' + message + ' [yes/no] '); tty.flush()
-            if tty.readline().strip() != 'yes': raise RuntimeError('cancelled; no further device operation')
+        self.step = 'approval'
+        # Text r+ creates a BufferedRandom stream, which requires seek() and fails on a TTY.
+        # Independent read/write handles work on non-seekable terminals.
+        with open('/dev/tty', 'r') as reader, open('/dev/tty', 'w') as writer:
+            writer.write('[CHECK] ' + message + ' [yes/no] '); writer.flush()
+            if reader.readline().strip() != 'yes': raise RuntimeError('cancelled; no further device operation')
 
     def pr_metadata(self):
         path = self.cmd('pr-metadata', ['gh', 'api', 'repos/messpy/stack-chan/pulls/' + str(self.a.pr),

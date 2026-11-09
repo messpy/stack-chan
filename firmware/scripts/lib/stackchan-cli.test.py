@@ -130,6 +130,27 @@ class CLITest(unittest.TestCase):
         (self.r.run/'boot-stages.log').write_text('[main] app behaviors ready\n')
         self.r.validate_boot()
 
+    def terminal_confirmation(self, answer):
+        import builtins, os, pty
+        master, slave = pty.openpty()
+        self.addCleanup(os.close, master); self.addCleanup(os.close, slave)
+        path = os.ttyname(slave)
+        original = builtins.open
+        def opened(name, mode='r', *args, **kwargs):
+            return original(path if name == '/dev/tty' else name, mode, *args, **kwargs)
+        os.write(master, answer)
+        with patch('builtins.open', opened): self.r.confirm('test confirmation')
+
+    def test_yes_confirmation_on_real_nonseekable_terminal(self):
+        self.terminal_confirmation(b'yes\n')
+        self.assertEqual(self.r.step,'approval')
+
+    def test_no_confirmation_stops(self):
+        with self.assertRaisesRegex(RuntimeError,'cancelled'): self.terminal_confirmation(b'no\n')
+
+    def test_terminal_eof_stops(self):
+        with self.assertRaisesRegex(RuntimeError,'cancelled'): self.terminal_confirmation(b'\x04')
+
     def layout(self):
         self.r.bin.mkdir(parents=True)
         p=self.r.fw/'dist/tmp/esp32/m5stackchan_cores3/release/stack-chan-host/xsProj-esp32s3/build/flasher_args.json'
