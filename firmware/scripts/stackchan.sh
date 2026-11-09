@@ -150,6 +150,36 @@ class Runner:
         self.log('CHECK', 'PR=' + str(self.a.pr) + ' BASE=' + info['baseSHA'] + ' PR_HEAD=' + info['headSHA'] + ' WORKTREE=' + str(target))
         self.log('INFO', 'Local integration only. GitHub PR merge/push is never performed.')
 
+    def recovery_port(self):
+        address = getattr(self.a, 'usb_path', None)
+        if not address or not re.fullmatch(r'[1-9][0-9]*-[1-9][0-9]*',address):
+            raise RuntimeError('--recover-usb requires an explicit root-hub --usb-path, e.g. 1-1')
+        bus, port = address.split('-')
+        root = pathlib.Path('/sys/bus/usb/devices')
+        target = root / ('usb'+bus) / (bus+'-0:1.0') / ('usb'+bus+'-port'+port)
+        if (target/'connect_type').read_text().strip() != 'hotplug':
+            raise RuntimeError('refusing recovery of an internal/unknown USB port')
+        if (target/'disable').read_text().strip() != '0':
+            raise RuntimeError('port already disabled; preserve its state and inspect manually')
+        device = root/address
+        if device.exists():
+            identity = ((device/'idVendor').read_text().strip(),(device/'idProduct').read_text().strip(),(device/'serial').read_text().strip())
+            if identity != ('303a','1001',SERIAL): raise RuntimeError('USB port belongs to another device; recovery refused')
+        return bus, port
+
+    def recover_usb(self):
+        bus, port = self.recovery_port()
+        self.confirm('指定した外部USBポート '+bus+'-'+port+' だけを一時無効化し、再認識を1回試しますか？')
+        self.cmd('recovery-privilege', ['sudo','-n','true'])
+        with self.own_usb():
+            self.cmd('usb-port-recovery', ['sudo','-n','/usr/bin/python3','-c',USB_RECOVERY_SOURCE,bus,port,SERIAL],timeout=20)
+            self.cmd('usb-recovery-wait', [DEVICE_PYTHON,'-c',
+                'import time,sys,json\nfrom serial.tools import list_ports\nend=time.monotonic()+20\n'
+                'while time.monotonic()<end:\n ps=[p for p in list_ports.comports() if (p.vid,p.pid,p.serial_number)==(0x303a,0x1001,sys.argv[1]) and p.location and p.location.split(":")[0]==sys.argv[2]]\n'
+                ' if len(ps)==1: print(json.dumps(dict(port=ps[0].device,location=ps[0].location)));sys.exit(0)\n time.sleep(.5)\n'
+                'raise SystemExit("Known StackChan did not re-enumerate; no flash attempted")',SERIAL,bus+'-'+port],timeout=25)
+        self.log('INFO','USB recovery verified for known device. No firmware has been written by recovery.')
+
     def check(self):
         if not (self.repo / 'AGENTS.md').is_file() or not self.fw.is_dir(): raise RuntimeError('repository missing: ' + str(self.repo))
         self.head = self.query(['git', 'rev-parse', 'HEAD'])
@@ -253,12 +283,27 @@ class Runner:
             start = int(offset, 0); end = (start + (self.bin / name).stat().st_size + 4095) & ~4095
             if start < 0xf000 and end > 0x9000: raise RuntimeError('image would overlap NVS')
 
+    def firmware_identity(self, ref):
+        if not re.fullmatch('[0-9a-f]{40}',ref): raise RuntimeError('invalid receipt source SHA')
+        data=subprocess.check_output(['git','ls-tree','-rz',ref,'--','firmware'],cwd=self.repo)
+        # CLI/docs do not enter the firmware image. Keep all other source/build inputs.
+        entries=[e for e in data.split(b'\0') if e and e.split(b'\t',1)[1] not in
+                 (b'firmware/scripts/stackchan.sh',b'firmware/scripts/lib/stackchan-cli.test.py') and
+                 not e.split(b'\t',1)[1].startswith(b'firmware/docs/')]
+        return hashlib.sha256(b'\0'.join(entries)).hexdigest()
+
     def verify_receipt(self):
         if self.query(['git', 'rev-parse', 'HEAD']) != self.head or self.query(['git', 'status', '--porcelain', '--untracked-files=no']):
             raise RuntimeError('source changed during operation; refusing write')
         if not self.receipt.exists(): raise RuntimeError('build receipt missing; run --build first (existing old binaries are not silently reused)')
         r = json.loads(self.receipt.read_text())
-        if any(r.get(k) != v for k, v in self.fingerprint().items()): raise RuntimeError('source/SDK/private configuration changed; run --build')
+        current=self.fingerprint()
+        for k,v in current.items():
+            if r.get(k)==v: continue
+            if k=='sha' and self.firmware_identity(r.get(k,''))==self.firmware_identity(v):
+                self.log('INFO','Firmware inputs unchanged; reusing build SHA='+r[k]+' with tool SHA='+v)
+                continue
+            raise RuntimeError('source/SDK/private configuration changed; run --build')
         self.validate_layout()
         if r['artifacts'] != {v: sha(self.bin / v) for v in FILES.values()}: raise RuntimeError('artifact hash mismatch; run --build')
 
@@ -399,6 +444,9 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
         lock_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.lock = (lock_root / (hashlib.sha256(('PR:' + str(self.a.pr) if getattr(self.a, 'pr', None) else str(self.repo)).encode()).hexdigest() + '.lock')).open('a')
         fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if getattr(self.a, 'recover_usb', False):
+            self.recover_usb()
+            if not any((self.a.check,self.a.test,self.a.build,self.a.write,self.a.logs)): return
         if getattr(self.a, 'pr', None): self.prepare_pr()
         self.check()
         if self.a.test or self.a.build or self.a.write:
@@ -416,9 +464,13 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
             else: dst.write_bytes(self.manifest_before); dst.chmod(0o600)
         self.restore_hub()
 
+USB_RECOVERY_SOURCE = "import pathlib,sys,time,signal\nbus,port,serial=sys.argv[1:]\nif not bus.isdecimal() or not port.isdecimal(): raise SystemExit('Invalid USB path')\nroot=pathlib.Path('/sys/bus/usb/devices');target=root/('usb'+bus)/(bus+'-0:1.0')/('usb'+bus+'-port'+port)\nif (target/'connect_type').read_text().strip()!='hotplug' or (target/'disable').read_text().strip()!='0': raise SystemExit('Unsafe USB port state')\ndevice=root/(bus+'-'+port)\nif device.exists():\n if ((device/'idVendor').read_text().strip(),(device/'idProduct').read_text().strip(),(device/'serial').read_text().strip())!=('303a','1001',serial): raise SystemExit('Another USB device occupies this port')\nfor sig in (signal.SIGINT,signal.SIGTERM,signal.SIGHUP): signal.signal(sig,lambda signum,frame:sys.exit(128+signum))\ntry:\n (target/'disable').write_text('1\\n');time.sleep(2)\nfinally:\n (target/'disable').write_text('0\\n')\nprint('Selected external port re-enabled')\n"
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog='stackchan.sh', description='StackChan統一操作。指定した処理だけ実行。無指定は--check。書き込みはyes/no確認。')
     for mode in ('check', 'test', 'build', 'write', 'logs', 'all'): p.add_argument('--'+mode, action='store_true')
+    p.add_argument('--recover-usb', action='store_true', help='明示した外部USBポートだけを再初期化。root権限が必要。全controllerはリセットしない')
+    p.add_argument('--usb-path', help='復旧対象のroot-hub接続経路（例1-1）。内部USBや別機器は拒否')
     p.add_argument('--reset', choices=('manual','usb'), default='manual', help='ROM接続方法。usbは最初の接続確認だけUSB用リセットを実行。失敗時は停止し再送しない')
     p.add_argument('--yes', action='store_true', help='この実行のバックアップ・書き込み・hub一時停止・ログ取得を事前承認。確認入力を省略')
     p.add_argument('--PR', '--pr', dest='pr', type=int, help='PR番号。最新baseとHEADを専用worktreeでローカル統合。GitHubマージはしない')
@@ -428,11 +480,13 @@ def main(argv=None):
     p.add_argument('--seconds', type=int, default=90, help='起動ログ取得秒数（1〜300）')
     p.add_argument('--log-root', default=str(HOME / 'work/stackchan-runs'))
     a = p.parse_args(argv)
+    if a.recover_usb and not a.usb_path: p.error('--recover-usb requires --usb-path')
+    if a.usb_path and not a.recover_usb: p.error('--usb-path requires --recover-usb')
     if a.pr is not None and a.pr <= 0: p.error('--PR must be positive')
     if not 1 <= a.seconds <= 300: p.error('--seconds must be 1..300')
     if a.sha and not re.fullmatch('[0-9a-f]{40}', a.sha): p.error('--sha must be a full lowercase Git SHA')
     if a.all: a.check = a.test = a.build = a.write = True
-    if not any((a.check,a.test,a.build,a.write,a.logs)): a.check=True
+    if not any((a.check,a.test,a.build,a.write,a.logs,a.recover_usb)): a.check=True
     os.umask(0o077)
     runner = Runner(a)
     for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):

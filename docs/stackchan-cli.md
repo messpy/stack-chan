@@ -71,3 +71,18 @@ release版のtraceはリングバッファへ送られます。従来はArchive�
 RTCには文字列を含めず起動シーケンス・現在/前回phase・例外分類を保存します。電源断での保持は保証しません。前回RTC値を今回の障害と混同しないようsequenceとpreviousValidを併記します。phase番号は0初期化、1launch、2network、3context、4behavior、5ready、6unknown。reasonはエラー本文のキーワード分類候補であり根本原因の確定ではありません。
 
 JS VMが同期処理で停止すると周期送信も止まります。最後に保存できたRTC checkpointを次の起動で調べます。main呼出し前のmodule import失敗はこの診断の対象外です。診断例外は起動処理へ伝播させません。
+
+### ホストがUSBを列挙できない場合のポート限定復旧
+
+`lsusb`にも本体が出ない場合、esptoolやシリアル名の変更では直りません。既存の失敗履歴と物理接続を確認したうえで、対象の外部ポートだけを1回無効化→再有効化する診断を選べます。ホストのroot権限が必要です。全USBコントローラのunbindや、キーボード/Bluetoothのリセットは行いません。ポートごとのdisable仕様はLinux ABI文書に準拠します（https://github.com/torvalds/linux/blob/master/Documentation/ABI/testing/sysfs-bus-usb）。対応しないハブではVBUS電源断まで行われるとは限らず、復旧を保証するものではありません。
+
+```bash
+# kmacの通常端末でsudo認証を準備（rootパスワードをスクリプトへ渡さない）
+sudo -v
+# 1-1が本体を接続した外部ポートである場合だけ指定
+bash ~/stackchan.sh --recover-usb --usb-path 1-1 --yes
+```
+
+内部ポート、すでに無効なポート、認識済みの別機器は拒否します。権限がなければサービス停止やポート変更の前に停止します。再有効化はfinallyで実行し、既知VID/PID・serial・物理経路で本体が20秒以内に再認識された場合だけ復旧成功とします。SIGKILL/電源断では後処理は保証できません。終了時にも未認識ならフラッシュせず、ログを保存して終了します。`--write --reset usb` と組み合わせる場合も復旧確認に失敗すれば書き込みへ進みません。
+
+ツールや説明文だけを更新した場合、旧ビルドSHAと現在SHAのファームウェア入力が同一であることをGitオブジェクトで照合し、既存成果物を再利用できます。統一CLIとCLIテスト、ドキュメントだけを除外し、その他のソース/ビルド入力・SDK・IDF・元private manifest・成果物の変更は引き続き拒否します。ビルド証跡のSHAは改ざんせず保持します。

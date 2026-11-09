@@ -210,6 +210,59 @@ class CLITest(unittest.TestCase):
         packet['phase']='secret-password'
         self.assertIsNone(m.safe_line('@SC '+json.dumps(packet)))
 
+    def fake_usb_root(self, kind='hotplug'):
+        root=self.root/'sysfs';port=root/'usb1/1-0:1.0/usb1-port1';port.mkdir(parents=True)
+        (port/'connect_type').write_text(kind);(port/'disable').write_text('0')
+        original=pathlib.Path
+        def path(value,*args):
+            return root if str(value)=='/sys/bus/usb/devices' else original(value,*args)
+        return root,port,path
+
+    def test_recovery_refuses_internal_port(self):
+        self.args.usb_path='1-1';root,port,path=self.fake_usb_root('hardwired')
+        with patch.object(m.pathlib,'Path',side_effect=path),self.assertRaisesRegex(RuntimeError,'internal'):
+            self.r.recovery_port()
+        self.assertEqual((port/'disable').read_text(),'0')
+
+    def test_recovery_refuses_other_device(self):
+        self.args.usb_path='1-1';root,port,path=self.fake_usb_root()
+        d=root/'1-1';d.mkdir()
+        for k,v in dict(idVendor='05ac',idProduct='0291',serial='keyboard').items():(d/k).write_text(v)
+        with patch.object(m.pathlib,'Path',side_effect=path),self.assertRaisesRegex(RuntimeError,'another device'):
+            self.r.recovery_port()
+
+    def test_recovery_stops_before_service_change_if_privilege_denied(self):
+        calls=[];self.r.recovery_port=lambda:('1','1');self.r.confirm=lambda _:None
+        def command(name,*args,**kwargs):calls.append(name);raise RuntimeError('sudo denied')
+        self.r.cmd=command
+        with self.assertRaisesRegex(RuntimeError,'sudo denied'):self.r.recover_usb()
+        self.assertEqual(calls,['recovery-privilege'])
+
+    def test_recovery_reenables_port_after_interruption(self):
+        import sys,time,signal
+        root,port,path=self.fake_usb_root()
+        with patch.object(m.pathlib,'Path',side_effect=path),patch.object(sys,'argv',['helper','1','1',m.SERIAL]), \
+             patch.object(time,'sleep',side_effect=KeyboardInterrupt),patch.object(signal,'signal'),self.assertRaises(KeyboardInterrupt):
+            exec(m.USB_RECOVERY_SOURCE,{'__name__':'test'})
+        self.assertEqual((port/'disable').read_text().strip(),'0')
+
+    def test_cli_only_commit_reuses_identical_firmware_inputs(self):
+        self.layout();self.r.head='b'*40
+        self.r.query=lambda argv:'' if 'status' in argv else self.r.head
+        self.r.fingerprint=lambda:dict(sha=self.r.head,sdk='sdk',idf='idf',private='config')
+        self.r.firmware_identity=lambda ref:'same firmware'
+        receipt=dict(self.r.fingerprint(),sha='a'*40,artifacts={v:m.sha(self.r.bin/v) for v in m.FILES.values()})
+        self.r.receipt.write_text(json.dumps(receipt));self.r.verify_receipt()
+        self.r.firmware_identity=lambda ref:ref
+        with self.assertRaisesRegex(RuntimeError,'source/SDK'):self.r.verify_receipt()
+
+    def test_cli_only_commit_cannot_bypass_sdk_change(self):
+        self.layout();self.r.head='b'*40;self.r.query=lambda argv:'' if 'status' in argv else self.r.head
+        self.r.fingerprint=lambda:dict(sha=self.r.head,sdk='new SDK',idf='idf',private='config')
+        self.r.firmware_identity=lambda ref:'same firmware'
+        self.r.receipt.write_text(json.dumps(dict(sha='a'*40,sdk='old SDK',idf='idf',private='config')))
+        with self.assertRaisesRegex(RuntimeError,'source/SDK'):self.r.verify_receipt()
+
     def layout(self):
         self.r.bin.mkdir(parents=True)
         p=self.r.fw/'dist/tmp/esp32/m5stackchan_cores3/release/stack-chan-host/xsProj-esp32s3/build/flasher_args.json'
