@@ -151,6 +151,18 @@ class CLITest(unittest.TestCase):
     def test_terminal_eof_stops(self):
         with self.assertRaisesRegex(RuntimeError,'cancelled'): self.terminal_confirmation(b'\x04')
 
+    def test_explicit_yes_does_not_open_terminal(self):
+        self.args.yes=True
+        with patch('builtins.open',side_effect=AssertionError('must not ask')):
+            self.r.confirm('flash approval')
+        self.assertEqual(self.r.step,'approval')
+
+    def test_yes_flag_is_forwarded_to_runner(self):
+        captured=[]
+        with patch.object(m.Runner,'execute',lambda r:captured.append(r.a.yes)),patch.object(m.Runner,'cleanup'),contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(m.main(['--yes','--check','--log-root',str(self.root/'yes-mode')]),0)
+        self.assertEqual(captured,[True])
+
     def layout(self):
         self.r.bin.mkdir(parents=True)
         p=self.r.fw/'dist/tmp/esp32/m5stackchan_cores3/release/stack-chan-host/xsProj-esp32s3/build/flasher_args.json'

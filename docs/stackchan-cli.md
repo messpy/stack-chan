@@ -13,8 +13,13 @@ bash ~/stackchan.sh --logs --seconds 90
 bash ~/stackchan.sh --all
 # PRを最新のstackchan-superへローカル統合して一括実行
 bash ~/stackchan.sh --PR 90 --all
+# 確認入力も引数で事前承認する場合
+bash ~/stackchan.sh --PR 90 --all --yes
+# テスト・ビルド済み成果物から書き込みだけ再開
+bash ~/stackchan.sh --PR 90 --write --yes
 ```
 
+- `--yes` はこのコマンドで選んだバックアップ・書き込み・hub一時停止・ログ取得を事前承認し、端末へのyes/no入力を省略します。指定しなければ確認入力が必要です。USB同一性、元サービス状態の復旧、16MiBバックアップ、成果物照合、失敗時停止は省略しません。GitHubマージ・撮影要求も追加しません。自動DTR/RTSリセットは行わないため、手動ダウンロードモードへの切替と書き込み後の短いRST操作は必要です。
 - `--PR 90`（`--pr`も可）はGitHub CLI `gh` でPRの最新HEAD・baseを確認し、オブジェクトをfetchして専用のdetached worktreeで3-way統合します。元の作業ディレクトリやブランチは変更しません。競合時はテスト・ビルド・書き込みへ進みません。GitHubでPRをマージする操作は含みません。
 - 同じbase/HEADでは同じ統合worktreeを再利用するため、`--PR 90 --build` の後に `--PR 90 --write` で成果物を使えます。HEAD/baseが変わった場合は別worktreeとなり、再ビルドが必要です。書き込み前にもPRの更新有無を照合します。`--sha`を併用した場合はPR HEADを固定します。
 - `--PR`指定時のworktreeは `/home/kmac/work/stackchan-pr番号-integration-baseSHA先頭12桁-headSHA先頭12桁`。取得・ローカル統合自体は実行しますが、GitHubへのpush/mergeは行いません。`gh`認証やネット接続の失敗でも停止してログを残します。

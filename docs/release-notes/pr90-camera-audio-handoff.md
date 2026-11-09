@@ -74,7 +74,9 @@ There is no configuration erase or photo request.
 Build records source/SDK/configuration/image fingerprints; `--write` reuses only
 matching artifacts and validates the CoreS3 partition layout to protect NVS.
 SD backup is waived by the user's instruction. A verified private 16MiB flash
-backup and separate yes/no write approval are retained. The board must already
+backup is retained. Default execution asks for backup/write approval; explicit
+`--yes` preapproves the selected operations and skips terminal questions without
+skipping device identity, artifact, backup or service-state checks. The board must already
 be in manual download mode: no automatic DTR/RTS reset is attempted by esptool.
 After writing, bounded passive startup capture is armed and the user presses RST.
 Only allowlisted startup/reset lines are saved; startup detail text is omitted

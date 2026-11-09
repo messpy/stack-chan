@@ -103,6 +103,9 @@ class Runner:
     def confirm(self, message):
         # stdin is the embedded Python program; use the controlling terminal for consent.
         self.step = 'approval'
+        if getattr(self.a, 'yes', False):
+            self.log('ACTION', 'Approved by explicit --yes: ' + message)
+            return
         # Text r+ creates a BufferedRandom stream, which requires seek() and fails on a TTY.
         # Independent read/write handles work on non-seekable terminals.
         with open('/dev/tty', 'r') as reader, open('/dev/tty', 'w') as writer:
@@ -395,6 +398,7 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
 def main(argv=None):
     p = argparse.ArgumentParser(prog='stackchan.sh', description='StackChan統一操作。指定した処理だけ実行。無指定は--check。書き込みはyes/no確認。')
     for mode in ('check', 'test', 'build', 'write', 'logs', 'all'): p.add_argument('--'+mode, action='store_true')
+    p.add_argument('--yes', action='store_true', help='この実行のバックアップ・書き込み・hub一時停止・ログ取得を事前承認。確認入力を省略')
     p.add_argument('--PR', '--pr', dest='pr', type=int, help='PR番号。最新baseとHEADを専用worktreeでローカル統合。GitHubマージはしない')
     p.add_argument('--repo', default=str(DEFAULT_REPO), help='対象worktree（既定はWi-Fi修正を含むPR90）')
     p.add_argument('--sha', help='要求する40桁HEAD。--PR指定時はPRのHEADを照合')
