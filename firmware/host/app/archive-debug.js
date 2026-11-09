@@ -49,8 +49,12 @@ export function recordStartupCheckpoint(phase,error,component='none',componentSt
     if(failed){
       const message=String(error?.message||'').toLowerCase();
       reason=/memory|alloc|heap/.test(message)?'memory':/sd|file|mount|storage/.test(message)?'storage':/wifi|network|socket|dns/.test(message)?'network':'unclassified';
-      const match=String(error?.stack||'').match(/([A-Za-z0-9_-]+\.(?:js|ts):[0-9]+(?::[0-9]+)?)/);
-      if(match)site=match[1];
+      // XS frames use module IDs (often extensionless): ' at fn (module:line)'.
+      // Never inspect the exception header: it can contain credentials or user input.
+      for(const frame of String(error?.stack||'').split('\n').slice(1)){
+        const match=frame.match(/^\s*at\s+(?:[^()]*\()?((?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_-]+(?:\.(?:js|ts))?(?::[0-9]+(?::[0-9]+)?)?)\)?\s*$/);
+        if(match){site=match[1].split('/').pop();break;}
+      }
     }
     const componentIndex=STARTUP_COMPONENTS.indexOf(component);
     component=componentIndex<0?'none':component;

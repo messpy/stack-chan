@@ -28,3 +28,7 @@ The host collector decodes only allowlisted startup JSON, preserving no exceptio
 message or conversation. Timer retries are bounded and cannot diagnose a stopped
 JS VM live; RTC may survive a software reset but not power loss. Hardware startup
 cause remains unconfirmed until the diagnostic build is exercised.
+
+## Issue #60: behavior初期化の診断
+
+起動時の5処理、既定動作、Archive初期化のコンポーネントをUSB/RTCとエラー画面へ記録します。XSの拡張子なしモジュール形式を解析し、非同期失敗を完了扱いにしません。設定・NVSは変更しません。実機のReferenceError原因と公式Face表示は診断更新後に再確認が必要です。

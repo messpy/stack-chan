@@ -283,7 +283,7 @@ static int sc_boot_initialized;
 static void sc_boot_init(void) {
     if(sc_boot_initialized)return;
     sc_boot_initialized=1;
-    if(sc_boot_rtc.magic==SC_BOOT_MAGIC && sc_boot_rtc.stage<=6 && sc_boot_rtc.error<=7 && sc_boot_rtc.component<32)
+    if(sc_boot_rtc.magic==SC_BOOT_MAGIC && sc_boot_rtc.stage<=6 && sc_boot_rtc.error<=7 && sc_boot_rtc.component<64)
         sc_boot_previous=sc_boot_rtc;
     else memset(&sc_boot_previous,0,sizeof(sc_boot_previous));
     sc_boot_rtc=(ScBootRecord){.magic=SC_BOOT_MAGIC,.sequence=sc_boot_previous.sequence+1};
@@ -292,7 +292,7 @@ void xs_archive_startup_checkpoint(xsMachine *the) {
     sc_boot_init();
     int stage=xsmcToInteger(xsArg(0)),error=xsmcToInteger(xsArg(1));
     int component=xsmcArgc>2?xsmcToInteger(xsArg(2)):0;
-    if(stage<0||stage>6||error<0||error>7||component<0||component>=32)xsRangeError("Invalid startup checkpoint");
+    if(stage<0||stage>6||error<0||error>7||component<0||component>=64)xsRangeError("Invalid startup checkpoint");
     sc_boot_rtc.magic=0; // A reset mid-checkpoint invalidates the partial record.
     sc_boot_rtc.stage=(uint32_t)stage;sc_boot_rtc.error=(uint32_t)error;sc_boot_rtc.component=(uint32_t)component;
     sc_boot_rtc.internalFree=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);

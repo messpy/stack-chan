@@ -98,3 +98,13 @@ test('USB-independent failure screen shows safe component and RAM without except
   const bad=h.helpers.startupDiagnosticLines({component:'private-token',reason:'private-token'})
   assert.equal(bad.length,0)
 })
+
+test('async startup waits for fulfillment and preserves rejected exception',async()=>{
+ const h=await harness(),events=[];let resolve;
+ const initialize=h.helpers.createAsyncContextInitializer(event=>events.push(event));
+ const pending=initialize('context-behaviors',()=>new Promise(done=>resolve=done));
+ assert.deepEqual(events.map(e=>e.state),['begin']);resolve(42);
+ assert.equal(await pending,42);assert.deepEqual(events.map(e=>e.state),['begin','done']);
+ await assert.rejects(initialize('context-behaviors',async()=>{await Promise.resolve();throw h.failure}),e=>e===h.failure);
+ assert.equal(events.at(-1).state,'failed');assert.equal(events.at(-1).error,h.failure);
+})

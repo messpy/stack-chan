@@ -23,7 +23,7 @@ vm.runInContext(fs.readFileSync(new URL('../../host/app/archive-debug.js',import
 vm.runInContext("recordStartupCheckpoint('context')",sc);
 assert.equal(checkpoints.length,1);assert.equal(startupPackets.length,0);
 online=true;ticks[0]();assert.equal(startupPackets[0].event,'startup');assert.equal(startupPackets[0].phase,'context');
-sc.failure={name:'TypeError',message:'secret-password allocation failed',stack:'secret-token at compose.js:123:4'};
+sc.failure={name:'TypeError',message:'secret-password allocation failed',stack:'TypeError: secret-token\n    at create (compose.js:123:4)'};
 vm.runInContext("recordStartupCheckpoint('context',failure)",sc);
 assert.equal(startupPackets.at(-1).reason,'memory');assert.equal(startupPackets.at(-1).site,'compose.js:123:4');
 assert.ok(!JSON.stringify(startupPackets).includes('secret-'));assert.equal(checkpoints.at(-1)[1],2);
@@ -42,3 +42,18 @@ vm.runInContext("recordStartupCheckpoint('context',undefined,'driver','failed')"
 assert.equal(startupPackets.at(-1).error,'unknown');
 
 freeMemory=1;ticks[0]();assert.equal(startupPackets.at(-1).internalFree,100,'transmission must retain memory at failure, not after cleanup');
+
+// XS module IDs have no required extension; headers and function names are private.
+for(const [stack,site] of [
+ ['ReferenceError: secret-token at credential.js:99\n at privateFunction (lan-archive:219)','lan-archive:219'],
+ ['ReferenceError: private-value\n at initialize (default-behavior/on-context-created:215)','on-context-created:215'],
+ ['ReferenceError: private-value\n at (archive-offline)','archive-offline'],
+ ['ReferenceError: secret-token at credential.js:99',''],
+ ['ReferenceError: private-value\n at (https://private-host/token.js:12)',''],
+]){
+ sc.failure={name:'ReferenceError',message:'private-value',stack};
+ vm.runInContext("recordStartupCheckpoint('behavior',failure,'archive-offline','failed')",sc);
+ const packet=startupPackets.at(-1);assert.equal(packet.site,site);assert.equal(packet.component,'archive-offline');
+ assert.ok(!JSON.stringify(packet).includes('private-'));assert.ok(!JSON.stringify(packet).includes('secret-token'));
+}
+console.log('PASS: XS extensionless/nested module frames, absent stack fallback and private header exclusion');

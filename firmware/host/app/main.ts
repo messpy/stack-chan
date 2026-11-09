@@ -1,4 +1,4 @@
-import { createContextInitializer, type StartupComponent, type StartupComponentState, type StartupScreenDiagnostics } from 'context-startup'
+import { createContextInitializer, createAsyncContextInitializer, type StartupComponentEvent, type StartupComponent, type StartupComponentState, type StartupScreenDiagnostics } from 'context-startup'
 import loadPreferences, { loadModConfig, loadPreferenceConfig } from 'loadPreference'
 import System from 'embedded:system'
 import { runContextCreatedBehaviors, type StackchanAppBehavior } from 'app-behavior'
@@ -95,12 +95,18 @@ function waitForBootWiFiRecoveryChoice(status: BootWiFiStatus & { reason: string
 async function main() {
   let startupCheckpoint: ((phase: string, error?: unknown, component?: StartupComponent, state?: StartupComponentState) => void) | undefined
   let startupSnapshot: (() => StartupScreenDiagnostics | undefined) | undefined
-  let contextComponent: StartupComponent = 'none'
+  let phase: StartupPhase = 'initialization'
+  let startupComponent: StartupComponent = 'none'
+  let startupFailureRecorded = false
   const markStartup = (phase: string, error?: unknown, component: StartupComponent = 'none', state: StartupComponentState = 'begin') => { try { startupCheckpoint?.(phase, error, component, state) } catch {} }
-  const initialize = createContextInitializer(event => {
-    contextComponent = event.component
-    markStartup('context', event.error, event.component, event.state)
-  })
+  const reportStartup = (event: StartupComponentEvent) => {
+    if (startupFailureRecorded) return
+    startupComponent = event.component
+    startupFailureRecorded = event.state === 'failed'
+    markStartup(phase, event.error, event.component, event.state)
+  }
+  const initialize = createContextInitializer(reportStartup)
+  const initializeAsync = createAsyncContextInitializer(reportStartup)
   try {
     if (Modules.has('archive-debug')) {
       const diagnostics = Modules.importNow('archive-debug') as { installDebugLog: () => void; recordStartupCheckpoint?: typeof startupCheckpoint; startupDiagnosticSnapshot?: typeof startupSnapshot }
@@ -116,7 +122,6 @@ async function main() {
   trace('[main] start\n')
   let dockRuntime: StackchanDockRuntime | undefined
   let context: StackchanContext | undefined
-  let phase: StartupPhase = 'initialization'
   try {
     dockRuntime = startStackchanDock(Modules, loadModConfig())
     if (dockRuntime) trace('[main] Stackchan Dock started\n')
@@ -163,20 +168,24 @@ async function main() {
     })
     phase = 'behavior'
     markStartup(phase)
-    ownedDock?.onContextCreated(context)
-    registerExperimentalMiniApps(experimentalMiniApps, context.ui.miniApps)
+    initialize('dock-context', () => ownedDock?.onContextCreated(context!))
+    initialize('experimental-miniapps', () => registerExperimentalMiniApps(experimentalMiniApps, context!.ui.miniApps))
     trace('[main] app context created\n')
-    await runContextCreatedBehaviors(appBehaviors, context, {
+    await initializeAsync('context-behaviors', () => runContextCreatedBehaviors(appBehaviors, context!, {
+      initialize,
       device: getHostDeviceEnvironment(),
       config: preferences,
-    })
-    if (Modules.has('lan-archive')) (Modules.importNow('lan-archive') as { startArchive: (context: StackchanContext) => void }).startArchive(context)
+    }))
+    if (Modules.has('lan-archive')) {
+      const archive = initialize('archive-import', () => Modules.importNow('lan-archive')) as { startArchive: (context: StackchanContext, initialize?: typeof initialize) => void }
+      initialize('archive-start', () => archive.startArchive(context!, initialize))
+    }
     trace('[main] app behaviors ready\n')
+    initialize('mod-shortcut', installModManagerShortcut)
     markStartup('ready')
-    installModManagerShortcut()
   } catch (error) {
     // Save failure before cleanup, which can itself fail or block.
-    markStartup(phase, error, phase === 'context' ? contextComponent : 'none', 'failed')
+    if (!startupFailureRecorded) markStartup(phase, error, startupComponent, 'failed')
     let diagnostic: StartupScreenDiagnostics | undefined
     try { diagnostic = startupSnapshot?.() } catch {}
     // A newer/disposed view during async cleanup owns its screen. Do not

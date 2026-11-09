@@ -285,6 +285,16 @@ class CLITest(unittest.TestCase):
         packet['component']='private-token'
         self.assertIsNone(m.safe_line('@SC '+json.dumps(packet)))
 
+    def test_behavior_components_and_xs_extensionless_sites(self):
+        for component in ('dock-context','experimental-miniapps','context-behaviors','archive-import','archive-start','mod-shortcut','archive-offline','default-setup'):
+            packet=dict(event='startup',phase='behavior',error='ReferenceError',reason='unclassified',site='lan-archive:219',component=component,componentState='failed',
+                        sequence=2,stage=4,previousValid=1,previousSequence=1,previousStage=4,previousError=4,resetReason=1,
+                        internalFree=165543,internalLargest=90112,psramFree=6864956)
+            line=m.safe_line('@SC '+json.dumps(packet))
+            self.assertIsNotNone(line);self.assertIn('component='+component,line);self.assertIn('site=lan-archive:219',line)
+            packet['site']='https://private-host/token'
+            self.assertIsNone(m.safe_line('@SC '+json.dumps(packet)))
+
     def layout(self):
         self.r.bin.mkdir(parents=True)
         p=self.r.fw/'dist/tmp/esp32/m5stackchan_cores3/release/stack-chan-host/xsProj-esp32s3/build/flasher_args.json'

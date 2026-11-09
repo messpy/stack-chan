@@ -209,20 +209,20 @@ async function recordAudio(robot) {
     return {name,duration:5,bytes:wav.byteLength};
   }finally{microphoneIndicator(false);busy=false;}
 }
-export function startArchive(robot) {
+export function startArchive(robot,initialize=(_component,create)=>create()) {
   let monitor,monitorVoice,monitorReleaseHold;
-  startDebugDrain();
-  startLocalClock();
-  startCustomFace(robot);
-  startOffline(robot,{stopCloud:()=>{if(directChatStatus().recognitionMode)setRecognitionMode(false);if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings,startCloud:()=>setChatMode(true),openAI:()=>robot.ui.application.behavior.launchMiniApp('archive-ai-settings')});
-  startHistoryUI(robot,{read:args=>{importLegacy();return deviceHistory(args);},people:()=>users({limit:50}).users.filter(p=>p.kind==='person'),current:currentSpeaker});
-  startVolume(robot);
-  startAISettings(robot,{status:directChatStatus,select:configureChatProvider,mode:setChatMode});
-  startWiFiDisplay(robot);
+  initialize('archive-debug',()=>startDebugDrain());
+  initialize('archive-clock',()=>startLocalClock());
+  initialize('archive-face',()=>startCustomFace(robot));
+  initialize('archive-offline',()=>startOffline(robot,{stopCloud:()=>{if(directChatStatus().recognitionMode)setRecognitionMode(false);if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings,startCloud:()=>setChatMode(true),openAI:()=>robot.ui.application.behavior.launchMiniApp('archive-ai-settings')}));
+  initialize('archive-history',()=>startHistoryUI(robot,{read:args=>{importLegacy();return deviceHistory(args);},people:()=>users({limit:50}).users.filter(p=>p.kind==='person'),current:currentSpeaker}));
+  initialize('archive-volume',()=>startVolume(robot));
+  initialize('archive-ai-settings',()=>startAISettings(robot,{status:directChatStatus,select:configureChatProvider,mode:setChatMode}));
+  initialize('archive-wifi-display',()=>startWiFiDisplay(robot));
   try{startSettings(robot);}catch(_){trace('[settings] initialization failed; USB remains available\n');}
   try{startDeviceTools(robot,()=>{if(monitor?.active){monitor.stopCurrent().catch(()=>{});return false;}if(directChatStatus().busy)pauseDirectChat();if(busy)return false;busy=true;return true;},()=>{busy=false;resumeDirectChat();});}catch(_){trace('[tools] initialization failed; USB remains available\n');}
-  startTimerUI(robot,{create:args=>callDeviceTool('timer_create',args),status:reminderStatus});
-  startAlarmSettings(robot,{create:args=>callDeviceTool('alarm_create',args),list:()=>callDeviceTool('reminder_list'),cancel:id=>callDeviceTool('reminder_cancel',{id}),stop:()=>callDeviceTool('alarm_stop')});
+  initialize('archive-timer',()=>startTimerUI(robot,{create:args=>callDeviceTool('timer_create',args),status:reminderStatus}));
+  initialize('archive-alarms',()=>startAlarmSettings(robot,{create:args=>callDeviceTool('alarm_create',args),list:()=>callDeviceTool('reminder_list'),cancel:id=>callDeviceTool('reminder_cancel',{id}),stop:()=>callDeviceTool('alarm_stop')}));
   setAlarmDisplay({show:showRingingAlarm,close:hideRingingAlarm});
   setAlarmMotion(stopped=>createAlarmDance(robot,{rotation:getM5StackChanDriver()?.lastKnownRotation,stopped}));
   const token=config.archiveToken;

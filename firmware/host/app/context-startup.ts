@@ -4,6 +4,11 @@ export const STARTUP_COMPONENTS = [
   'touch-panel', 'imu', 'microphone', 'camera', 'speaker', 'media', 'led', 'runtime',
   'runtime-motion', 'runtime-ui', 'runtime-audio', 'runtime-input', 'runtime-camera',
   'runtime-lighting', 'runtime-timer',
+  'dock-context', 'experimental-miniapps', 'context-behaviors', 'archive-import',
+  'archive-start', 'mod-shortcut', 'archive-debug', 'archive-clock', 'archive-face',
+  'archive-offline', 'archive-history', 'archive-volume', 'archive-ai-settings',
+  'archive-wifi-display', 'archive-timer', 'archive-alarms',
+  'default-setup', 'default-face', 'default-hands', 'default-colors', 'default-imu',
 ] as const
 export type StartupComponent = (typeof STARTUP_COMPONENTS)[number]
 export type StartupComponentState = 'begin' | 'done' | 'failed'
@@ -47,4 +52,20 @@ export function startupDiagnosticLines(value?: StartupScreenDiagnostics): string
     result.push('RAM ' + fields[0] + ' / ' + fields[1] + '  PS ' + fields[2])
   }
   return result
+}
+
+/** Await completion before reporting done; a rejected hook remains a startup failure. */
+export function createAsyncContextInitializer(report?: (event: StartupComponentEvent) => void) {
+  const notify = (event: StartupComponentEvent) => { try { report?.(event) } catch {} }
+  return async <T>(component: StartupComponent, create: () => Promise<T> | T): Promise<T> => {
+    notify({ component, state: 'begin' })
+    try {
+      const value = await create()
+      notify({ component, state: 'done' })
+      return value
+    } catch (error) {
+      notify({ component, state: 'failed', error })
+      throw error
+    }
+  }
 }
