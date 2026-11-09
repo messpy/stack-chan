@@ -65,7 +65,7 @@ test('normal composition preserves official Face path and initializes without ne
   assert.equal(h.events.filter(e=>e.state==='failed').length,0)
   assert.ok(h.events.some(e=>e.component==='runtime-audio'&&e.state==='done'))
 })
-for(const component of ['driver','ui','tts','touch','touch-panel','imu','microphone','camera','speaker','media','led','runtime-audio']){
+for(const component of ['driver','ui','tts','touch','touch-panel','microphone','camera','speaker','media','led','runtime-audio']){
   test(component+' failure is attributed to its deepest component and preserves original exception',async()=>{
     const h=await harness(component)
     assert.throws(()=>h.compose.createStackchanContext(h.preferences,{initialize:h.initialize}),error=>error===h.failure)
@@ -75,6 +75,16 @@ for(const component of ['driver','ui','tts','touch','touch-panel','imu','microph
     assert.equal(h.events.at(-1).state,'failed')
   })
 }
+test('IMU initialization failure is an optional input degradation, not a fatal startup error',async()=>{
+  const h=await harness('imu')
+  const result=h.compose.createStackchanContext(h.preferences,{initialize:h.initialize})
+  assert.equal(result.params.imu,undefined)
+  assert.ok(result.params.ui)
+  assert.ok(h.calls.includes('camera'))
+  assert.ok(h.calls.includes('speaker'))
+  assert.ok(h.events.some(e=>e.component==='imu'&&e.state==='done'))
+  assert.equal(h.events.filter(e=>e.state==='failed').length,0)
+})
 test('unsupported preference type fails before any native component is created',async()=>{
   const h=await harness(undefined,true)
   assert.throws(()=>h.compose.createStackchanContext(h.preferences,{initialize:h.initialize}))
