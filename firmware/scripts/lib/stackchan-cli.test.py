@@ -183,6 +183,20 @@ class CLITest(unittest.TestCase):
         with patch.object(m.subprocess,'run',return_value=types.SimpleNamespace(returncode=1,stdout='')),self.assertRaisesRegex(RuntimeError,'preflight incomplete'):
             self.r.check_usb()
 
+    def test_usb_reset_only_changes_initial_connection_command(self):
+        self.args.reset='usb'
+        base=['python','-m','esptool','--before','no-reset','--after','no-reset','--connect-attempts','1']
+        connect=self.r.connection_command(base)
+        self.assertEqual(connect[connect.index('--before')+1],'usb-reset')
+        self.assertEqual(base[base.index('--before')+1],'no-reset')
+        self.assertEqual(connect[connect.index('--after')+1],'no-reset')
+        self.assertEqual(connect[connect.index('--connect-attempts')+1],'1')
+
+    def test_manual_mode_does_not_toggle_reset(self):
+        self.args.reset='manual'
+        base=['esptool','--before','no-reset','--after','no-reset']
+        self.assertEqual(self.r.connection_command(base),base)
+
     def layout(self):
         self.r.bin.mkdir(parents=True)
         p=self.r.fw/'dist/tmp/esp32/m5stackchan_cores3/release/stack-chan-host/xsProj-esp32s3/build/flasher_args.json'

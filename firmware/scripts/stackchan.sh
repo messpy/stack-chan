@@ -341,6 +341,12 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
             self.unoccupied(expected['port'])
             self.capture(expected)
 
+    def connection_command(self, base):
+        command = list(base)
+        if getattr(self.a, 'reset', 'manual') == 'usb':
+            command[command.index('--before') + 1] = 'usb-reset'
+        return command
+
     def check_pr_freshness(self):
         if getattr(self, 'pr_info', None) and self.pr_metadata() != self.pr_info:
             raise RuntimeError('PR/base changed during validation; stop and rerun against the new snapshot')
@@ -351,12 +357,13 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
         self.verify_receipt()
         expected = self.identity()
         self.log('CHECK', 'TARGET=m5stackchan_cores3 SHA=' + self.head + ' PORT=' + expected['port'])
-        self.confirm('手動ダウンロードモードの本体から16MiBバックアップを読み取りますか？ 自動RSTなし')
+        self.confirm('16MiBバックアップを読み取りますか？ 接続方式=' + getattr(self.a, 'reset', 'manual'))
         with self.own_usb():
             expected = self.same_device(expected)
             self.unoccupied(expected['port'])
-            base = [DEVICE_PYTHON, '-m', 'esptool', '--chip', 'esp32s3', '--port', expected['port'], '--before', 'no-reset', '--after', 'no-reset']
-            info = self.cmd('flash-id', base + ['--no-stub', 'flash-id'], timeout=30)
+            base = [DEVICE_PYTHON, '-m', 'esptool', '--chip', 'esp32s3', '--port', expected['port'], '--before', 'no-reset', '--after', 'no-reset', '--connect-attempts', '1']
+            connect = self.connection_command(base)
+            info = self.cmd('flash-id', connect + ['--no-stub', 'flash-id'], timeout=30)
             if not re.search(r'Detected flash size: 16(?:MB| MiB)', info.read_text()): raise RuntimeError('16MiB flash not verified')
             backup = self.run / 'flash-16MiB.bin'
             self.cmd('backup', base + ['read-flash', '0', '0x1000000', backup], timeout=600)
@@ -412,6 +419,7 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
 def main(argv=None):
     p = argparse.ArgumentParser(prog='stackchan.sh', description='StackChan統一操作。指定した処理だけ実行。無指定は--check。書き込みはyes/no確認。')
     for mode in ('check', 'test', 'build', 'write', 'logs', 'all'): p.add_argument('--'+mode, action='store_true')
+    p.add_argument('--reset', choices=('manual','usb'), default='manual', help='ROM接続方法。usbは最初の接続確認だけUSB用リセットを実行。失敗時は停止し再送しない')
     p.add_argument('--yes', action='store_true', help='この実行のバックアップ・書き込み・hub一時停止・ログ取得を事前承認。確認入力を省略')
     p.add_argument('--PR', '--pr', dest='pr', type=int, help='PR番号。最新baseとHEADを専用worktreeでローカル統合。GitHubマージはしない')
     p.add_argument('--repo', default=str(DEFAULT_REPO), help='対象worktree（既定はWi-Fi修正を含むPR90）')

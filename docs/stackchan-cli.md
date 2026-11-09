@@ -51,3 +51,13 @@ python3 firmware/scripts/lib/stackchan-cli.test.py
 このテストは制御フローと故障時の振る舞いの検証です。ビルド・USB書き込み・CoreS3正常起動の実機検証を代替しません。
 
 `--check` のUSB未検出・複数候補は失敗終了します。hubの `HUB.Result=success` はサービスの前回終了結果であり、USB認識成功ではありません。USB識別失敗時は同じ実行フォルダの `usb-kernel.log` に直近15分のUSB関連カーネルログも保存します。`--all` の事前確認でもUSBを確認し、未認識のまま長いテスト・ビルドへ進みません。
+
+### ROM接続がWrite timeoutになる場合
+
+USB認識成功はROM接続成功とは異なります。手動モードで接続できない場合は、USB Serial/JTAG向けのリセットを初回接続確認に限って指定できます。
+
+```bash
+bash ~/stackchan.sh --PR 90 --write --yes --reset usb
+```
+
+`--reset usb` は最初のflash-idにUSBリセットを指定します。接続試行回数は1回。失敗時は停止し、バックアップ・書き込みへ進まず、手動モードとの自動切替や書き込み再送は行いません。バックアップと書き込みは引き続きno-reset。従来の手動操作は `--reset manual`（既定）です。USBリセットには本体への影響があります。このオプションと `--yes` を指定したコマンドは、その操作も事前承認します。実機での成功はまだ未確認です。
