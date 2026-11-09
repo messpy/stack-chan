@@ -108,27 +108,27 @@ export class StackchanRuntimeCamera implements RobotCamera {
   }
 
   close(): Promise<void> | void {
-    const finish = () => {
-      const result = this.#camera.close?.()
+    // Shutdown close intentionally leaves touch stopped; routine release calls stop first.
+    const finish = (stopError?: unknown): Promise<void> | void => {
+      this.#cameraActive = false
+      this.#touchPanelPaused = false
       const done = () => {
         traceMessage('[runtime-camera] close done\n')
+        if (stopError) throw stopError
       }
+      const result = this.#camera.close?.()
       if (isThenable(result)) return result.then(done)
       done()
     }
-
+    let result: Promise<void> | void
     try {
       traceMessage('[runtime-camera] close begin\n')
-      const result = this.#camera.stop()
-      this.#cameraActive = false
-      this.#touchPanelPaused = false
-      if (isThenable(result)) return result.then(() => finish())
-      return finish()
+      result = this.#camera.stop()
     } catch (error) {
-      this.#cameraActive = false
-      this.#touchPanelPaused = false
-      throw error
+      return finish(error)
     }
+    if (isThenable(result)) return result.then(() => finish(), (error) => finish(error))
+    return finish()
   }
 
   async capture(options?: Parameters<RobotCamera['capture']>[0]) {

@@ -27,7 +27,8 @@ import {analyzeJPEG,visionStatus} from 'archive-vision';
 import {startAlarmSettings,openAlarmSettings,showRingingAlarm,hideRingingAlarm} from 'archive-alarm-ui';
 import {alarmSoundCommand,playAlarmSound} from 'archive-alarm-sound';
 import {startWeb,openControl,controlStatus} from 'archive-web';
-import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat} from 'archive-direct-chat';
+import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat,holdDirectChat} from 'archive-direct-chat';
+import {releaseCameraResources} from 'archive-camera-release';
 import {recordMemory,history,deviceHistory,currentSpeaker,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
 import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
 import {acceptAudioChunk} from 'archive-audio-upload';
@@ -35,7 +36,7 @@ import {startSettings,openSettings,closeSettings,getSettingsStatus,vaultSelfTest
 import {startDeviceTools,setAlarmDisplay,setAlarmMotion,callDeviceTool,listDeviceTools,reminderStatus} from 'archive-tools';
 import Time from 'time';
 import {getM5StackChanDriver} from 'm5stackchan-servo-driver';
-import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG} from 'archive-usb';
+import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG,heapStatus} from 'archive-usb';
 import Base64 from 'base64';
 import config from 'mc/config';
 import {HttpServerService, Response} from 'http-server-service';
@@ -76,39 +77,69 @@ export function archiveTranscript(role,text,eventId,image,speakerId) {
 }
 // Preview frames stay in RAM: no SD writes or cloud image recognition.
 async function cameraPreview(robot) {
- if(busy)throw new Error('本体で処理中です。会話や録画を停止してからお試しください');
- const paused=pauseDirectChat();
- if(busy){if(paused)resumeDirectChat();throw new Error('本体で処理中です');}
+ if((busy&&!directChatStatus().busy)||directChatStatus().cameraCaptureActive)throw new Error('本体で処理中です。会話や録画を停止してからお試しください');
+ const release=holdDirectChat('camera-preview');
  busy=true;
  let frame;
- try{
+ try {
   frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});
   if(!frame)throw new Error('カメラの画像を取得できませんでした');
   return encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
- }finally{
-  try{frame?.close?.();}finally{try{robot.camera.stop();}finally{busy=false;if(paused)resumeDirectChat();}}
+ } finally {
+  try {await releaseCameraResources(robot.camera,frame,(stage)=>trace('[archive-camera] preview cleanup failed stage='+stage+'\n'))}
+  finally {busy=false;release()}
  }
 }
-async function photo(robot,args={},fromConversation=false) {
- const wasBusy=busy;if(busy&&!fromConversation)throw new Error('Camera busy');busy=true;
- let frame,jpeg,result;
- try{
-  frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});if(!frame)throw new Error('No camera frame');
-  const tag=id(),name='photo-'+tag+'.jpg',image=name;
-  jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');save(image,[jpeg]);
-  result={name,image,width:frame.width,height:frame.height};
- }finally{frame?.close?.();robot.camera.stop();busy=wasBusy;}
- if(args.analyze!==false)Object.assign(result,await describeImage(robot,result.name,jpeg,args.question));
- return result;
+async function photo(robot,args={},fromConversation=false,context) {
+ if(busy||(directChatStatus().cameraCaptureActive&&!fromConversation))throw new Error('Camera busy');
+ busy=true;
+ const speakerId=context?context.speakerId:(directChatStatus().speaker?.id??null);
+ let frame,jpeg,result,stage='camera-start';
+ const started=Date.now();
+ const metrics=at=>{try{const h=heapStatus();trace('[archive-camera] stage='+at+' elapsedMs='+(Date.now()-started)+' internalFree='+h.internalFree+' internalLargest='+h.internalLargest+' psramFree='+h.psramFree+'\n')}catch(_){}};
+ try {
+  try {
+   metrics(stage);
+   frame=await robot.camera.capture({width:176,height:144,imageType:'rgb565le'});
+   if(!frame){stage='frame-wait';throw new Error('No camera frame')}
+   stage='jpeg-encode';
+   metrics('frame-ready');
+   const tag=id(),name='photo-'+tag+'.jpg';
+   jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
+   stage='sd-save';
+   save(name,[jpeg]);
+   result={name,image:name,width:frame.width,height:frame.height};
+   trace('[archive-camera] stage=jpeg-saved\n');
+  } catch(e) {
+   trace('[archive-camera] failed stage='+stage+' type='+String(e?.name||'Error').slice(0,48)+'\n');
+   throw e;
+  } finally {
+   try {
+    await releaseCameraResources(robot.camera,frame,(at)=>trace('[archive-camera] cleanup failed stage='+at+'\n'));
+    try{
+      metrics('camera-released');
+    }catch(_){trace('[archive-camera] stage=camera-released (heap metrics unavailable)\n')}
+   } catch(e) {
+    trace('[archive-camera] failed stage=camera-release type='+String(e?.name||'Error').slice(0,48)+'\n');
+    throw e;
+   }
+   frame=undefined;
+  }
+  if(args.analyze!==false) {
+   trace('[archive-camera] stage=analysis-start\n');
+   Object.assign(result,await describeImage(robot,result.name,jpeg,args.question,speakerId,context?.isCurrent));
+   metrics('analysis-complete');
+  }
+  return result;
+ } finally {busy=false;}
 }
 
-async function describeImage(robot,name,jpeg,question){
+async function describeImage(robot,name,jpeg,question,speakerId=directChatStatus().speaker?.id??null,isCurrent=()=>true){
  const prompt=String(question||'この画像には何が写っていますか？').slice(0,1000);
- const speakerId=directChatStatus().speaker?.id??null;
  const input=archiveTranscript('input',prompt,undefined,name,speakerId);
  const analysis=await analyzeJPEG(jpeg,prompt);
  const answer=archiveTranscript('output',analysis.status==='complete'?analysis.text:'画像認識エラー: '+(analysis.error||'回答を取得できませんでした'),undefined,name,speakerId);
- if(analysis.status==='complete')robot.showBalloon(analysis.text);
+ if(analysis.status==='complete'&&isCurrent()&&(directChatStatus().speaker?.id??null)===speakerId)robot.showBalloon(analysis.text);
  return {analysis,historySaved:!!input&&!!answer,messageIds:[input?.id,answer?.id]};
 }
 
@@ -157,8 +188,12 @@ async function record(robot) {
     trace('[archive] video with audio saved\n');
     return {name,frames:count,fps,audio:true,duration:5};
   }finally {
-    if(audioPromise)await audioPromise;
-    try {robot.camera.stop();}finally{busy=false;}
+    try {
+      if(audioPromise)await audioPromise;
+    }finally{
+      try {await releaseCameraResources(robot.camera,undefined,(at)=>trace('[archive-camera] record cleanup failed stage='+at+'\n'));}
+      finally {busy=false;}
+    }
   }
 }
 async function recordAudio(robot) {
@@ -174,20 +209,20 @@ async function recordAudio(robot) {
     return {name,duration:5,bytes:wav.byteLength};
   }finally{microphoneIndicator(false);busy=false;}
 }
-export function startArchive(robot) {
-  let monitor,monitorVoice;
-  startDebugDrain();
-  startLocalClock();
-  startCustomFace(robot);
-  startOffline(robot,{stopCloud:()=>{if(directChatStatus().recognitionMode)setRecognitionMode(false);if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings,startCloud:()=>setChatMode(true),openAI:()=>robot.ui.application.behavior.launchMiniApp('archive-ai-settings')});
-  startHistoryUI(robot,{read:args=>{importLegacy();return deviceHistory(args);},people:()=>users({limit:50}).users.filter(p=>p.kind==='person'),current:currentSpeaker});
-  startVolume(robot);
-  startAISettings(robot,{status:directChatStatus,select:configureChatProvider,mode:setChatMode});
-  startWiFiDisplay(robot);
+export function startArchive(robot,initialize=(_component,create)=>create()) {
+  let monitor,monitorVoice,monitorReleaseHold;
+  initialize('archive-debug',()=>startDebugDrain());
+  initialize('archive-clock',()=>startLocalClock());
+  initialize('archive-face',()=>startCustomFace(robot));
+  initialize('archive-offline',()=>startOffline(robot,{stopCloud:()=>{if(directChatStatus().recognitionMode)setRecognitionMode(false);if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings,startCloud:()=>setChatMode(true),openAI:()=>robot.ui.application.behavior.launchMiniApp('archive-ai-settings')}));
+  initialize('archive-history',()=>startHistoryUI(robot,{read:args=>{importLegacy();return deviceHistory(args);},people:()=>users({limit:50}).users.filter(p=>p.kind==='person'),current:currentSpeaker}));
+  initialize('archive-volume',()=>startVolume(robot));
+  initialize('archive-ai-settings',()=>startAISettings(robot,{status:directChatStatus,select:configureChatProvider,mode:setChatMode}));
+  initialize('archive-wifi-display',()=>startWiFiDisplay(robot));
   try{startSettings(robot);}catch(_){trace('[settings] initialization failed; USB remains available\n');}
   try{startDeviceTools(robot,()=>{if(monitor?.active){monitor.stopCurrent().catch(()=>{});return false;}if(directChatStatus().busy)pauseDirectChat();if(busy)return false;busy=true;return true;},()=>{busy=false;resumeDirectChat();});}catch(_){trace('[tools] initialization failed; USB remains available\n');}
-  startTimerUI(robot,{create:args=>callDeviceTool('timer_create',args),status:reminderStatus});
-  startAlarmSettings(robot,{create:args=>callDeviceTool('alarm_create',args),list:()=>callDeviceTool('reminder_list'),cancel:id=>callDeviceTool('reminder_cancel',{id}),stop:()=>callDeviceTool('alarm_stop')});
+  initialize('archive-timer',()=>startTimerUI(robot,{create:args=>callDeviceTool('timer_create',args),status:reminderStatus}));
+  initialize('archive-alarms',()=>startAlarmSettings(robot,{create:args=>callDeviceTool('alarm_create',args),list:()=>callDeviceTool('reminder_list'),cancel:id=>callDeviceTool('reminder_cancel',{id}),stop:()=>callDeviceTool('alarm_stop')}));
   setAlarmDisplay({show:showRingingAlarm,close:hideRingingAlarm});
   setAlarmMotion(stopped=>createAlarmDance(robot,{rotation:getM5StackChanDriver()?.lastKnownRotation,stopped}));
   const token=config.archiveToken;
@@ -196,16 +231,26 @@ export function startArchive(robot) {
   globalThis.abort=(reason,exception)=>{try{writeUSB(JSON.stringify({event:'fatal',reason:String(reason),detail:String(exception).slice(0,300)}));}catch(_){};rebootUSB();return true;};
   monitor=createLANMonitor({robot,now:()=>Date.now(),repeat:(fn,ms)=>Timer.repeat(fn,ms),cancel:id=>Timer.clear(id),token:()=>randomHex(16),
     claim(){
-      if(offlineStatus().playing||reminderStatus().ringing||(busy&&!directChatStatus().busy))throw new Error('本体で処理中です');
-      const paused=pauseDirectChat();
-      if(busy){if(paused)resumeDirectChat();throw new Error('本体で処理中です');}
-      closeOffline();busy=true;trace('[monitor] started\n');
+      if(offlineStatus().playing||reminderStatus().ringing||directChatStatus().cameraCaptureActive||(busy&&!directChatStatus().busy))throw new Error('本体で処理中です');
+      const release=holdDirectChat('lan-monitor');
+      try{
+        if(busy)throw new Error('本体で処理中です');
+        closeOffline();busy=true;monitorReleaseHold=release;
+        trace('[monitor] started\n');
+      }catch(e){release();throw e}
     },
-    release(){busy=false;resumeDirectChat();trace('[monitor] stopped\n');},
+    release(){
+      // createLANMonitor also calls release after a failed claim. In that
+      // case do not clear busy ownership belonging to an unrelated operation.
+      const release=monitorReleaseHold;monitorReleaseHold=undefined;
+      if(release){busy=false;release()}
+      trace('[monitor] stopped\n');
+    },
     log:message=>trace('[head-jog] '+message+'\n'),
     readHeadRotation:()=>new Promise((resolve,reject)=>{const driver=getM5StackChanDriver();if(!driver){reject(new Error('Motor unavailable'));return}driver.getRotation(result=>result.success?resolve({...result.value}):reject(new Error('Position unavailable')))}),
     createInput:options=>new AudioIn(options),
     convertPCM:(raw,channels)=>prepareRecognitionPCM(raw,0,raw.byteLength,channels),jpeg:encodeJPEG,
+    releaseCamera:(frame)=>releaseCameraResources(robot.camera,frame,(stage)=>trace('[archive-camera] monitor cleanup failed stage='+stage+'\n')),
     cancelSpeech:()=>monitorVoice?.cancel(),
     async speak(text){
       let unlock;
@@ -219,7 +264,8 @@ export function startArchive(robot) {
   async function execute(request){
     if(monitor.active&&!request.op.startsWith('/monitor/')&&!['/status','/volume','/chat/status','/files','/files/page','/network/status','/speaker/list','/settings/status','/reminders','/debug/status','/motor-status','/media/trash'].includes(request.op))throw new Error('動作確認を終了してから操作してください');
     const capture=['/face/save','/face/restore','/alarm-sound/preview','/motor/test','/motor/recover','/image/finish','/photo','/record','/audio','/chat-record'].includes(request.op);
-    const paused=capture?pauseDirectChat():false;
+    if(capture&&directChatStatus().cameraCaptureActive)throw new Error('撮影処理中のため他の操作を開始できません');
+    const release=capture?holdDirectChat('rpc-capture'):undefined;
     try{
       let result;
       if(request.op==='/monitor/start')result=monitor.start();
@@ -353,7 +399,7 @@ export function startArchive(robot) {
         });
       }else throw new Error('Unknown operation');
       return result;
-    }finally{if(paused)resumeDirectChat();}
+    }finally{release?.();}
   }
   let usbBusy=false;
   let usbInitError=false;
@@ -375,7 +421,7 @@ export function startArchive(robot) {
     finally{usbBusy=false;}
   },5);
 
-  try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},args=>photo(robot,{...args,analyze:true},true),on=>{if(on){
+  try{startDirectChat(robot,archiveTranscript,()=>{if(busy||visionStatus().working)return false;busy=true;return true;},()=>{busy=false;},(args,context)=>photo(robot,{...args,analyze:true},true,context),on=>{if(on){
     // Preserve the user's ON choice while boot/offline speech owns the audio device.
     // The regular chat retry loop will connect after the audio lease is released.
     if(offlineStatus().playing)return;

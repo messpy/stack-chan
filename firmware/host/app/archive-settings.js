@@ -1,3 +1,5 @@
+import {readStoredWiFiPreference} from 'stored-wifi';
+import {isOfflineBootRequested,resumeBootWiFi} from 'boot-network-recovery';
 import {setLocalTime} from 'archive-local-clock';
 // AP provisioning follows Moddable's webConfigWifi and 78/esp-wifi-connect.
 import WiFi from 'wifi';
@@ -16,8 +18,31 @@ import {getSettings,changeSettings,vaultStatus,vaultSelfTest,randomHex} from 'ar
 
 let robot,monitor,server,expiry,connectionTimeout,ntp,reconnectTimer;
 let reconnectDelay=3000;
-function scheduleReconnect(){if(reconnectTimer||!getSettings().wifi?.ssid)return;const delay=reconnectDelay;reconnectDelay=Math.min(60000,reconnectDelay*2);reconnectTimer=Timer.set(()=>{reconnectTimer=undefined;if(!connected&&connection!=='connecting')connectSaved();},delay);}
-export function reconnectSavedWiFi(){connectSaved();return getSettingsStatus();}
+// The standard boot settings use NVS; Archive settings use the SD vault.
+// Read existing NVS credentials when the vault has no Wi-Fi entry. Never rewrite either store on read.
+let vaultReadErrorReported=false;
+function savedWiFi(){
+ // An SD read exception must not prevent an existing NVS Wi-Fi connection.
+ // A synchronous SD driver stall cannot be recovered within this VM.
+ try{
+  const saved=getSettings().wifi;
+  vaultReadErrorReported=false;
+  if(saved?.ssid)return saved;
+ }catch(_){
+  if(!vaultReadErrorReported)trace('[settings] SD vault unavailable; trying NVS Wi-Fi\n');
+  vaultReadErrorReported=true;
+ }
+ try{
+  const ssid=readStoredWiFiPreference('ssid');
+  return ssid?{ssid,password:readStoredWiFiPreference('password')}:undefined;
+ }catch(_){
+  trace('[settings] NVS Wi-Fi read unavailable\n');
+  return undefined;
+ }
+}
+
+function scheduleReconnect(){if(isOfflineBootRequested()||reconnectTimer||!savedWiFi()?.ssid)return;const delay=reconnectDelay;reconnectDelay=Math.min(60000,reconnectDelay*2);reconnectTimer=Timer.set(()=>{reconnectTimer=undefined;if(!connected&&connection!=='connecting')connectSaved();},delay);}
+export function reconnectSavedWiFi(){resumeBootWiFi();connectSaved();return getSettingsStatus();}
 let active=false,ssid='',password='',key='',connected=false,connection='offline',error='';
 let httpRequests=0,lastHttpStatus=0,lastDisconnectReason;
 let httpConnections=0,httpHeaders=0,httpErrors=0;
@@ -50,19 +75,28 @@ function ensureMonitor(){
   });
 }
 function connectSaved(){
-  const wifi=getSettings().wifi;if(!wifi?.ssid)return;
+  if(isOfflineBootRequested())return;
+  const wifi=savedWiFi();if(!wifi?.ssid)return;
   if(reconnectTimer){Timer.clear(reconnectTimer);reconnectTimer=undefined;}
   ensureMonitor();connected=false;connection='connecting';error='';
   if(connectionTimeout)Timer.clear(connectionTimeout);
   connectionTimeout=Timer.set(()=>{connectionTimeout=undefined;if(!connected){connection='failed';error='Wi-Fiに接続できません。SSID・パスワード・2.4 GHzを確認してください。';trace('[settings] Wi-Fi connection failed\n');scheduleReconnect();}},25000);
   try{if(active)WiFi.mode=WiFi.Mode.station|WiFi.Mode.accessPoint;WiFi.connect({ssid:wifi.ssid,password:wifi.password});}catch(_){connection='failed';error='Wi-Fiに接続できません。設定を確認してください。';scheduleReconnect();}
 }
-export function getSettingsStatus(){return {...vaultStatus(),setupActive:active,setupIP:active?(Net.get('IP','ap')??''):'',setupMode:active?WiFi.mode:0,connected,connection,error,provider:getSettings().conversationProvider||'xiaozhi',geminiConfigured:!!getSettings().api?.gemini,ip:connected?(Net.get('IP')??''):'',clockReady:Date.now()>1700000000000,httpRequests,lastHttpStatus,lastDisconnectReason,httpConnections,httpHeaders,httpErrors,apClients,apJoinCount,apLastJoined,setupSecondsRemaining:active?Math.max(0,Math.ceil((setupDeadline-Date.now())/1000)):0};}
+export function getSettingsStatus(){
+ let provider='xiaozhi',geminiConfigured=false;
+ try{
+  const data=getSettings();
+  provider=data.conversationProvider||'xiaozhi';
+  geminiConfigured=!!data.api?.gemini;
+ }catch(_){/* Diagnostics remain accessible when the SD vault cannot be read. */}
+ return {...vaultStatus(),ssid:savedWiFi()?.ssid||'',offlineBoot:isOfflineBootRequested(),setupActive:active,setupIP:active?(Net.get('IP','ap')??''):'',setupMode:active?WiFi.mode:0,connected,connection,error,provider,geminiConfigured,ip:connected?(Net.get('IP')??''):'',clockReady:Date.now()>1700000000000,httpRequests,lastHttpStatus,lastDisconnectReason,httpConnections,httpHeaders,httpErrors,apClients,apJoinCount,apLastJoined,setupSecondsRemaining:active?Math.max(0,Math.ceil((setupDeadline-Date.now())/1000)):0};
+}
 export function closeSettings(){
   if(!active)return;
   active=false;apClients=0;setupDeadline=0;server?.close();server=undefined;
   if(expiry)Timer.clear(expiry);expiry=undefined;key='';password='';
-  try{if(getSettings().wifi?.ssid){WiFi.mode=WiFi.Mode.station;connectSaved();}else{monitor?.close();monitor=undefined;WiFi.mode=WiFi.Mode.none;}}catch(_){trace('[settings] AP cleanup failed\n');}
+  try{if(!isOfflineBootRequested()&&savedWiFi()?.ssid){WiFi.mode=WiFi.Mode.station;connectSaved();}else{monitor?.close();monitor=undefined;WiFi.mode=WiFi.Mode.none;}}catch(_){trace('[settings] AP cleanup failed\n');}
   trace('[settings] setup access point closed\n');
 }
 let scanning=false;
@@ -89,7 +123,7 @@ function protect(handler){return async c=>{
   try{const result=await handler(c);lastHttpStatus=result.status??200;return result;}catch(_){lastHttpStatus=400;error='保存できませんでした。Wi-Fi名・パスワードの文字数とSDカードを確認してください。';trace('[settings] settings request failed\n');return c.json({error},400);}
 };}
 export function openSettings(keepStation=false){
-  if(active){if(keepStation&&!connected&&getSettings().wifi?.ssid)Timer.set(connectSaved,300);return {...getSettingsStatus(),wifiQR:`WIFI:T:WPA;S:${ssid};P:${password};;`,pageQR:address+'?k='+key};}
+  if(active){if(keepStation&&!connected&&savedWiFi()?.ssid)Timer.set(connectSaved,300);return {...getSettingsStatus(),wifiQR:`WIFI:T:WPA;S:${ssid};P:${password};;`,pageQR:address+'?k='+key};}
   ensureMonitor();ssid='StackChan-'+String(Net.get('MAC')??'5AD0').replace(/:/g,'').slice(-4).toUpperCase();
   password=randomHex().slice(0,12);key=randomHex();ssid+='-'+key.slice(0,4).toUpperCase();
   apClients=0;setupDeadline=Date.now()+1800000;
@@ -112,18 +146,19 @@ export function openSettings(keepStation=false){
     if(byteLength(name)>32||byteLength(pass)>64||(pass&&byteLength(pass)<8)||(byteLength(pass)===64&&!/^[a-fA-F0-9]{64}$/.test(pass)))throw new Error('wifi');
     if(apiToken&&(!/^[a-z][a-z0-9_-]{0,31}$/.test(apiName)||['constructor','prototype'].includes(apiName)||apiToken.length>4096))throw new Error('api');
     if(!name&&!apiToken&&body.provider===undefined)throw new Error('empty');
+    const previousWiFi=savedWiFi();
     changeSettings(data=>{
       if(body.provider!==undefined)data.conversationProvider=body.provider;
-      if(name)data.wifi={ssid:name,password:!pass&&data.wifi?.ssid===name?data.wifi.password:pass};
+      if(name)data.wifi={ssid:name,password:!pass&&previousWiFi?.ssid===name?previousWiFi.password:pass};
       if(apiToken){if(!Object.hasOwn(data.api,apiName)&&Object.keys(data.api).length>=8)throw new Error('limit');data.api[apiName]=apiToken.trim();}
     });
     trace('[settings] encrypted configuration saved to SD\n');
-    if(name)Timer.set(connectSaved,500);
+    if(name){resumeBootWiFi();Timer.set(connectSaved,500);}
     return c.json({saved:true,encrypted:true});
   }));
   server.post('/finish',protect(c=>{Timer.set(()=>{closeSettings();robot.ui.showFace();},500);return c.json({ok:true});}));
   expiry=Timer.set(()=>{closeSettings();robot.ui.showFace();},1800000);
-  if(keepStation&&getSettings().wifi?.ssid)Timer.set(connectSaved,300);
+  if(keepStation&&savedWiFi()?.ssid)Timer.set(connectSaved,300);
   trace('[settings] setup AP and local settings server started\n');
   return {...getSettingsStatus(),wifiQR:`WIFI:T:WPA;S:${ssid};P:${password};;`,pageQR:address+'?k='+key};
 }
@@ -155,7 +190,7 @@ function createScreen(context){
 }
 export function startSettings(context){
   robot=context;
-  try{getSettings();if(getSettings().wifi?.ssid)connectSaved();}catch(_){trace('[settings] SD configuration unavailable\n');}
+  try{if(savedWiFi()?.ssid)connectSaved();}catch(_){trace('[settings] Wi-Fi initialization unavailable\n');}
   robot.ui.miniApps.register({id:'wifi-settings',hidden:true,title:'Wi-Fiを設定',create:createScreen});
 }
 export {vaultSelfTest};

@@ -12,6 +12,7 @@
     "$(MODDABLE)/modules/piu/MC/outline/manifestRoundRect.json"
   ],
   "modules": {
+    "context-startup": "../../app/context-startup",
     "app-controller": "./application/app-controller",
     "mini-app": "./application/mini-app",
     "mini-app-launcher": "./views/mini-app/mini-app-launcher",

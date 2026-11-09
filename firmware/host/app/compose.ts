@@ -1,3 +1,4 @@
+import { createContextInitializer, type ContextInitializer } from 'context-startup'
 import type { PreferenceConfig } from 'loadPreference'
 import { createAppControllerApplication } from 'app-controller'
 import { DogFace, SimpleFace, SmallFace } from 'behaviors/face'
@@ -16,6 +17,7 @@ import { DOMAIN } from 'consts'
 import type { DrawerButtonViewSpec } from 'drawer'
 import { DynamixelDriver } from 'dynamixel-driver'
 import IMU from 'imu'
+import { createOptionalIMU } from 'optional-imu'
 import { createJitomeFace } from 'jitome-face'
 import Led from 'led'
 import { M5StackChanServoDriver } from 'm5stackchan-servo-driver'
@@ -57,6 +59,7 @@ type UIOptions = {
 }
 
 export type StackchanContextOptions = {
+  initialize?: ContextInitializer
   connectivity?: ConnectivityCapability
   remoteConversationSession?: RemoteConversationSession
   closeHandlers?: ReadonlyArray<() => void | Promise<void>>
@@ -129,80 +132,85 @@ export function createStackchanContext(
   preferences: PreferenceConfig,
   options: StackchanContextOptions = {},
 ): StackchanContext {
-  const drivers = new Map<string, (param: unknown) => MotionDriver>([
-    ['scservo', (param) => new SCServoDriver(param as ConstructorParameters<typeof SCServoDriver>[0])],
-    [
-      'm5stackchan',
-      (param) => new M5StackChanServoDriver(param as ConstructorParameters<typeof M5StackChanServoDriver>[0]),
-    ],
-    ['dynamixel', (param) => new DynamixelDriver(param as ConstructorParameters<typeof DynamixelDriver>[0])],
-    ['pwm', (param) => new PWMServoDriver(param as ConstructorParameters<typeof PWMServoDriver>[0])],
-    ['rs30x', (param) => new RS30XDriver(param as ConstructorParameters<typeof RS30XDriver>[0])],
-    ['none', () => new NoneDriver()],
-  ])
-  const ttsEngines = new Map<string, (param: unknown) => TTS>([
-    ['local', (param) => new LocalTTS(param as ConstructorParameters<typeof LocalTTS>[0])],
-    ['remote', (param) => new RemoteTTS(param as ConstructorParameters<typeof RemoteTTS>[0])],
-    ['voicevox', (param) => new VoiceVoxTTS(param as ConstructorParameters<typeof VoiceVoxTTS>[0])],
-    ['voicevox-web', (param) => new VoiceVoxWebTTS(param as ConstructorParameters<typeof VoiceVoxWebTTS>[0])],
-    ['elevenlabs', (param) => new ElevenLabsTTS(param as ConstructorParameters<typeof ElevenLabsTTS>[0])],
-    ['openai', (param) => new OpenAITTS(param as ConstructorParameters<typeof OpenAITTS>[0])],
-    ['stackchan-voice', (param) => new StackchanVoiceTTS(param as ConstructorParameters<typeof StackchanVoiceTTS>[0])],
-  ])
-  const uiControllers = new Map<string, (param: unknown) => RobotUI>([
-    ['dog', (param) => createStackchanUI(new DogFace(), asUIOptions(param))],
-    ['jitome', (param) => createStackchanUI(createJitomeFace().content, asUIOptions(param))],
-    ['deal-with-it', (param) => createStackchanUI(new DealWithItFace(), asUIOptions(param))],
-    ['simple', (param) => createStackchanUI(new SimpleFace(), asUIOptions(param))],
-    [
-      'image',
-      (param) => {
-        const options = asUIOptions(param)
-        return createStackchanUI(new ImageAvatarFace({ pack: options.avatar }), options)
-      },
-    ],
-    ['small-face', (param) => createStackchanUI(new SmallFace(), asUIOptions(param))],
-  ])
+  const initialize = options.initialize ?? createContextInitializer()
+  const { Driver, TTS, UI, driverPrefs, ttsPrefs, uiPrefs, ttsKey } = initialize('selection', () => {
+    const drivers = new Map<string, (param: unknown) => MotionDriver>([
+      ['scservo', (param) => new SCServoDriver(param as ConstructorParameters<typeof SCServoDriver>[0])],
+      [
+        'm5stackchan',
+        (param) => new M5StackChanServoDriver(param as ConstructorParameters<typeof M5StackChanServoDriver>[0]),
+      ],
+      ['dynamixel', (param) => new DynamixelDriver(param as ConstructorParameters<typeof DynamixelDriver>[0])],
+      ['pwm', (param) => new PWMServoDriver(param as ConstructorParameters<typeof PWMServoDriver>[0])],
+      ['rs30x', (param) => new RS30XDriver(param as ConstructorParameters<typeof RS30XDriver>[0])],
+      ['none', () => new NoneDriver()],
+    ])
+    const ttsEngines = new Map<string, (param: unknown) => TTS>([
+      ['local', (param) => new LocalTTS(param as ConstructorParameters<typeof LocalTTS>[0])],
+      ['remote', (param) => new RemoteTTS(param as ConstructorParameters<typeof RemoteTTS>[0])],
+      ['voicevox', (param) => new VoiceVoxTTS(param as ConstructorParameters<typeof VoiceVoxTTS>[0])],
+      ['voicevox-web', (param) => new VoiceVoxWebTTS(param as ConstructorParameters<typeof VoiceVoxWebTTS>[0])],
+      ['elevenlabs', (param) => new ElevenLabsTTS(param as ConstructorParameters<typeof ElevenLabsTTS>[0])],
+      ['openai', (param) => new OpenAITTS(param as ConstructorParameters<typeof OpenAITTS>[0])],
+      ['stackchan-voice', (param) => new StackchanVoiceTTS(param as ConstructorParameters<typeof StackchanVoiceTTS>[0])],
+    ])
+    const uiControllers = new Map<string, (param: unknown) => RobotUI>([
+      ['dog', (param) => createStackchanUI(new DogFace(), asUIOptions(param))],
+      ['jitome', (param) => createStackchanUI(createJitomeFace().content, asUIOptions(param))],
+      ['deal-with-it', (param) => createStackchanUI(new DealWithItFace(), asUIOptions(param))],
+      ['simple', (param) => createStackchanUI(new SimpleFace(), asUIOptions(param))],
+      [
+        'image',
+        (param) => {
+          const options = asUIOptions(param)
+          return createStackchanUI(new ImageAvatarFace({ pack: options.avatar }), options)
+        },
+      ],
+      ['small-face', (param) => createStackchanUI(new SmallFace(), asUIOptions(param))],
+    ])
 
-  const errors: string[] = []
+    const errors: string[] = []
 
-  // Servo Driver
-  const driverPrefs = preferences.driver
-  const driverKey = driverPrefs.type ?? 'scservo'
-  const Driver = drivers.get(driverKey)
+    // Servo Driver
+    const driverPrefs = preferences.driver
+    const driverKey = driverPrefs.type ?? 'scservo'
+    const Driver = drivers.get(driverKey)
 
-  // TTS
-  const ttsPrefs = preferences.tts
-  const ttsKey = ttsPrefs.type ?? 'local'
-  const TTS = ttsEngines.get(ttsKey)
+    // TTS
+    const ttsPrefs = preferences.tts
+    const ttsKey = ttsPrefs.type ?? 'local'
+    const TTS = ttsEngines.get(ttsKey)
 
-  // UI
-  const uiPrefs = preferences.ui
-  const uiKey = uiPrefs.type ?? 'simple'
-  const UI = uiControllers.get(uiKey)
+    // UI
+    const uiPrefs = preferences.ui
+    const uiKey = uiPrefs.type ?? 'simple'
+    const UI = uiControllers.get(uiKey)
 
-  if (!Driver || !TTS || !UI) {
-    for (const [key, klass] of [
-      [driverKey, Driver],
-      [ttsKey, TTS],
-      [uiKey, UI],
-    ]) {
-      if (klass == null) {
-        errors.push(`type "${key}" does not exist`)
+    if (!Driver || !TTS || !UI) {
+      for (const [key, klass] of [
+        [driverKey, Driver],
+        [ttsKey, TTS],
+        [uiKey, UI],
+      ]) {
+        if (klass == null) {
+          errors.push(`type "${key}" does not exist`)
+        }
       }
+      throw new Error(errors.join('\n'))
     }
-    throw new Error(errors.join('\n'))
-  }
+
+    return { Driver, TTS, UI, driverPrefs, ttsPrefs, uiPrefs, ttsKey }
+  })
 
   trace(`[main] TTS engine: ${ttsKey}\n`)
 
-  const driver = Driver(driverPrefs)
-  const ui = UI(uiPrefs)
-  const tts = TTS(ttsPrefs)
+  const driver = initialize('driver', () => Driver(driverPrefs))
+  const ui = initialize('ui', () => UI(uiPrefs))
+  const tts = initialize('tts', () => TTS(ttsPrefs))
 
-  const touch = config.Touch ? new Touch(config.Touch, createTouchOptions()) : undefined
+  const touch = initialize('touch', () => config.Touch ? new Touch(config.Touch, createTouchOptions()) : undefined)
   const optionalHead = !config.TouchPanel && !globalEnv.device?.sensor?.TouchPanel && Modules.has('archive-head-touch')
-    ? (Modules.importNow('archive-head-touch') as () => unknown)()
+    ? initialize('head-touch', () => (Modules.importNow('archive-head-touch') as () => unknown)())
     : undefined
   const touchPanelConstructor = (config.TouchPanel ?? globalEnv.device?.sensor?.TouchPanel ?? optionalHead) as
     | ConstructorParameters<typeof TouchPanel>[0]
@@ -210,19 +218,24 @@ export function createStackchanContext(
   if (touchPanelConstructor && !config.TouchPanel) {
     trace('[main] using top touch-panel provider\n')
   }
-  const touchPanel = touchPanelConstructor ? new TouchPanel(touchPanelConstructor, (config as { archiveM5Pet?: boolean }).archiveM5Pet ? { swipeThreshold: 40 } : {}) : undefined
+  const touchPanel = initialize('touch-panel', () => touchPanelConstructor ? new TouchPanel(touchPanelConstructor, (config as { archiveM5Pet?: boolean }).archiveM5Pet ? { swipeThreshold: 40 } : {}) : undefined)
+  // IMU is an optional input. A sensor/I2C initialization error must not
+  // prevent the Face, buttons, touchscreen, audio or camera from starting.
   const imu = globalEnv.device?.sensor?.IMU
-    ? new IMU(globalEnv.device.sensor.IMU as ConstructorParameters<typeof IMU>[0])
+    ? initialize('imu', () => createOptionalIMU(
+        () => new IMU(globalEnv.device!.sensor!.IMU as ConstructorParameters<typeof IMU>[0]),
+        () => trace('[IMU] unavailable; orientation and motion detection disabled for this boot\n'),
+      ))
     : undefined
-  const microphone = Modules.has('audio-in') ? new Microphone() : undefined
-  const camera = new Camera()
-  const speaker = new Speaker({ volume: ttsPrefs.volume })
+  const microphone = initialize('microphone', () => Modules.has('audio-in') ? new Microphone() : undefined)
+  const camera = initialize('camera', () => new Camera())
+  const speaker = initialize('speaker', () => new Speaker({ volume: ttsPrefs.volume }))
   const media = Modules.has('media-player')
-    ? new (Modules.importNow('media-player') as MediaPlayerConstructor)()
+    ? initialize('media', () => new (Modules.importNow('media-player') as MediaPlayerConstructor)())
     : undefined
 
   const configLed = preferences.led
-  const ledEntries: [string, RobotLed][] = Object.entries(configLed).flatMap(
+  const ledEntries: [string, RobotLed][] = initialize('led', () => Object.entries(configLed).flatMap(
     ([key, ledConfig]): [string, RobotLed][] => {
       const candidate = ledConfig as {
         type?: unknown
@@ -256,13 +269,14 @@ export function createStackchanContext(
       }
       return [[key, new Led(candidate as { pin: number; length?: number; order?: string })]]
     },
-  )
+  ))
   const led: Record<string, RobotLed> = {}
   for (const [key, value] of ledEntries) {
     led[key] = value
   }
 
   const contextParams = {
+    initialize,
     driver,
     ui,
     tts,
@@ -281,6 +295,6 @@ export function createStackchanContext(
     camera,
     led,
   } satisfies ConstructorParameters<typeof StackchanRuntimeContext>[0]
-  const context: StackchanContext = new StackchanRuntimeContext(contextParams)
+  const context: StackchanContext = initialize('runtime', () => new StackchanRuntimeContext(contextParams))
   return context
 }

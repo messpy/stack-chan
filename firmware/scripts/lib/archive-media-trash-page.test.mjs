@@ -1,7 +1,7 @@
 import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';import test from 'node:test';
-for(const [kind,path,end] of [['LAN','../../host/app/archive-web-page.js','async function messages(){'],['PC','../../../../hub/index.html','async function refresh(){']]){
+for(const [kind,path,end] of [['LAN','../../host/app/archive-web-page.js','async function messages(){'],['PC compatibility fixture','../fixtures/hub-media-controls.js',null]]){
  test(kind+' delete requires confirmation, then refreshes; restore does not delete other data',async()=>{
-  const page=fs.readFileSync(new URL(path,import.meta.url),'utf8'),start=page.indexOf('const deletableMediaName=');const script=page.slice(start,page.indexOf(end,start));
+  const page=fs.readFileSync(new URL(path,import.meta.url),'utf8'),start=page.indexOf('const deletableMediaName=');const script=end?page.slice(start,page.indexOf(end,start)):page;
   const elements=new Map(),calls=[];let confirmed=false,refreshes=0;
   const el=id=>{if(!elements.has(id))elements.set(id,{textContent:'',hidden:true,disabled:false,children:[],replaceChildren(){this.children=[]},append(...children){this.children.push(...children)}});return elements.get(id)};
   const request=async(path,args)=>{calls.push({path,args});return path.includes('/trash')?{items:[],total:0,next:null}:{};};

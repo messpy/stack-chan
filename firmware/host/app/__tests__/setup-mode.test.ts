@@ -49,6 +49,7 @@ function installAliases(): void {
     ['settings-status', 'settings-status.js'],
     ['settings-view', '__tests__/fakes/settings-view.js'],
     ['volume-preview', 'volume-preview.js'],
+    ['boot-network-recovery', 'boot-network-recovery.js'],
   ])
     writeAliasPackage(appRoot, name, resolve(appRoot, path))
   writeAliasPackage(appRoot, 'speaker', resolve(appRoot, '__tests__/fakes/settings-speaker.js'), {
@@ -343,3 +344,31 @@ for (const action of ['exit', 'boot'] as const) {
     assert.equal(await freshResult, 'boot')
   })
 }
+
+test('offline boot preserves saved Wi-Fi credentials and skips connection for this boot', async () => {
+  const c = await setup()
+  const policy = await import('../boot-network-recovery.js')
+  policy.resumeBootWiFi()
+  c.preference.set('wifi', 'ssid', 'saved-network')
+  c.preference.set('wifi', 'password', 'saved-password')
+  const pending = c.startSetupMode(c.application)
+  c.view.lastContext?.actions.bootOffline()
+  assert.equal(await pending, 'offline')
+  assert.equal(c.preference.get('wifi', 'ssid'), 'saved-network')
+  assert.equal(c.preference.get('wifi', 'password'), 'saved-password')
+  assert.equal(policy.isOfflineBootRequested(), true)
+  policy.resumeBootWiFi()
+  assert.equal(policy.isOfflineBootRequested(), false)
+})
+
+test('stale offline button cannot change a completed normal boot decision', async () => {
+  const c = await setup()
+  const policy = await import('../boot-network-recovery.js')
+  policy.resumeBootWiFi()
+  const pending = c.startSetupMode(c.application)
+  const staleOffline = c.view.lastContext!.actions.bootOffline
+  c.view.lastContext!.actions.boot()
+  assert.equal(await pending, 'boot')
+  staleOffline()
+  assert.equal(policy.isOfflineBootRequested(), false)
+})

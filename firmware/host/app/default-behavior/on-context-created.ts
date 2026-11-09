@@ -63,6 +63,8 @@ function errorMessage(error: unknown): string {
 }
 
 export const onContextCreated: NonNullable<StackchanAppBehavior['onContextCreated']> = (robot, options) => {
+  const initialize = options.initialize ?? ((_component, create) => create())
+  return initialize('default-setup', () => {
   const emotions: Emotion[] = [Emotion.HAPPY, Emotion.ANGRY, Emotion.SAD, Emotion.HOT, Emotion.SLEEPY, Emotion.NEUTRAL]
   const emotionOptions = [
     { value: String(Emotion.NEUTRAL), label: localize('drawer.emotion.neutral') },
@@ -212,7 +214,7 @@ export const onContextCreated: NonNullable<StackchanAppBehavior['onContextCreate
       syncFaceMode(app)
     },
   })
-  syncFaceMode()
+  initialize('default-face', () => syncFaceMode())
   robot.drawer.addDrawerButton({
     key: 'cycleEmotion',
     label: localize('drawer.emotion'),
@@ -294,7 +296,7 @@ export const onContextCreated: NonNullable<StackchanAppBehavior['onContextCreate
       target.ui.closeDrawer()
     },
   })
-  syncHandAnimation()
+  initialize('default-hands', () => syncHandAnimation())
 
   const runCameraPreview = async (target: typeof robot) => {
     let frame: Awaited<ReturnType<typeof target.camera.capture>> | undefined
@@ -595,9 +597,9 @@ export const onContextCreated: NonNullable<StackchanAppBehavior['onContextCreate
       robot.setColor('primary', 0x00, 0x00, 0x00)
       robot.setColor('secondary', 0xff, 0xff, 0xff)
     }
-    registerColorDrawerButton()
+    initialize('default-colors', () => registerColorDrawerButton())
   }
-  registerColorDrawerButton()
+  initialize('default-colors', () => registerColorDrawerButton())
 
   if (robot.imu != null) {
     const motionEmotionMap: Record<MotionType, Emotion> = {
@@ -608,7 +610,7 @@ export const onContextCreated: NonNullable<StackchanAppBehavior['onContextCreate
       fallenRight: Emotion.ANGRY,
       shake: Emotion.HOT,
     }
-    robot.imu.start()
+    initialize('default-imu', () => robot.imu!.start())
     robot.imu.onEvent = (event) => {
       const type = event.motion
       trace(`[IMU] motion detected: ${type}\n`)
@@ -811,4 +813,5 @@ export const onContextCreated: NonNullable<StackchanAppBehavior['onContextCreate
       }
     })
   }
+  })
 }

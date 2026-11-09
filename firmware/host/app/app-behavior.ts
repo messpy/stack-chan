@@ -1,9 +1,11 @@
+import type { ContextInitializer } from 'context-startup'
 import type { PreferenceConfig } from 'loadPreference'
 import type { StackchanContext } from 'capabilities'
 
 export { runLaunchBehaviors } from 'app-launch'
 
 export type StackchanAppBehaviorOption = {
+  initialize?: ContextInitializer
   device?: unknown
   config: PreferenceConfig
 }

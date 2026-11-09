@@ -129,3 +129,25 @@ When reviewing a pull request:
 - If no release note or changeset is needed, make sure the review states why
 - For docs, CI, repository metadata, case, and schematics changes, verify release impact before requesting a release note or changeset
 - Ask for tested targets, hardware-specific behavior, and reproduction or verification details when they affect release risk
+
+## StackChan 操作スクリプトの使い方（2026-11-09）
+
+StackChan用の類似スクリプトを増やさず、既存の `~/stackchan.sh`（リポジトリの `firmware/scripts/stackchan.sh` へのリンク）を使う。詳細は `docs/stackchan-cli.md`。
+
+```bash
+# tmux内：PR最新取得→専用worktreeでローカル統合→テスト→ビルド→書き込み→起動ログ検証
+bash ~/stackchan.sh --PR 90 --all --yes
+# 成功済みのビルドから書き込みだけ再開。PR/base/成果物が変わっていれば停止する
+bash ~/stackchan.sh --PR 90 --write --yes
+# 個別操作。組合せも可
+bash ~/stackchan.sh --check
+bash ~/stackchan.sh --PR 90 --test --build
+bash ~/stackchan.sh --logs --seconds 90 --yes
+```
+
+- `--PR` / `--pr` はPR番号を指定。`stackchan-super` とPRの最新SHAを取得し、元の未コミット差分を変えず専用worktreeに統合する。GitHub上のPRマージやpushは実行しない。
+- `--all` はソフトウェアテスト、ビルド、書き込み、起動ログ検証まで。撮影・会話の実機受入試験は含まない。
+- `--yes` はユーザーがこのコマンドで選んだ操作を事前承認する引数。これが指定された実行ではyes/no入力を省略する。エージェントによる無断の本体操作を許可する恒久設定として扱わない。
+- `--yes` でもUSB同一性、16MiBバックアップ・SHA256、成果物照合、元のhub状態の復帰、エラー時停止は維持する。SDバックアップはユーザー指定で省略。自動リセットはしないため、手動ダウンロードモードと書き込み後の短いRST操作は必要。
+- ログは `/home/kmac/work/stackchan-runs/run-日時-一意ID/`。失敗時はSTEP・コマンド・ログ末尾・保存先を表示し、その先へ進めない。再実行で成功済みのテスト・ビルドを無駄に繰り返さず、適切な引数を選ぶ。
+- 既存ログ、フラッシュバックアップ、元の認証情報を削除しない。旧ホストスクリプトは検証済みアーカイブに保存済み。

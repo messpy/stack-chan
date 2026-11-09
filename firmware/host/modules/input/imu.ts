@@ -23,7 +23,7 @@ type IMUConstructor = new (options: unknown) => IMUDriver
 
 export default class IMU {
   #driver: IMUDriver
-  #timer: Timer | undefined
+  #timer: ReturnType<typeof Timer.repeat> | undefined
   #recognizer: MotionRecognizer
   #interval: number
   #lastSample: IMUSample = {}
@@ -32,9 +32,26 @@ export default class IMU {
 
   constructor(IMUConstructor: IMUConstructor, options: IMUOptions = {}) {
     this.#recognizer = new MotionRecognizer(options)
-    this.#driver = new IMUConstructor({})
+    try {
+      this.#driver = new IMUConstructor({})
+    } catch (error) {
+      trace('[IMU] initialization failed stage=constructor\n')
+      throw error
+    }
     this.#interval = options.interval ?? 100
-    this.#driver.configure?.({ order: 'zxy' })
+    try {
+      this.#driver.configure?.({ order: 'zxy' })
+    } catch (error) {
+      trace('[IMU] initialization failed stage=configure\n')
+      // Configuration can fail after hardware resources have been allocated.
+      // Preserve the original failure even if the driver cleanup also fails.
+      try {
+        this.#driver.close?.()
+      } catch {
+        trace('[IMU] initialization cleanup failed\n')
+      }
+      throw error
+    }
   }
 
   #sample(): IMUSample {
