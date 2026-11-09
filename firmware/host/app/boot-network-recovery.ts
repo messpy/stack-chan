@@ -30,8 +30,15 @@ export function networkReadyResultForRecoveryChoice(
   reason: string,
 ): OfflineNetworkReadyResult | undefined {
   if (choice === 'retry') return undefined
+  requestOfflineBoot()
   return {
     status: 'skipped',
     reason: `offline start selected: ${reason}`,
   }
 }
+
+// A per-boot decision, never persisted into Wi-Fi credentials.
+let offlineBootRequested = false
+export function requestOfflineBoot(): void { offlineBootRequested = true }
+export function isOfflineBootRequested(): boolean { return offlineBootRequested }
+export function resumeBootWiFi(): void { offlineBootRequested = false }

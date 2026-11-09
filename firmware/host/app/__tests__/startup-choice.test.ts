@@ -37,7 +37,7 @@ type StartupSplashStub = {
 type SetupModeStub = {
   resetSetupModeCalls(): void
   startedSetupModeApplications(): unknown[]
-  finishSetupMode(choice: 'back' | 'boot'): void
+  finishSetupMode(choice: 'back' | 'boot' | 'offline'): void
 }
 
 function createManualTimer(): ManualTimer {
@@ -247,6 +247,28 @@ test('wasm onLaunch boots after setup is explicitly finished', async () => {
 
   assert.deepEqual(setupMode.startedSetupModeApplications(), [{ type: 'startup-splash' }])
   setupMode.finishSetupMode('boot')
+  assert.equal(await result, true)
+})
+
+test('wasm onLaunch completes an explicit offline boot without looping back to setup', async () => {
+  installBareSpecifierPackages()
+  const [{ onLaunch }, { default: timer }, startupSplash, setupMode] = await Promise.all([
+    import('app-default-behavior/wasm/on-launch') as Promise<WasmOnLaunchModule>,
+    import('timer') as Promise<{ default: FakeTimer }>,
+    import('startup-splash') as Promise<StartupSplashStub>,
+    import('setup-mode') as Promise<SetupModeStub>,
+  ])
+  timer.reset()
+  startupSplash.resetStartupSplashCalls()
+  setupMode.resetSetupModeCalls()
+
+  const result = onLaunch()
+  startupSplash.pressStartupSettings()
+  timer.advance(0)
+  await Promise.resolve()
+
+  assert.deepEqual(setupMode.startedSetupModeApplications(), [{ type: 'startup-splash' }])
+  setupMode.finishSetupMode('offline')
   assert.equal(await result, true)
 })
 

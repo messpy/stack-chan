@@ -1,5 +1,6 @@
 import {
   type BootWiFiRecoveryChoice,
+  isOfflineBootRequested,
   bootWiFiFailureMessage,
   networkReadyResultForRecoveryChoice,
   shouldRetryBootWiFiAttempt,
@@ -83,6 +84,10 @@ export function getHostBootServices(): HostBootServices {
 async function startStoredWiFi(
   options: NonNullable<HostBootServicesOptions['wifi']> = {},
 ): Promise<NetworkReadyResult> {
+  if (isOfflineBootRequested()) {
+    stopStoredWiFiConnection()
+    return { status: 'skipped', reason: 'offline boot selected; credentials preserved' }
+  }
   if ((config as { archiveUSBOnly?: boolean }).archiveUSBOnly) return { status: 'skipped', reason: 'USB archive mode' }
   const maxAttempts = options.maxAttempts ?? DEFAULT_BOOT_WIFI_MAX_ATTEMPTS
   const retryDelayMs = options.retryDelayMs ?? DEFAULT_BOOT_WIFI_RETRY_DELAY_MS

@@ -16,14 +16,15 @@ import {
   settingsViews,
 } from 'settings-view'
 import Speaker from 'speaker'
-import { clearStoredWiFiCredentials, connectStoredWiFi, stopStoredWiFiConnection } from 'stored-wifi'
+import { connectStoredWiFi, stopStoredWiFiConnection } from 'stored-wifi'
+import { requestOfflineBoot } from 'boot-network-recovery'
 import { applyTimezone as applySystemTimezone, normalizeTimezoneId, type TimezoneId } from 'timezone-settings'
 import { canonicalizeVolume, resolveVolumePreference } from 'volume-model'
 import { VolumePreviewQueue } from 'volume-preview'
 import { scanWiFiNetworks } from 'wifi-scan'
 import type { WiFiScanSession } from 'wifi-scan-types'
 
-export type SetupModeResult = 'back' | 'boot'
+export type SetupModeResult = 'back' | 'boot' | 'offline'
 
 const VOLUME_PREVIEW_FREQUENCY_HZ = 1000
 const VOLUME_PREVIEW_DURATION_MS = 120
@@ -86,7 +87,7 @@ export function startSetupMode(application: SettingsApplication): Promise<SetupM
       actions: {
         exit: () => finish('back'),
         boot: () => finish('boot'),
-        bootOffline: clearWiFiAndBootOffline,
+        bootOffline: bootOffline,
         navigate: showView,
         scanWifi: scanNetworks,
         cancelWifiScan,
@@ -104,20 +105,19 @@ export function startSetupMode(application: SettingsApplication): Promise<SetupM
       currentView?.dispose?.()
       currentView = undefined
       preferenceServer?.close?.()
-      if (result === 'back') stopStoredWiFiConnection()
+      if (result === 'back' || result === 'offline') stopStoredWiFiConnection()
       void volumePreviewQueue.close().then(
         () => resolve(result),
         () => resolve(result),
       )
     }
 
-    function clearWiFiAndBootOffline() {
-      clearStoredWiFiCredentials()
-      status['wifi.ssid'] = ''
-      status['wifi.password'] = ''
+    function bootOffline() {
+      if (finished) return
+      requestOfflineBoot()
       status.wifi = SettingsStatusValue.NOT_CONNECTED
-      trace('[network] saved Wi-Fi credentials cleared for offline boot\n')
-      finish('boot')
+      trace('[network] offline boot selected; saved credentials preserved\n')
+      finish('offline')
     }
 
     function showView(id: SettingsViewId) {

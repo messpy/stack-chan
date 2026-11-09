@@ -41,3 +41,9 @@ AIの返答と画像認識の全文にも適用します。オフラインの下
 AI選択画面は選択中サービスと会話ON/OFFを表示し、「会話を始める」「会話を終了」で切り替えます。オフラインの下部選択肢にも「AIと会話」「AI選択」があります。オンライン開始時にはオフライン操作を閉じ、話者選択を経て接続します。読み上げ中の同時開始は防止します。`/chat/test` は `provider` を指定してマイク送信なしの接続確認ができます。アラーム停止用の24pxフォントには「停止中」の字形も含めます。
 
 For the official StackChan CoreS3 platform use `npm run build:archive:m5stackchan_cores3`; the older `build:archive` targets generic SDK CoreS3. See [PR90 lifecycle review](../../docs/release-notes/pr90-camera-audio-handoff.md) for verification limits and the approval-gated update script.
+
+### 起動設定でのオフライン選択
+
+「オフラインで起動」は保存済みSSID・パスワードを削除せず、今回の起動に限って自動接続・自動再接続を抑止します。次回起動は通常の接続方針へ戻ります。本体やWeb/USBの明示的な再接続、またはWi-Fi設定の保存で今回の抑止を解除できます。
+
+標準起動設定のWi-FiはNVS、Archive設定は暗号化SDに保存されます。Archive側にWi-Fi設定が無い場合は既存NVS設定を読み取り専用で利用し、保存先の違いだけで空欄や未設定として扱わないようにします。これは既に消去された設定を自動復元する機能ではありません。
