@@ -3,7 +3,7 @@ import vm from 'node:vm'
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import {stripTypeScriptTypes} from 'node:module'
-async function harness(saved,stored={}){
+async function harness(saved,stored={},failVaultRead=false){
  const calls=[],timers=[],context=vm.createContext({trace(){}}),cache=new Map()
  class WiFi{static Mode={none:0,station:1,accessPoint:2};static connect(value){calls.push(value)}constructor(callback){this.callback=callback}close(){}}
  const deps={
@@ -14,7 +14,7 @@ async function harness(saved,stored={}){
   'archive-http-server':{default:class{}},net:{default:{get:()=>''}},timer:{default:{set(fn){timers.push(fn);return timers.length},clear(){}}},time:{default:{}},sntp:{default:class{}},
   'piu/QRCode':{default:class{}},'piu/MC':{Container:class{},Label:class{},Text:class{},Skin:class{},Style:class{}},
   'ui-controls':{ActionButton:class{}},'ui-theme':{uiFont:()=>''},'http-server-service':{HttpServerService:class{},Response:class{}},
-  'archive-vault':{getSettings:()=>saved,changeSettings(){throw Error('No settings write allowed')},vaultStatus:()=>({ssid:saved.wifi?.ssid||''}),vaultSelfTest(){},randomHex:()=>''},
+  'archive-vault':{getSettings:()=>{if(failVaultRead)throw Error('SD read failed');return saved},changeSettings(){throw Error('No settings write allowed')},vaultStatus:()=>({ssid:saved.wifi?.ssid||''}),vaultSelfTest(){},randomHex:()=>''},
  }
  async function load(name){
   if(cache.has(name))return cache.get(name)
@@ -56,3 +56,26 @@ test('offline choice skips manifest-default boot Wi-Fi without erasing credentia
  assert.equal(online.status,'connected');assert.equal(h.calls.length,1)
  assert.equal(h.calls[0].ssid,'manifest-network')
 })
+
+
+test('SD vault read exception falls back to existing NVS Wi-Fi without writing',async()=>{
+ const saved={wifi:null,api:{}},stored={ssid:'nvs-network',password:'nvs-password'};
+ const h=await harness(saved,stored,true);
+ h.api.startSettings(h.robot);
+ assert.equal(h.calls.length,1);
+ assert.equal(h.calls[0].ssid,'nvs-network');
+ assert.equal(h.calls[0].password,'nvs-password');
+ const status=h.api.getSettingsStatus();
+ assert.equal(status.ssid,'nvs-network');
+ assert.equal(status.provider,'xiaozhi');
+ assert.equal(stored.ssid,'nvs-network');
+ assert.equal(saved.wifi,null);
+});
+test('SD vault exception with explicit offline selection does not auto-connect',async()=>{
+ const saved={wifi:null,api:{}},stored={ssid:'nvs-network',password:'nvs-password'};
+ const h=await harness(saved,stored,true);
+ h.policy.requestOfflineBoot();
+ h.api.startSettings(h.robot);
+ assert.equal(h.calls.length,0);
+ assert.equal(h.api.getSettingsStatus().ssid,'nvs-network');
+});

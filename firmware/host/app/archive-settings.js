@@ -20,11 +20,25 @@ let robot,monitor,server,expiry,connectionTimeout,ntp,reconnectTimer;
 let reconnectDelay=3000;
 // The standard boot settings use NVS; Archive settings use the SD vault.
 // Read existing NVS credentials when the vault has no Wi-Fi entry. Never rewrite either store on read.
+let vaultReadErrorReported=false;
 function savedWiFi(){
- const saved=getSettings().wifi;
- if(saved?.ssid)return saved;
- const ssid=readStoredWiFiPreference('ssid');
- return ssid?{ssid,password:readStoredWiFiPreference('password')}:undefined;
+ // An SD read exception must not prevent an existing NVS Wi-Fi connection.
+ // A synchronous SD driver stall cannot be recovered within this VM.
+ try{
+  const saved=getSettings().wifi;
+  vaultReadErrorReported=false;
+  if(saved?.ssid)return saved;
+ }catch(_){
+  if(!vaultReadErrorReported)trace('[settings] SD vault unavailable; trying NVS Wi-Fi\n');
+  vaultReadErrorReported=true;
+ }
+ try{
+  const ssid=readStoredWiFiPreference('ssid');
+  return ssid?{ssid,password:readStoredWiFiPreference('password')}:undefined;
+ }catch(_){
+  trace('[settings] NVS Wi-Fi read unavailable\n');
+  return undefined;
+ }
 }
 
 function scheduleReconnect(){if(isOfflineBootRequested()||reconnectTimer||!savedWiFi()?.ssid)return;const delay=reconnectDelay;reconnectDelay=Math.min(60000,reconnectDelay*2);reconnectTimer=Timer.set(()=>{reconnectTimer=undefined;if(!connected&&connection!=='connecting')connectSaved();},delay);}
@@ -69,7 +83,15 @@ function connectSaved(){
   connectionTimeout=Timer.set(()=>{connectionTimeout=undefined;if(!connected){connection='failed';error='Wi-Fiに接続できません。SSID・パスワード・2.4 GHzを確認してください。';trace('[settings] Wi-Fi connection failed\n');scheduleReconnect();}},25000);
   try{if(active)WiFi.mode=WiFi.Mode.station|WiFi.Mode.accessPoint;WiFi.connect({ssid:wifi.ssid,password:wifi.password});}catch(_){connection='failed';error='Wi-Fiに接続できません。設定を確認してください。';scheduleReconnect();}
 }
-export function getSettingsStatus(){return {...vaultStatus(),ssid:savedWiFi()?.ssid||'',offlineBoot:isOfflineBootRequested(),setupActive:active,setupIP:active?(Net.get('IP','ap')??''):'',setupMode:active?WiFi.mode:0,connected,connection,error,provider:getSettings().conversationProvider||'xiaozhi',geminiConfigured:!!getSettings().api?.gemini,ip:connected?(Net.get('IP')??''):'',clockReady:Date.now()>1700000000000,httpRequests,lastHttpStatus,lastDisconnectReason,httpConnections,httpHeaders,httpErrors,apClients,apJoinCount,apLastJoined,setupSecondsRemaining:active?Math.max(0,Math.ceil((setupDeadline-Date.now())/1000)):0};}
+export function getSettingsStatus(){
+ let provider='xiaozhi',geminiConfigured=false;
+ try{
+  const data=getSettings();
+  provider=data.conversationProvider||'xiaozhi';
+  geminiConfigured=!!data.api?.gemini;
+ }catch(_){/* Diagnostics remain accessible when the SD vault cannot be read. */}
+ return {...vaultStatus(),ssid:savedWiFi()?.ssid||'',offlineBoot:isOfflineBootRequested(),setupActive:active,setupIP:active?(Net.get('IP','ap')??''):'',setupMode:active?WiFi.mode:0,connected,connection,error,provider,geminiConfigured,ip:connected?(Net.get('IP')??''):'',clockReady:Date.now()>1700000000000,httpRequests,lastHttpStatus,lastDisconnectReason,httpConnections,httpHeaders,httpErrors,apClients,apJoinCount,apLastJoined,setupSecondsRemaining:active?Math.max(0,Math.ceil((setupDeadline-Date.now())/1000)):0};
+}
 export function closeSettings(){
   if(!active)return;
   active=false;apClients=0;setupDeadline=0;server?.close();server=undefined;
@@ -168,7 +190,7 @@ function createScreen(context){
 }
 export function startSettings(context){
   robot=context;
-  try{getSettings();if(savedWiFi()?.ssid)connectSaved();}catch(_){trace('[settings] SD configuration unavailable\n');}
+  try{if(savedWiFi()?.ssid)connectSaved();}catch(_){trace('[settings] Wi-Fi initialization unavailable\n');}
   robot.ui.miniApps.register({id:'wifi-settings',hidden:true,title:'Wi-Fiを設定',create:createScreen});
 }
 export {vaultSelfTest};
