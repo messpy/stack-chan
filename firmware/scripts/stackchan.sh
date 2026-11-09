@@ -106,10 +106,48 @@ class Runner:
             tty.write('[CHECK] ' + message + ' [yes/no] '); tty.flush()
             if tty.readline().strip() != 'yes': raise RuntimeError('cancelled; no further device operation')
 
+    def pr_metadata(self):
+        path = self.cmd('pr-metadata', ['gh', 'api', 'repos/messpy/stack-chan/pulls/' + str(self.a.pr),
+            '--jq', '{number:.number,state:.state,baseRef:.base.ref,baseSHA:.base.sha,headSHA:.head.sha,headRepo:.head.repo.full_name}'])
+        return json.loads(path.read_text())
+
+    def prepare_pr(self):
+        info = self.pr_metadata()
+        if info['number'] != self.a.pr or info['state'] != 'open' or info['baseRef'] != 'stackchan-super' or info['headRepo'] != 'messpy/stack-chan':
+            raise RuntimeError('PR is not an open same-repository PR targeting stackchan-super')
+        for key in ('baseSHA', 'headSHA'):
+            if not re.fullmatch('[0-9a-f]{40}', info[key]): raise RuntimeError('invalid PR commit SHA')
+        if self.a.sha and self.a.sha != info['headSHA']: raise RuntimeError('PR HEAD differs from --sha')
+        (self.run / 'pr-selection.json').write_text(json.dumps(info, indent=2) + '\n')
+        self.pr_info = info
+        source = self.repo
+        # Fetch objects only. Never checkout/reset/merge the user's source worktree.
+        self.cmd('pr-fetch', ['git', 'fetch', '--no-tags', 'https://github.com/messpy/stack-chan.git', info['baseSHA'], info['headSHA']], source)
+        tree_log = self.cmd('pr-merge-tree', ['git', 'merge-tree', '--write-tree', info['baseSHA'], info['headSHA']], source)
+        tree = tree_log.read_text().splitlines()[0]
+        if not re.fullmatch('[0-9a-f]{40}', tree): raise RuntimeError('unexpected merge-tree result')
+        target = HOME / 'work' / ('stackchan-pr' + str(self.a.pr) + '-integration-' + info['baseSHA'][:12] + '-' + info['headSHA'][:12])
+        if target.exists():
+            # Never repair/reset an existing worktree automatically.
+            current = subprocess.check_output(['git','-C',str(target),'rev-parse','HEAD^{tree}'],text=True).strip()
+            dirty = subprocess.check_output(['git','-C',str(target),'status','--porcelain','--untracked-files=no'],text=True).strip()
+            if current != tree or dirty: raise RuntimeError('existing integration worktree differs or has conflicts; preserve it and inspect manually: ' + str(target))
+        else:
+            self.cmd('pr-worktree', ['git', 'worktree', 'add', '--detach', target, info['baseSHA']], source)
+            self.cmd('pr-local-merge', ['git', '-c', 'user.name=messpy', '-c', 'user.email=110882522+messpy@users.noreply.github.com',
+                'merge', '--no-ff', '--no-edit', info['headSHA']], target)
+        self.repo = target
+        self.fw = target / 'firmware'
+        modules = self.fw / 'node_modules'
+        existing = source / 'firmware/node_modules'
+        if not modules.exists() and not modules.is_symlink() and existing.is_dir(): modules.symlink_to(existing.resolve(), target_is_directory=True)
+        self.log('CHECK', 'PR=' + str(self.a.pr) + ' BASE=' + info['baseSHA'] + ' PR_HEAD=' + info['headSHA'] + ' WORKTREE=' + str(target))
+        self.log('INFO', 'Local integration only. GitHub PR merge/push is never performed.')
+
     def check(self):
         if not (self.repo / 'AGENTS.md').is_file() or not self.fw.is_dir(): raise RuntimeError('repository missing: ' + str(self.repo))
         self.head = self.query(['git', 'rev-parse', 'HEAD'])
-        if self.a.sha and self.a.sha != self.head: raise RuntimeError('HEAD differs from --sha')
+        if self.a.sha and not getattr(self, 'pr_info', None) and self.a.sha != self.head: raise RuntimeError('HEAD differs from --sha')
         if self.query(['git', 'status', '--porcelain', '--untracked-files=no']): raise RuntimeError('tracked changes exist; preserve them and use a clean worktree')
         self.cmd('diff-check', ['git', 'diff', '--check'], self.repo)
         for path in [SDK_ENV, IDF_ENV, DEVICE_PYTHON, NODE / 'node', PRIVATE]:
@@ -124,7 +162,7 @@ class Runner:
             if state.returncode: self.log('WARN', 'user systemd bus unavailable; service state unknown')
             else:
                 for line in state.stdout.splitlines(): self.log('CHECK', line)
-        self.log('INFO', 'No fetch/checkout/merge, SD backup, settings erase or photo request. Flash backup retained.')
+        self.log('INFO', 'No GitHub merge/push, SD backup, settings erase or photo request. Flash backup retained.')
 
     def setup_env(self):
         # Only source the known SDK exports; never evaluate user input as shell code.
@@ -150,7 +188,7 @@ class Runner:
                 'private': sha(PRIVATE)}
 
     def test(self):
-        self.cmd('cli', ['python3', 'scripts/lib/stackchan-cli.test.py'], self.fw)
+        self.cmd('cli', ['python3', DEFAULT_REPO / 'firmware/scripts/lib/stackchan-cli.test.py'], self.fw)
         self.cmd('unit', ['npm', 'run', 'test:unit'], self.fw)
         self.cmd('archive', ['bash', '-c', 'node --experimental-vm-modules --test --test-concurrency=1 scripts/lib/archive-*.test.mjs'], self.fw)
 
@@ -283,8 +321,13 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
             self.unoccupied(expected['port'])
             self.capture(expected)
 
+    def check_pr_freshness(self):
+        if getattr(self, 'pr_info', None) and self.pr_metadata() != self.pr_info:
+            raise RuntimeError('PR/base changed during validation; stop and rerun against the new snapshot')
+
     def write(self):
         if not os.environ.get('TMUX'): raise RuntimeError('--write/--all must run inside tmux to survive SSH disconnect')
+        self.check_pr_freshness()
         self.verify_receipt()
         expected = self.identity()
         self.log('CHECK', 'TARGET=m5stackchan_cores3 SHA=' + self.head + ' PORT=' + expected['port'])
@@ -305,6 +348,7 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
             self.confirm('SHA=' + self.head + ' の成果物を本体へ書き込みますか？')
             now = self.same_device(expected)
             self.unoccupied(now['port'])
+            self.check_pr_freshness()
             self.verify_receipt()
             base[base.index('--port')+1] = now['port']
             argv = base + ['write-flash', '--flash-mode', 'dio', '--flash-size', '16MB', '--flash-freq', '80m']
@@ -312,13 +356,23 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
             self.cmd('flash', argv, timeout=300)
             self.log('INFO', '書き込み検証完了。通常起動ログを取得します。本体RSTを短く1回押してください。')
             self.capture(expected)
+            self.validate_boot()
         self.log('INFO', 'Rollback backup=' + str(backup) + '; restore requires separate approval. Hardware acceptance remains unverified.')
 
+    def validate_boot(self):
+        self.step = 'boot-check'
+        stages = (self.run / 'boot-stages.log').read_text()
+        if 'startup failed phase=' in stages or '[main] app behaviors ready' not in stages:
+            raise RuntimeError('normal startup not verified; inspect boot-stages.log. No photo requests were sent')
+        self.log('INFO', 'PASS boot-check: app behaviors ready observed. Face/camera/audio acceptance remains manual.')
+
     def execute(self):
+        if self.a.write and not os.environ.get('TMUX'): raise RuntimeError('--write/--all must run inside tmux; stopped before tests/build')
         lock_root = HOME / 'work/stackchan-tools/locks'
         lock_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.lock = (lock_root / (hashlib.sha256(str(self.repo).encode()).hexdigest() + '.lock')).open('a')
+        self.lock = (lock_root / (hashlib.sha256(('PR:' + str(self.a.pr) if getattr(self.a, 'pr', None) else str(self.repo)).encode()).hexdigest() + '.lock')).open('a')
         fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if getattr(self.a, 'pr', None): self.prepare_pr()
         self.check()
         if self.a.test or self.a.build or self.a.write:
             self.setup_env()
@@ -338,12 +392,14 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
 def main(argv=None):
     p = argparse.ArgumentParser(prog='stackchan.sh', description='StackChan統一操作。指定した処理だけ実行。無指定は--check。書き込みはyes/no確認。')
     for mode in ('check', 'test', 'build', 'write', 'logs', 'all'): p.add_argument('--'+mode, action='store_true')
+    p.add_argument('--PR', '--pr', dest='pr', type=int, help='PR番号。最新baseとHEADを専用worktreeでローカル統合。GitHubマージはしない')
     p.add_argument('--repo', default=str(DEFAULT_REPO), help='対象worktree（既定はWi-Fi修正を含むPR90）')
-    p.add_argument('--sha', help='要求する40桁HEAD。未指定は現在のHEADを記録して使用')
+    p.add_argument('--sha', help='要求する40桁HEAD。--PR指定時はPRのHEADを照合')
     p.add_argument('--port', help='任意のUSBパス。指定時も本体シリアルと物理ポートを照合')
     p.add_argument('--seconds', type=int, default=90, help='起動ログ取得秒数（1〜300）')
     p.add_argument('--log-root', default=str(HOME / 'work/stackchan-runs'))
     a = p.parse_args(argv)
+    if a.pr is not None and a.pr <= 0: p.error('--PR must be positive')
     if not 1 <= a.seconds <= 300: p.error('--seconds must be 1..300')
     if a.sha and not re.fullmatch('[0-9a-f]{40}', a.sha): p.error('--sha must be a full lowercase Git SHA')
     if a.all: a.check = a.test = a.build = a.write = True

@@ -48,7 +48,7 @@ class CLITest(unittest.TestCase):
         def failure(): calls.append('build');raise RuntimeError('injected build failure')
         self.r.build=failure
         self.r.write=lambda:calls.append('write')
-        with self.assertRaisesRegex(RuntimeError,'injected'): self.r.execute()
+        with patch.dict(m.os.environ,{'TMUX':'test'}),self.assertRaisesRegex(RuntimeError,'injected'): self.r.execute()
         self.assertEqual(calls,['check','test','build'])
         self.r.lock.close()
 
@@ -120,6 +120,16 @@ class CLITest(unittest.TestCase):
         self.assertEqual(m.safe_line('[main] startup failed phase=context error=TypeError'),
                          '[main] startup failed phase=context error=TypeError')
 
+    def test_boot_failure_is_not_accepted_as_flash_success(self):
+        (self.r.run/'boot-stages.log').write_text('[main] app behaviors ready\n[main] startup failed phase=behavior error=Error\n')
+        with self.assertRaisesRegex(RuntimeError,'not verified'):self.r.validate_boot()
+
+    def test_boot_ready_marker_is_required(self):
+        (self.r.run/'boot-stages.log').write_text('')
+        with self.assertRaisesRegex(RuntimeError,'not verified'):self.r.validate_boot()
+        (self.r.run/'boot-stages.log').write_text('[main] app behaviors ready\n')
+        self.r.validate_boot()
+
     def layout(self):
         self.r.bin.mkdir(parents=True)
         p=self.r.fw/'dist/tmp/esp32/m5stackchan_cores3/release/stack-chan-host/xsProj-esp32s3/build/flasher_args.json'
@@ -147,4 +157,79 @@ class CLITest(unittest.TestCase):
         with patch.dict(m.os.environ,{},clear=True),self.assertRaisesRegex(RuntimeError,'tmux'):
             self.r.write()
 
-if __name__=='__main__':unittest.main()
+class PRTest(CLITest):
+    # Real local Git merges exercise integration without network/SDK/device access.
+    def git(self, *args, cwd=None):
+        return m.subprocess.check_output(['git', *args], cwd=cwd or self.r.repo, text=True, stderr=m.subprocess.DEVNULL).strip()
+
+    def init_history(self, conflict=False):
+        self.args.pr=90
+        self.git('init')
+        self.git('config','user.name','Test')
+        self.git('config','user.email','test@example.invalid')
+        (self.root/'AGENTS.md').write_text('test')
+        (self.root/'firmware').mkdir()
+        (self.root/'firmware/placeholder').write_text('test')
+        (self.root/'shared').write_text('base\n')
+        self.git('add','AGENTS.md','firmware/placeholder','shared');self.git('commit','-m','base')
+        ancestor=self.git('rev-parse','HEAD')
+        (self.root/('shared' if conflict else 'feature')).write_text('feature\n')
+        self.git('add','shared' if conflict else 'feature');self.git('commit','-m','feature')
+        head=self.git('rev-parse','HEAD')
+        self.git('checkout','--detach',ancestor)
+        (self.root/('shared' if conflict else 'base-update')).write_text('new base\n')
+        self.git('add','shared' if conflict else 'base-update');self.git('commit','-m','base update')
+        base=self.git('rev-parse','HEAD')
+        return dict(number=90,state='open',baseRef='stackchan-super',baseSHA=base,headSHA=head,headRepo='messpy/stack-chan')
+
+    def prepare(self, info):
+        self.r.pr_metadata=lambda:info.copy()
+        original=self.r.cmd
+        calls=[]
+        def cmd(name,argv,*args,**kwargs):
+            calls.append(name)
+            if name=='pr-fetch':return self.root/'unused'
+            return original(name,argv,*args,**kwargs)
+        self.r.cmd=cmd
+        return calls
+
+    def test_integrates_latest_base_and_pr_without_changing_source(self):
+        info=self.init_history();self.prepare(info)
+        with patch.object(m,'HOME',self.root/'home'):self.r.prepare_pr()
+        self.assertEqual(self.git('rev-parse','HEAD',cwd=self.root),info['baseSHA'])
+        self.assertEqual(self.git('status','--porcelain','--untracked-files=no',cwd=self.root),'')
+        self.assertTrue((self.r.repo/'feature').exists())
+        self.assertTrue((self.r.repo/'base-update').exists())
+        expected=self.r.repo
+        # A separate --write invocation must reuse the same integration/receipt directory.
+        self.r.repo=self.root;self.r.fw=self.root/'firmware'
+        with patch.object(m,'HOME',self.root/'home'):self.r.prepare_pr()
+        self.assertEqual(self.r.repo,expected)
+
+    def test_conflict_stops_before_worktree_or_tests(self):
+        info=self.init_history(conflict=True);calls=self.prepare(info)
+        with patch.object(m,'HOME',self.root/'home'),self.assertRaisesRegex(RuntimeError,'pr-merge-tree'):
+            self.r.prepare_pr()
+        self.assertNotIn('pr-worktree',calls)
+        self.assertEqual(self.git('rev-parse','HEAD'),info['baseSHA'])
+
+    def test_moved_pr_rejected_before_write(self):
+        self.r.pr_info=dict(headSHA='old',baseSHA='same')
+        self.r.pr_metadata=lambda:dict(headSHA='new',baseSHA='same')
+        with self.assertRaisesRegex(RuntimeError,'changed'):self.r.check_pr_freshness()
+
+    def test_wrong_base_rejected_before_fetch(self):
+        self.args.pr=90
+        self.r.pr_metadata=lambda:dict(number=90,state='open',baseRef='main',headRepo='messpy/stack-chan')
+        with self.assertRaisesRegex(RuntimeError,'targeting'):self.r.prepare_pr()
+
+    def test_requested_pr_sha_mismatch_rejected(self):
+        info=self.init_history();self.prepare(info);self.args.sha='f'*40
+        with self.assertRaisesRegex(RuntimeError,'HEAD differs'):self.r.prepare_pr()
+
+if __name__=='__main__':
+    suite=unittest.TestSuite()
+    suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(CLITest))
+    suite.addTests(PRTest(name) for name in PRTest.__dict__ if name.startswith('test_'))
+    result=unittest.TextTestRunner().run(suite)
+    raise SystemExit(not result.wasSuccessful())

@@ -11,14 +11,19 @@ bash ~/stackchan.sh --build
 bash ~/stackchan.sh --write
 bash ~/stackchan.sh --logs --seconds 90
 bash ~/stackchan.sh --all
+# PRを最新のstackchan-superへローカル統合して一括実行
+bash ~/stackchan.sh --PR 90 --all
 ```
 
+- `--PR 90`（`--pr`も可）はGitHub CLI `gh` でPRの最新HEAD・baseを確認し、オブジェクトをfetchして専用のdetached worktreeで3-way統合します。元の作業ディレクトリやブランチは変更しません。競合時はテスト・ビルド・書き込みへ進みません。GitHubでPRをマージする操作は含みません。
+- 同じbase/HEADでは同じ統合worktreeを再利用するため、`--PR 90 --build` の後に `--PR 90 --write` で成果物を使えます。HEAD/baseが変わった場合は別worktreeとなり、再ビルドが必要です。書き込み前にもPRの更新有無を照合します。`--sha`を併用した場合はPR HEADを固定します。
+- `--PR`指定時のworktreeは `/home/kmac/work/stackchan-pr番号-integration-baseSHA先頭12桁-headSHA先頭12桁`。取得・ローカル統合自体は実行しますが、GitHubへのpush/mergeは行いません。`gh`認証やネット接続の失敗でも停止してログを残します。
 - 複数指定は確認→テスト→ビルド→書き込み→ログの順です。`--all` は確認・テスト・ビルド・書き込み・起動ログ取得。撮影・会話の自動試験は含みません。
 - `--write` / `--all` はtmux内で実行。本体を手動ダウンロードモードにした後、16MiBバックアップの読取りと書き込みを別々にyes/no確認します。自動リセットは行いません。書き込み後はログ取得中に本体RSTを短く押してください。
 - `--write` はテストやビルドを再実行しません。この入口で作成したビルド証跡が必要です。初回は `--build` を実行してください。ソース・SDK・元設定・成果物が変わった場合は書き込みを拒否します。証跡は `firmware/dist/stackchan-build-receipt.json`。
 - `--test` は既存UnitとArchive回帰テストを実行します。`--build` は公式 `build:archive:m5stackchan_cores3` を実行します。元private manifestを保護し、生成用設定は終了時に元に戻します。
 - `--logs` はUSB関連カーネルログと許可された起動phase/resetログを取得。シリアルを開く前に確認します。hubがactiveなら、追加確認後に停止して終了時に復帰。元から停止中なら起動しません。USB切断時は同一VID/PID・シリアル・物理ポートだけを再検出し、要求は再送しません。
-- 無関係な通信・会話・認証情報はUSBログに保存しません。例外詳細本文は省略します。ログが空でも成功とは判定しません。生のテスト/ビルド出力やフラッシュバックアップは秘密を含み得るため、実行フォルダは非公開で保持し、そのままGitHubへ貼らないでください。
+- 無関係な通信・会話・認証情報はUSBログに保存しません。例外詳細本文は省略します。書き込み後は `[main] app behaviors ready` の確認が必要で、ログが空／起動失敗なら終了コードを失敗にします。これは撮影・会話などの実機受入成功とは別です。生のテスト/ビルド出力やフラッシュバックアップは秘密を含み得るため、実行フォルダは非公開で保持し、そのままGitHubへ貼らないでください。
 - STEP開始・成功・失敗・コマンド・ログ保存先を表示します。エラー時は次のSTEPへ進まず、ログ末尾を表示。Ctrl+C/HUP/TERM時も子プロセスを止め、元のhub状態を復旧します。SIGKILL・ホスト電源断後は自動復旧できません。
 - 書き込みはbootloader・partition table・appに限定。NVSとの重なりを検査し、フラッシュ全消去・SD初期化はしません。SDバックアップはユーザー指定で不要です。フラッシュバックアップの復元は別途承認後に行ってください。
 

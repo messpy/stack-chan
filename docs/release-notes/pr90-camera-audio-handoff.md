@@ -66,7 +66,10 @@ bash ~/stackchan.sh --logs --seconds 90
 bash ~/stackchan.sh --all
 ```
 
-There is no auto-fetch, checkout, merge, configuration erase or photo request.
+With `--PR 90`, the script fetches the current PR/base and locally merges them
+in a dedicated worktree. Conflicts stop the workflow. It never merges a GitHub
+PR or changes the original worktree. Without `--PR` no source is fetched.
+There is no configuration erase or photo request.
 `--repo` and `--sha` select an existing worktree/reviewed HEAD without changing it.
 Build records source/SDK/configuration/image fingerprints; `--write` reuses only
 matching artifacts and validates the CoreS3 partition layout to protect NVS.
