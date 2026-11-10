@@ -411,6 +411,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
       ? this.encoder.capturedPcmBytes - this.encodeCapturedStart : null
     const dropped = this.encoder && this.encodeDroppedStart !== undefined
       ? this.encoder.droppedPcmBytes - this.encodeDroppedStart : null
+    const transport = this.transportStatus?.()
     try { trace('[audio-path] stage=upload event=' + event + ' ms=' + now +
       ' turn=' + (this.playbackTurn ?? 'null') +
       ' uploading=' + Number(this.uploading) + ' encoderReady=' + Number(!!this.encoder) +
@@ -418,7 +419,12 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
       ' capturedPcmBytes=' + (Number.isFinite(captured) ? captured : 'null') +
       ' droppedPcmBytes=' + (Number.isFinite(dropped) ? dropped : 'null') +
       ' encodedPackets=' + this.encodePackets + ' encodedPcmBytes=' + this.encodePCMBytes +
-      ' attemptedSendBytes=' + this.encodeCompressedBytes + '\n') } catch (_) {}
+      ' attemptedSendBytes=' + this.encodeCompressedBytes +
+      ' socketState=' + (transport?.connectionState ?? 'null') +
+      ' socketQueueBytes=' + (transport?.queuedBytes ?? 'null') +
+      ' submittedSocketBytes=' + (transport?.submittedSocketBytes ?? 'null') +
+      ' droppedNoSocketBytes=' + (transport?.droppedNoSocketBytes ?? 'null') +
+      ' backpressureFailures=' + (transport?.backpressureFailures ?? 'null') + '\n') } catch (_) {}
   }
 
   reportAudioPath(force = false) {
