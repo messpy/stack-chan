@@ -29,6 +29,7 @@ import {alarmSoundCommand,playAlarmSound} from 'archive-alarm-sound';
 import {startWeb,openControl,controlStatus} from 'archive-web';
 import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat,holdDirectChat} from 'archive-direct-chat';
 import {releaseCameraResources} from 'archive-camera-release';
+import {waitForCameraMemory} from 'archive-memory-policy';
 import {recordMemory,history,deviceHistory,currentSpeaker,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
 import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
 import {acceptAudioChunk} from 'archive-audio-upload';
@@ -36,7 +37,7 @@ import {startSettings,openSettings,closeSettings,getSettingsStatus,vaultSelfTest
 import {startDeviceTools,setAlarmDisplay,setAlarmMotion,callDeviceTool,listDeviceTools,reminderStatus} from 'archive-tools';
 import Time from 'time';
 import {getM5StackChanDriver} from 'm5stackchan-servo-driver';
-import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG,heapStatus} from 'archive-usb';
+import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG,heapStatus,collectMemory} from 'archive-usb';
 import Base64 from 'base64';
 import config from 'mc/config';
 import {HttpServerService, Response} from 'http-server-service';
@@ -377,7 +378,12 @@ export function startArchive(robot,initialize=(_component,create)=>create()) {
       }
       else if(request.op==='/chat-record'){await robot.audio.tone(880,100,Math.min(robot.audio.volume,0.25));result=await recordAudio(robot);}
       else if(request.op==='/audio')result=await recordAudio(robot);
-      else if(request.op==='/photo')result=await photo(robot,request.args);
+      else if(request.op==='/photo'){
+        // The hold above closes voice before camera memory is acquired.
+        await waitForCameraMemory({read:heapStatus,collect:collectMemory,
+          delay:ms=>new Promise(resolve=>Timer.set(resolve,ms)),timeoutMs:2000,pollMs:100});
+        result=await photo(robot,request.args);
+      }
       else if(request.op==='/record')result=await record(robot);
       else if(request.op==='/status'){
         let sd=false;try{files(()=>{});sd=true;}catch(e){lastError=String(e);}
