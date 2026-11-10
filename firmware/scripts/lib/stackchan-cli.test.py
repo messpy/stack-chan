@@ -614,6 +614,89 @@ class CLITest(unittest.TestCase):
         with patch.dict(m.os.environ,{},clear=True),self.assertRaisesRegex(RuntimeError,'tmux'):
             self.r.write()
 
+    def test_selected_worktree_cli_suite_is_used(self):
+        calls = []
+        self.r.cmd = lambda name, argv, *args, **kwargs: calls.append((name, argv))
+        self.r.test()
+        self.assertEqual(calls[0][0], 'cli')
+        self.assertEqual(pathlib.Path(calls[0][1][1]),
+                         self.r.fw / 'scripts/lib/stackchan-cli.test.py')
+
+    def test_usb_snapshot_uses_device_python_environment(self):
+        devices = [dict(port='/dev/ttyACM0', vid=0x303a, pid=0x1001,
+                        serial=m.SERIAL, location='1-1')]
+        calls = []
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            if argv[0] == str(m.DEVICE_PYTHON):
+                return types.SimpleNamespace(returncode=0, stdout=json.dumps(devices))
+            return types.SimpleNamespace(returncode=1)
+        with patch.object(m.subprocess, 'run', side_effect=fake_run), \
+             patch.object(m.os, 'access', return_value=True):
+            snapshot = self.r.usb_snapshot('preflight')
+        self.assertEqual(snapshot['category'], 'port-available')
+        self.assertEqual(calls[0][0], str(m.DEVICE_PYTHON))
+        self.assertEqual(calls[0][1], '-c')
+        self.assertIn('from serial.tools import list_ports', calls[0][2])
+        self.assertIn('\\n', calls[0][2])
+        self.assertEqual(calls[1], ['fuser', '/dev/ttyACM0'])
+
+    def test_usb_snapshot_reports_failed_helper_without_masking(self):
+        with patch.object(m.subprocess, 'run',
+                          return_value=types.SimpleNamespace(returncode=1, stdout='')):
+            snapshot = self.r.usb_snapshot('failure-flash')
+        self.assertEqual(snapshot['category'], 'diagnostic-unavailable')
+        self.assertTrue((self.r.run / 'usb-failure-flash.json').is_file())
+
+    def test_flash_timeout_diagnosis_runs_and_original_timeout_is_preserved(self):
+        with patch.object(self.r, 'flash_failure_diagnosis') as diagnosis:
+            with self.assertRaises(m.subprocess.TimeoutExpired):
+                self.r.cmd('flash', ['python3', '-c', 'import time;time.sleep(10)'],
+                           timeout=.05)
+        diagnosis.assert_called_once()
+        self.assertEqual(self.r.failed_command, 'flash')
+        self.assertIsNone(self.r.child)
+        self.assertTrue((self.r.run / 'flash.log').exists())
+
+    def test_failure_diagnosis_exception_cannot_override_flash_failure(self):
+        with patch.object(self.r, '_flash_failure_diagnosis',
+                          side_effect=OSError('injected diagnostic failure')):
+            with self.assertRaisesRegex(RuntimeError, 'command failed: flash'):
+                self.r.cmd('flash', ['python3', '-c', 'import sys;sys.exit(7)'])
+        self.assertEqual(self.r.failed_command, 'flash')
+
+    def test_build_preserves_private_platform_and_retired_modules_are_removed(self):
+        fw = self.r.fw
+        app = fw / 'host/app'
+        app.mkdir(parents=True, exist_ok=True)
+        old = {'modules': {'archive-camera-handoff': {'obsolete': True},
+                           'private-only': {'enabled': True}},
+               'platforms': {'esp32/m5stackchan_cores3': {'private': True}}}
+        example = {'modules': {'archive-live': {'url': 'live.js'}},
+                   'platforms': {'esp32/m5stack_cores3': {'public': True}}}
+        private = self.root / 'private-input.json'
+        private.write_text(json.dumps(old))
+        (app / 'manifest_archive.example.json').write_text(json.dumps(example))
+        previous = app / 'manifest_archive_private.json'
+        previous.write_text('previous-private-output')
+        for filename in m.FILES.values():
+            artifact = self.r.bin / filename
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_bytes(b'test')
+        self.r.cmd = lambda *args, **kwargs: None
+        self.r.validate_layout = lambda: None
+        self.r.fingerprint = lambda: {'sha': 'a' * 40}
+        with patch.object(m, 'PRIVATE', private):
+            self.r.build()
+        actual = json.loads(previous.read_text())
+        self.assertNotIn('archive-camera-handoff', actual['modules'])
+        self.assertIn('private-only', actual['modules'])
+        self.assertIn('archive-live', actual['modules'])
+        self.assertTrue(actual['platforms']['esp32/m5stackchan_cores3']['private'])
+        self.assertTrue(actual['platforms']['esp32/m5stack_cores3']['public'])
+        self.r.cleanup()
+        self.assertEqual(previous.read_text(), 'previous-private-output')
+
 class PRTest(CLITest):
     # Real local Git merges exercise integration without network/SDK/device access.
     def git(self, *args, cwd=None):
