@@ -32,7 +32,7 @@ for(const failure of ['none','start','jpeg','sd','stop'])test('photo lifecycle '
  assert.ok(h.events.indexOf('close')>h.events.indexOf('stop'))
  if(failure!=='start')assert.ok(h.events.indexOf('frame')<h.events.indexOf('stop'))
  if(failure==='none'){
-  assert.ok(h.events.indexOf('file.close')<h.events.indexOf('frame'))
+  assert.ok(h.events.indexOf('close')<h.events.indexOf('file.close'),'native DMA camera must close before SD I/O')
   assert.ok(h.events.indexOf('analysis')>h.events.indexOf('close'))
   assert.deepEqual(h.records.map(r=>r.speakerId),['A','A'])
  }else assert.equal(h.events.includes('analysis'),false)
