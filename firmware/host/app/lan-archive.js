@@ -106,10 +106,7 @@ async function photo(robot,args={},fromConversation=false,context) {
    metrics('frame-ready');
    const tag=id(),name='photo-'+tag+'.jpg';
    jpeg=encodeJPEG(frame.buffer,frame.width,frame.height,frame.imageType==='rgb565le');
-   stage='sd-save';
-   save(name,[jpeg]);
    result={name,image:name,width:frame.width,height:frame.height};
-   trace('[archive-camera] stage=jpeg-saved\n');
   } catch(e) {
    trace('[archive-camera] failed stage='+stage+' type='+String(e?.name||'Error').slice(0,48)+'\n');
    throw e;
@@ -124,6 +121,16 @@ async function photo(robot,args={},fromConversation=false,context) {
     throw e;
    }
    frame=undefined;
+  }
+  // Save only after native camera and its DMA frame have been released.
+  // JPEG data is owned independently of the captured frame.
+  stage='sd-save';
+  try {
+   save(result.name,[jpeg]);
+   trace('[archive-camera] stage=jpeg-saved\n');
+  } catch(e) {
+   trace('[archive-camera] failed stage='+stage+' type='+String(e?.name||'Error').slice(0,48)+'\n');
+   throw e;
   }
   if(args.analyze!==false) {
    trace('[archive-camera] stage=analysis-start\n');
