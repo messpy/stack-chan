@@ -37,3 +37,22 @@ jobs:
           echo "CONFLICTED_CATEGORIES=$failed"
           # This job only diagnoses conflicts. It never pushes or merges.
           exit 0
+      - name: Simulate sequential integration without pushing
+        shell: bash
+        run: |
+          git config user.email "ci@users.noreply.github.com"
+          git config user.name "Category Merge Preflight"
+          for name in voice-ai camera web ui system; do
+            echo "===== SEQUENTIAL $name ====="
+            if git merge --no-commit --no-ff "origin/category/$name" >/tmp/category-merge.log 2>&1; then
+              git commit -m "test: simulated category $name" >/dev/null
+              echo "MERGE=clean"
+            else
+              echo "MERGE=conflicted"
+              git diff --name-only --diff-filter=U | head -100
+              sed -n '1,25p' /tmp/category-merge.log
+              git merge --abort
+            fi
+          done
+          echo "SIMULATED_SHA=$(git rev-parse --short HEAD)"
+          echo "This checkout is disposable. No push, no production merge."
