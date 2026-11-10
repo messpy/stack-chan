@@ -41,6 +41,8 @@
     "archive-checks": "./archive-checks",
     "archive-web-page": "./archive-web-page",
     "archive-direct-chat": "./archive-direct-chat",
+    "archive-voice-control": "./archive-voice-control",
+    "archive-voice-command-policy": "./archive-voice-command-policy",
     "archive-offline": "./archive-offline",
     "archive-offline-policy": "./archive-offline-policy",
     "archive-offline-speech": "./archive-offline-speech",
