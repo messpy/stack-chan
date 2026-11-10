@@ -42,3 +42,14 @@ assert.equal(model.suppressReply,false,'a tool continuation within the same reco
 model.replyDeadline=Date.now()-1;model.tts({state:'start'});
 assert.equal(model.suppressReply,true,'the same turn must not authorize an idle farewell after expiry');
 console.log('PASS: tool continuation speech remains allowed while idle farewell expires');
+
+model.functionByName.head_move={name:'head_move',parameters:{type:'object',properties:{direction:{type:'string'}}}};
+const dispatchBefore=events.length;
+model.mcp({payload:{jsonrpc:'2.0',id:41,method:'tools/call',params:{name:'head_move',arguments:{direction:'left'}}}});
+assert.equal(events.length,dispatchBefore+1,'XiaoZhi tools/call must dispatch to main thread');
+assert.equal(events.at(-1).id,'receiveFunctionCall');
+assert.equal(events.at(-1).name,'head_move');
+assert.equal(events.at(-1).call,'mcp:number:41');
+assert.equal(events.at(-1).parameters.direction,'left');
+assert.equal(model.pendingMcpCalls['mcp:number:41'].name,'head_move');
+console.log('PASS: worker head_move MCP call dispatched to main thread with call ID and validated params');
