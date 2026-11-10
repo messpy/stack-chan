@@ -63,6 +63,8 @@ class Runner:
         self.run = pathlib.Path(tempfile.mkdtemp(prefix=datetime.datetime.now().strftime('run-%Y%m%d-%H%M%S-'), dir=base))
         self.console = (self.run / 'console.log').open('a', buffering=1)
         self.step = 'preflight'
+        self.completed = []
+        self.failed_command = None
         self.child = None
         self.lock = None
         self.restored = False
@@ -96,11 +98,13 @@ class Runner:
             finally:
                 self.child = None
         if rc:
+            self.failed_command = name
             self.log('ERROR', 'STEP=' + name + ' EXIT=' + str(rc) + ' CMD=' + shown + ' LOG=' + str(path))
             for line in path.read_text(errors='replace').splitlines()[-40:]:
                 # Full tool output is private on disk; sanitize terminal error snippets.
                 self.log('ERROR', self.redact(line)[:600])
             raise RuntimeError('command failed: ' + name)
+        self.completed.append(name)
         self.log('INFO', 'PASS STEP=' + name + ' LOG=' + str(path))
         return path
 
@@ -575,6 +579,101 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
         if self.a.write: self.write()
         if self.a.logs and not self.a.write: self.logs()
 
+    def final_summary(self, rc, failed_step):
+        def git(*args):
+            try:
+                return subprocess.check_output(['git', '-C', str(self.repo), *args],
+                    stderr=subprocess.DEVNULL, text=True, timeout=5).strip()
+            except Exception:
+                return ''
+        commit = getattr(self, 'head', None) or git('rev-parse', 'HEAD')
+        branch = git('branch', '--show-current') or '(detached)'
+        selected = {'状態確認': True, 'テスト': self.a.test,
+                    'ビルド': self.a.build, '書き込み': self.a.write,
+                    '起動確認': self.a.write or self.a.logs}
+        required = {'状態確認': ('diff-check', 'host-uptime'),
+                    'テスト': ('cli', 'unit', 'archive'),
+                    'ビルド': ('build',), '書き込み': ('flash',),
+                    '起動確認': ('boot-check',)}
+        completed = set(self.completed)
+        states = {}
+        for label, names in required.items():
+            if not selected[label]: states[label] = '対象外'
+            elif all(n in completed for n in names): states[label] = '成功'
+            elif rc and (failed_step in names or self.failed_command in names):
+                states[label] = '失敗'
+            else: states[label] = '未実行'
+        if self.a.write and 'flash' in completed:
+            states['起動確認'] = ('失敗' if rc and failed_step == 'boot-check'
+                                   else '成功' if rc == 0 else '未実行')
+        if rc and states['状態確認'] == '未実行':
+            states['状態確認'] = '失敗' if not completed else '未実行'
+        counts = {'tests': 0, 'pass': 0, 'fail': 0}
+        failures = []
+        for name in ('unit', 'archive'):
+            path = self.run / (name + '.log')
+            if not path.exists(): continue
+            output = path.read_text(errors='replace')
+            for key in counts:
+                values = re.findall(r'^# ' + key + r'\s+(\d+)\s*$', output, re.M)
+                if values: counts[key] += int(values[-1])
+            failures.extend({'step': name, 'test': m.group(1)[:160]}
+                for m in re.finditer(r'^not ok\s+\d+\s+-\s+(.+)$', output, re.M))
+        if self.failed_command == 'cli':
+            failures.append({'step': 'cli', 'test': 'CLI回帰テスト失敗'})
+        fw_hash = None
+        try:
+            receipt = json.loads(self.receipt.read_text())
+            if receipt.get('sha') == commit:
+                fw_hash = receipt.get('artifacts', {}).get('xs_esp32.bin')
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+        last_flash = None
+        root = pathlib.Path(self.a.log_root).expanduser()
+        for path in sorted(root.glob('run-*/flash-record.json'),
+                           key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                last_flash = json.loads(path.read_text())
+                break
+            except (OSError, ValueError, TypeError):
+                continue
+        def short(value):
+            return str(value)[:12] if value else 'unknown'
+        lines = ['========== StackChan 最終結果 ==========',
+                 '対象        ' + ('PR #' + str(self.a.pr) if self.a.pr else branch),
+                 'ブランチ    ' + branch,
+                 'コミット    ' + short(commit),
+                 '結果        ' + ('成功' if rc == 0 else '失敗 (' + failed_step + ')')]
+        for label, state in states.items():
+            if label == 'テスト' and counts['tests']:
+                state += ' (' + str(counts['pass']) + '/' + str(counts['tests']) +
+                         ' 成功、' + str(counts['fail']) + '件失敗)'
+            lines.append(label + '    ' + state)
+        if fw_hash: lines.append('ビルドSHA256  ' + short(fw_hash))
+        if rc:
+            lines.append('失敗STEP    ' + failed_step)
+            for item in failures[:5]:
+                lines.append('失敗テスト  ' + self.redact(item['test']))
+            if len(failures) > 5:
+                lines.append('その他      ' + str(len(failures)-5) + '件（詳細ログ参照）')
+        if last_flash:
+            lines.extend(['最終書込    ' + short(last_flash.get('sha')),
+                          '実機FW SHA  ' + short(last_flash.get('firmware_sha256')),
+                          '前回起動    ' + str(last_flash.get('boot', 'unknown')) + '（ホスト記録）'])
+        lines.append('ログ        ' + str(self.run / 'console.log'))
+        lines.append('=======================================')
+        summary = {'result': 'success' if rc == 0 else 'failed', 'exit_code': rc,
+                   'pr': self.a.pr, 'branch': branch, 'commit': commit,
+                   'steps': states, 'test_counts': counts, 'failed_tests': failures,
+                   'failed_step': failed_step if rc else None,
+                   'firmware_sha256': fw_hash, 'last_flash': last_flash,
+                   'log': str(self.run / 'console.log')}
+        target = self.run / 'summary.json'
+        temporary = self.run / 'summary.json.tmp'
+        temporary.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
+        temporary.replace(target)
+        for line in lines: self.log('INFO', line)
+
     def cleanup(self):
         self.stop_child()
         dst = self.fw / 'host/app/manifest_archive_private.json'
@@ -624,6 +723,9 @@ def main(argv=None):
         try: runner.cleanup()
         except Exception as e:
             rc=1;runner.log('ERROR','cleanup/service restore failed: '+str(e))
+        try: runner.final_summary(rc, failed_step)
+        except Exception as e:
+            rc=1;runner.log('ERROR','final summary failed: '+str(e))
         runner.log('INFO','EXIT='+str(rc)+' STEP='+failed_step+' LOG='+str(runner.run/'console.log'))
         runner.console.close()
     return rc
