@@ -5,7 +5,7 @@ on:
       - integration/stackchan-categories-20261110
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   conflict-inventory:
     runs-on: ubuntu-24.04
@@ -71,3 +71,42 @@ jobs:
           done
           echo "SIMULATED_SHA=$(git rev-parse --short HEAD)"
           echo "This checkout is disposable. No push, no production merge."
+  reconcile-ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Merge current base into UI category and resolve boot/idle conflict
+        shell: bash
+        run: |
+          git fetch origin refs/heads/category/ui refs/heads/stackchan-super
+          git switch --create category-ui-reconcile origin/category/ui
+          if git merge --no-ff --no-commit origin/stackchan-super > /tmp/ui-reconcile.log 2>&1; then
+            echo '[CHECK] UI merge had no conflicting paths'
+          else
+            paths="$(git diff --name-only --diff-filter=U)"
+            if [ "$paths" != "firmware/host/app/archive-offline.js" ]; then
+              echo "[FATAL] Unexpected UI conflicts"
+              printf '%s\n' "$paths"
+              exit 1
+            fi
+            git checkout --ours -- firmware/host/app/archive-offline.js
+            if ! grep -Fq 'globalThis.stackchanIdleActivity?.()' firmware/host/app/archive-offline.js; then
+              echo '[FATAL] UI activity hook missing after conflict resolution'
+              exit 1
+            fi
+            if ! grep -Fq "if (action !== 'boot') {" firmware/host/app/archive-offline.js; then
+              echo '[FATAL] boot speech guard missing after conflict resolution'
+              exit 1
+            fi
+            git add firmware/host/app/archive-offline.js
+          fi
+          git diff --cached --check
+          git -c user.name="StackChan CI" -c user.email="ci@users.noreply.github.com" commit -m "merge(ui): reconcile main boot mode guard with idle activity hook"
+          cd firmware
+          node --experimental-vm-modules --test scripts/lib/archive-offline.test.mjs scripts/lib/archive-idle-sleep.test.mjs
+          cd ..
+          git push origin HEAD:refs/heads/category/ui
+          echo '[CHECK] UI category reconciled; no stackchan-super push'
