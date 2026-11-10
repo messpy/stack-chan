@@ -41,6 +41,7 @@ export class QueuedPlayback {
     const storage=new SharedArrayBuffer(chunkBytes*slots);
     this.free=Array.from({length:slots},(_,i)=>new Uint8Array(storage,i*chunkBytes,chunkBytes));
     this.tail=tail;this.pending=0;this.queuedBytes=0;this.active=true;this.drainMs=0;this.hardwareUntil=0;this.lastLevel=0;
+    this.submittedBytes=0;this.completedBytes=0;this.completedChunks=0;this.failures=0;
   }
   pump(head,finished=false){
     if(!this.active)return {next:this.tail,complete:false};
@@ -66,9 +67,12 @@ export class QueuedPlayback {
           if(!this.active)return;
           this.pending--;this.queuedBytes-=bytes.byteLength;this.free.push(slot);
           this.hardwareUntil=this.now()+this.drainMs;
-          this.lastLevel=level;if(error)this.error=error;
+          this.lastLevel=level;
+          if(error){this.error=error;this.failures++;}
+          else{this.completedBytes+=bytes.byteLength;this.completedChunks++;}
         });
-      }catch(error){this.pending--;this.queuedBytes-=bytes.byteLength;this.free.push(slot);throw error;}
+        this.submittedBytes+=bytes.byteLength;
+      }catch(error){this.pending--;this.queuedBytes-=bytes.byteLength;this.free.push(slot);this.failures++;throw error;}
       this.tail=plan.next;this.ack(this.tail);
     }
     return {next:this.tail,available:available(),queuedBytes:this.queuedBytes,prebuffering:!this.planner.primed,underruns:this.planner.underruns,complete:finished&&!available()&&!this.pending};

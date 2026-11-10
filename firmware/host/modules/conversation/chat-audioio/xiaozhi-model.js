@@ -38,6 +38,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
     this.encoderTimer = undefined
     this.sessionID = ''
     this.uploading = false
+    this.audioPath = { fragments: 0, skipped: 0, decoded: 0, failures: 0, pcmBytes: 0 }
     this.listeningMode = 'auto'
     this.features = {}
     this.helloExtension = {}
@@ -299,7 +300,10 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
     )
   }
 
-  listened() {
+  listened(message = {}) {
+    // Main and Worker event queues can cross: a new cloud TTS may already have
+    // started before the previous turn's completion reaches this Worker.
+    if (this.replyActive || (message.turn !== undefined && message.turn !== this.playbackTurn)) return
     this.startListening({ mode: this.listeningMode })
   }
 
@@ -325,13 +329,14 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
 
   read(data, options) {
     if (!options.binary) return super.read(data, options)
+    this.audioPath.fragments++
     if (this.recognitionOnly) return
     if (!this.decoder) {
       this.fail('received Opus audio before XiaoZhi hello')
       return
     }
     // Protocol v1 devices do not play downlink audio while their microphone turn is active.
-    if (this.uploading) return
+    if (this.uploading) { this.audioPath.skipped++; this.reportAudioPath(); return }
 
     let packet = new Uint8Array(data)
     if (this.decoderPacket || options.more) {
@@ -354,15 +359,29 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
 
     try {
       const pcmBytes = this.decoder.decode(packet, this.decoderPCM)
+      this.audioPath.decoded++
+      this.audioPath.pcmBytes += pcmBytes
       this.parser.copy(new Uint8Array(this.decoderPCM, 0, pcmBytes))
       this.decodePackets += 1
       this.decodeCompressedBytes += packet.byteLength
       this.decodePCMBytes += pcmBytes
       this.decodeUs += this.decoder.decodeUs
       if (this.decodeMaxUs < this.decoder.decodeUs) this.decodeMaxUs = this.decoder.decodeUs
+      this.reportAudioPath()
     } catch (error) {
+      this.audioPath.failures++
+      this.reportAudioPath(true)
       this.fail(String(error?.message ?? error))
     }
+  }
+
+  reportAudioPath(force = false) {
+    const now = Date.now()
+    if (!force && now < (this.nextAudioPathAt ?? 0)) return
+    this.nextAudioPathAt = now + 2000
+    // Counters only; this does not log speech, packet contents or credentials.
+    try { trace('[audio-path] stage=decode ms=' + now + ' turn=' + (this.playbackTurn ?? 0) +
+      Object.entries(this.audioPath).map(([key, value]) => ' ' + key + '=' + value).join('') + '\n') } catch (_) {}
   }
 
   resetDecodeStats() {
@@ -429,6 +448,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
     if (this.suppressReply) return
     switch (message.state) {
       case 'start':
+        this.playbackTurn = (this.playbackTurn ?? 0) + 1
         const average = this.encodePackets ? Math.round(this.encodeUs / this.encodePackets) : 0
         const load = this.encodePackets ? (100 * this.encodeUs) / (this.encodePackets * INPUT_FRAME_DURATION * 1000) : 0
         const captured = (this.encoder?.capturedPcmBytes ?? 0) - this.encodeCapturedStart
@@ -442,7 +462,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
         this.decoderPacket = undefined
         this.resetDecodeStats()
         this.postPresentation({ id: 'receiveOutputText', text: '', more: true })
-        this.post('listen')
+        this.postMessage({ id: 'listen', turn: this.playbackTurn })
         break
       case 'sentence_start':
         if (message.glyph_push) {
@@ -456,6 +476,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
         this.postPresentation({ id: 'receiveOutputText', text: message.text, more: true })
         break
       case 'stop':
+        this.reportAudioPath(true)
         if (!this.decoder) {
           this.fail('received XiaoZhi tts stop before hello')
           break
@@ -471,7 +492,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
         this.parser.copy(this.silence)
         this.parser.done()
         this.postPresentation({ id: 'receiveOutputText', text: '' })
-        this.post('speak')
+        this.postMessage({ id: 'speak', turn: this.playbackTurn })
         this.replyActive = false
         break
     }
