@@ -423,8 +423,15 @@ class Runner:
         dst = self.fw / 'host/app/manifest_archive_private.json'
         data = json.loads(PRIVATE.read_text())
         example = json.loads((self.fw / 'host/app/manifest_archive.example.json').read_text())
-        for name in ['archive-camera-handoff', 'archive-camera-release', 'archive-chat-pause-gate']:
-            data.setdefault('modules', {})[name] = example['modules'][name]
+        # Preserve private settings while synchronizing public module mappings.
+        # Removed modules must not be resurrected from an older private manifest.
+        modules = data.setdefault('modules', {})
+        public_modules = example.get('modules', {})
+        for name in list(modules):
+            if name.startswith('archive-') and name not in public_modules:
+                del modules[name]
+        for name, mapping in public_modules.items():
+            modules[name] = mapping
         data.setdefault('platforms', {})['esp32/m5stackchan_cores3'] = example['platforms']['esp32/m5stackchan_cores3']
         self.manifest_before = dst.read_bytes() if dst.exists() else None
         if self.manifest_before is not None: (self.run / 'private-manifest.before.json').write_bytes(self.manifest_before)
