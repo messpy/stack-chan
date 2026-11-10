@@ -2,7 +2,7 @@ import {headDirectionFromText} from 'archive-head-motion'
 import {createCameraHandoff} from 'archive-camera-handoff'
 import {createChatPauseGate} from 'archive-chat-pause-gate'
 import {heapStatus,collectMemory} from 'archive-usb'
-import {checkVoiceMemory,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
+import {checkVoiceMemory,isMemoryPressure,shouldRenewCloudIdentity,waitForCameraMemory} from 'archive-memory-policy'
 import { ollamaChat, ollamaModel, validOllamaModel, geminiTextChat, DEFAULT_GEMINI_TEXT_MODEL, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
 import { VoiceRegistration, enrollmentInstructions, explicitSpeakerName, registrationName } from 'archive-speaker-registration'
 import { speakerButtons } from 'archive-button-schema'
@@ -81,8 +81,11 @@ const cameraHandoff = createCameraHandoff({
     releaseCameraHold = holdDirectChat('voice-camera')
     state = 'camera'
     await new Promise(resolve => Timer.set(resolve, 120))
-    collectMemory()
-    const heap = heapStatus()
+    const heap = await waitForCameraMemory({
+      read:heapStatus,collect:collectMemory,
+      delay:ms=>new Promise(resolve=>Timer.set(resolve,ms)),
+      timeoutMs:2000,pollMs:100,
+    })
     trace('[archive-camera] audio released free=' + (heap?.internalFree ?? -1) +
       ' largest=' + (heap?.internalLargest ?? -1) + ' psramFree='+(heap?.psramFree??-1)+'\n')
   },
