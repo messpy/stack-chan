@@ -745,11 +745,15 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
                 continue
         def short(value):
             return str(value)[:12] if value else 'unknown'
-        lines = ['========== StackChan 最終結果 ==========',
-                 '対象        ' + ('PR #' + str(self.a.pr) if self.a.pr else branch),
-                 'ブランチ    ' + branch,
-                 'コミット    ' + short(commit),
-                 '結果        ' + ('成功' if rc == 0 else '失敗 (' + failed_step + ')')]
+        result_text = '成功' if rc == 0 else '失敗 (' + failed_step + ')'
+        target_text = 'PR #' + str(self.a.pr) if self.a.pr else branch
+        lines = [
+            '========== StackChan 最終結果 ==========',
+            '対象        ' + target_text,
+            'ブランチ    ' + branch,
+            'コミット    ' + short(commit),
+            '結果        ' + result_text,
+        ]
         for label, state in states.items():
             if label == 'テスト' and counts['tests']:
                 state += ' (' + str(counts['pass']) + '/' + str(counts['tests']) +
