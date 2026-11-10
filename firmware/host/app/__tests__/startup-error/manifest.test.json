@@ -28,6 +28,7 @@
     "app-behavior": "../../app-behavior",
     "app-behavior-resolver": "../../app-behavior-resolver",
     "app-launch": "../../app-launch",
+    "startup-diagnostics": "../../startup-diagnostics",
     "app-default-behavior": "./behavior",
     "startup-error-ports": "./ports",
     "loadPreference": "./load-preference-stub",
