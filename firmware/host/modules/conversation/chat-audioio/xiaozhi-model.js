@@ -122,7 +122,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
       this.postMessage({ id: 'failed', string: this.configurationError })
       return
     }
-    trace('[audio-path] stage=worker event=connect ms=' + Date.now() + '\n')
+    this.postAudioDiagnostic('[audio-path] stage=worker event=connect ms=' + Date.now() + '\n')
     if (this.audioDiagnosticTimer === undefined) {
       this.audioDiagnosticTimer = Timer.repeat(() => {
         this.reportEncodePath('heartbeat')
@@ -176,7 +176,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
   }
 
   onOpen() {
-    trace('[audio-path] stage=transport event=hello_request ms=' + Date.now() + '\n')
+    this.postAudioDiagnostic('[audio-path] stage=transport event=hello_request ms=' + Date.now() + '\n')
     const features = {}
     if (this.features.mcp) features.mcp = true
     if (this.features.aec) features.aec = true
@@ -261,7 +261,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
       this.resetEncodeStats()
       this.resetDecodeStats()
       this.uploading = true
-      trace('[audio-path] stage=transport event=hello_ok ms=' + Date.now() + ' sampleRate=' + sampleRate + '\n')
+      this.postAudioDiagnostic('[audio-path] stage=transport event=hello_ok ms=' + Date.now() + ' sampleRate=' + sampleRate + '\n')
       this.reportEncodePath('hello', true)
       this.postMessage({
         id: 'configureAudio',
@@ -402,6 +402,14 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
     }
   }
 
+  postAudioDiagnostic(line) {
+    // Cross the Worker boundary explicitly. Worker trace alone is not guaranteed
+    // to reach the USB debug-ring installed in the main VM.
+    const safe = String(line).slice(0, 640).replace(/\n+$/, '')
+    try { this.postMessage({ id: 'audioDiagnostics', line: safe }) } catch (_) {}
+    try { trace(safe + '\n') } catch (_) {}
+  }
+
   reportEncodePath(event = 'snapshot', force = false) {
     const now = Date.now()
     if (!force && now < this.nextEncodePathAt) return
@@ -412,7 +420,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
     const dropped = this.encoder && this.encodeDroppedStart !== undefined
       ? this.encoder.droppedPcmBytes - this.encodeDroppedStart : null
     const transport = this.transportStatus?.()
-    try { trace('[audio-path] stage=upload event=' + event + ' ms=' + now +
+    try { this.postAudioDiagnostic('[audio-path] stage=upload event=' + event + ' ms=' + now +
       ' turn=' + (this.playbackTurn ?? 'null') +
       ' uploading=' + Number(this.uploading) + ' encoderReady=' + Number(!!this.encoder) +
       ' wsPresent=' + Number(!!this.ws) +
@@ -432,7 +440,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
     if (!force && now < (this.nextAudioPathAt ?? 0)) return
     this.nextAudioPathAt = now + 2000
     // Counters only; this does not log speech, packet contents or credentials.
-    try { trace('[audio-path] stage=decode ms=' + now + ' turn=' + (this.playbackTurn ?? 0) +
+    try { this.postAudioDiagnostic('[audio-path] stage=decode ms=' + now + ' turn=' + (this.playbackTurn ?? 0) +
       Object.entries(this.audioPath).map(([key, value]) => ' ' + key + '=' + value).join('') + '\n') } catch (_) {}
   }
 
@@ -455,7 +463,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
   }
 
   stt(message) {
-    trace('[audio-path] stage=asr event=final ms=' + Date.now() +
+    this.postAudioDiagnostic('[audio-path] stage=asr event=final ms=' + Date.now() +
       ' textChars=' + (typeof message.text === 'string' ? message.text.length : 'null') + '\n')
     if (typeof message.text === 'string' && message.text.trim()) { this.replyRequested = true; this.replyDeadline = Date.now() + 30000 }
     if(this.recognitionOnly){this.abort({reason:'recognition_only'});this.postPresentation({id:'receiveInputText',text:message.text});return}
@@ -504,7 +512,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
       case 'start':
         this.reportEncodePath('tts_start', true)
         this.playbackTurn = (this.playbackTurn ?? 0) + 1
-        trace('[audio-path] stage=tts event=start ms=' + Date.now() + ' turn=' + this.playbackTurn + '\n')
+        this.postAudioDiagnostic('[audio-path] stage=tts event=start ms=' + Date.now() + ' turn=' + this.playbackTurn + '\n')
         const average = this.encodePackets ? Math.round(this.encodeUs / this.encodePackets) : 0
         const load = this.encodePackets ? (100 * this.encodeUs) / (this.encodePackets * INPUT_FRAME_DURATION * 1000) : 0
         const captured = (this.encoder?.capturedPcmBytes ?? 0) - this.encodeCapturedStart
@@ -521,7 +529,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
         this.postMessage({ id: 'listen', turn: this.playbackTurn })
         break
       case 'sentence_start':
-        trace('[audio-path] stage=tts event=sentence_start ms=' + Date.now() +
+        this.postAudioDiagnostic('[audio-path] stage=tts event=sentence_start ms=' + Date.now() +
           ' turn=' + (this.playbackTurn ?? 'null') +
           ' textChars=' + (typeof message.text === 'string' ? message.text.length : 'null') + '\n')
         if (message.glyph_push) {
@@ -535,7 +543,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
         this.postPresentation({ id: 'receiveOutputText', text: message.text, more: true })
         break
       case 'stop':
-        trace('[audio-path] stage=tts event=stop ms=' + Date.now() +
+        this.postAudioDiagnostic('[audio-path] stage=tts event=stop ms=' + Date.now() +
           ' turn=' + (this.playbackTurn ?? 'null') + '\n')
         this.reportAudioPath(true)
         if (!this.decoder) {
@@ -732,7 +740,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
   }
 
   fail(message) {
-    trace('[audio-path] stage=worker event=failed ms=' + Date.now() +
+    this.postAudioDiagnostic('[audio-path] stage=worker event=failed ms=' + Date.now() +
       ' reasonLength=' + String(message ?? '').length + '\n')
     this.reportEncodePath('failed', true)
     this.reportAudioPath(true)
