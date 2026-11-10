@@ -99,6 +99,8 @@ class Runner:
                 self.child = None
         if rc:
             self.failed_command = name
+            if name in ('flash-id', 'backup', 'flash', 'boot-stages'):
+                self.flash_failure_diagnosis(name, path)
             self.log('ERROR', 'STEP=' + name + ' EXIT=' + str(rc) + ' CMD=' + shown + ' LOG=' + str(path))
             for line in path.read_text(errors='replace').splitlines()[-40:]:
                 # Full tool output is private on disk; sanitize terminal error snippets.
@@ -305,6 +307,70 @@ class Runner:
         if latest_attempt: self.log('WARN', '成功未確認の書き込み記録あり: ' + str(latest_attempt/'console.log'))
         return None
 
+    def usb_snapshot(self, stage, expected=None):
+        """Read-only USB snapshot; never opens a serial port or toggles DTR/RTS."""
+        snapshot = {'stage': stage, 'expected_serial': SERIAL, 'devices': [], 'category': 'unknown'}
+        try:
+            from serial.tools import list_ports
+            for p in list_ports.comports():
+                if p.vid != 0x303a or p.pid != 0x1001:
+                    continue
+                item = {'port': p.device, 'vid': p.vid, 'pid': p.pid,
+                        'serial_match': p.serial_number == SERIAL,
+                        'location': p.location or 'unknown'}
+                snapshot['devices'].append(item)
+            matches = [p for p in snapshot['devices'] if p['serial_match']]
+            if not matches:
+                snapshot['category'] = 'device-not-enumerated' if not snapshot['devices'] else 'identity-mismatch'
+            elif len(matches) != 1:
+                snapshot['category'] = 'ambiguous-device'
+            elif expected and matches[0]['location'] != expected.get('location'):
+                snapshot['category'] = 'physical-port-changed'
+            else:
+                port = matches[0]['port']
+                if not os.access(port, os.R_OK | os.W_OK):
+                    snapshot['category'] = 'permission-denied'
+                else:
+                    try:
+                        busy = subprocess.run(['fuser', port], capture_output=True, timeout=3)
+                        snapshot['category'] = ('port-available' if busy.returncode == 1
+                            else 'port-busy' if busy.returncode == 0 else 'occupancy-unknown')
+                    except (OSError, subprocess.TimeoutExpired):
+                        snapshot['category'] = 'occupancy-unknown'
+        except (ImportError, OSError) as error:
+            snapshot['category'] = 'diagnostic-unavailable'
+            snapshot['error_type'] = type(error).__name__
+        target = self.run / ('usb-' + stage + '.json')
+        target.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + '\n')
+        self.log('CHECK', 'STEP=USB-DIAG STAGE=' + stage + ' CATEGORY=' +
+                 snapshot['category'] + ' LOG=' + str(target))
+        return snapshot
+
+    def flash_failure_diagnosis(self, stage, path):
+        """Classify evidence without treating a suspected cause as proven."""
+        try:
+            output = path.read_text(errors='replace')[-160000:]
+        except OSError:
+            output = ''
+        patterns = (
+            ('serial-permission', r'permission denied|could not open port.*permission'),
+            ('serial-port-missing', r'no such file or directory|could not open port.*not found'),
+            ('serial-port-busy', r'device or resource busy|port is busy'),
+            ('rom-connect-timeout', r'failed to connect|no serial data received|timed out waiting for packet header'),
+            ('transport-disconnected', r'device disconnected|write timeout|read timeout|serialexception|input/output error'),
+            ('flash-write-error', r'failed to write|write failed|invalid head of packet'),
+            ('flash-verification-error', r'verification failed|hash of data verified.*failed|checksum mismatch'),
+        )
+        category = next((name for name, pattern in patterns if re.search(pattern, output, re.I)), 'unclassified')
+        snapshot = self.usb_snapshot('failure-' + stage)
+        evidence = {'step': stage, 'suspected_category': category,
+                    'usb_category': snapshot['category'], 'source_log': str(path),
+                    'note': 'Classification is heuristic; not proof of physical USB failure'}
+        target = self.run / ('diagnosis-' + stage + '.json')
+        target.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + '\n')
+        self.log('ERROR', 'STEP=FLASH-DIAG STAGE=' + stage + ' SUSPECT=' + category +
+                 ' USB=' + snapshot['category'] + ' LOG=' + str(target))
+
     def check_usb(self):
         usb_error = None
         try: self.log('CHECK', 'USB=' + self.identity()['port'])
@@ -314,6 +380,7 @@ class Runner:
         else:
             for line in state.stdout.splitlines(): self.log('CHECK', 'HUB.' + line)
         if usb_error:
+            self.usb_snapshot('preflight')
             journal = subprocess.run(['journalctl','-k','--since','-15 min','--no-pager','-o','short-iso'],capture_output=True,text=True)
             path = self.run / 'usb-kernel.log'
             lines = [line for line in journal.stdout.splitlines() if re.search(r'usb|ttyACM|cdc_acm',line,re.I)]
@@ -527,10 +594,14 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
             base = [DEVICE_PYTHON, '-m', 'esptool', '--chip', 'esp32s3', '--port', expected['port'], '--before', 'no-reset', '--after', 'no-reset', '--connect-attempts', '1']
             connect = self.connection_command(base)
             info = self.cmd('flash-id', connect + ['--no-stub', 'flash-id'], timeout=30)
-            if not re.search(r'Detected flash size: 16(?:MB| MiB)', info.read_text()): raise RuntimeError('16MiB flash not verified')
+            if not re.search(r'Detected flash size: 16(?:MB| MiB)', info.read_text()):
+                self.flash_failure_diagnosis('flash-id', info)
+                raise RuntimeError('16MiB flash not verified')
             backup = self.run / 'flash-16MiB.bin'
             self.cmd('backup', base + ['read-flash', '0', '0x1000000', backup], timeout=600)
-            if backup.stat().st_size != 16777216: raise RuntimeError('backup length mismatch')
+            if backup.stat().st_size != 16777216:
+                self.flash_failure_diagnosis('backup', self.run / 'backup.log')
+                raise RuntimeError('backup length mismatch')
             digest = sha(backup)
             (self.run / 'flash-16MiB.sha256').write_text(digest + '  flash-16MiB.bin\n')
             if sha(backup) != digest: raise RuntimeError('backup checksum mismatch')
@@ -547,6 +618,7 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
             self.cmd('flash', argv, timeout=300)
             record['verified_at'] = datetime.datetime.now().astimezone().isoformat()
             self.save_flash_record(record)
+            self.log('CHECK', 'STEP=FLASH-DIAG TRANSFER=success VERIFICATION=esptool-completed')
             self.log('INFO', '書き込み検証完了。通常起動ログを取得します。本体RSTを短く1回押してください。')
             self.capture(expected)
             self.validate_boot()
