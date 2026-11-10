@@ -459,7 +459,7 @@ class Runner:
         public_platforms = example.get('platforms', {})
         private_platforms = data.setdefault('platforms', {})
         for name, mapping in public_platforms.items():
-            private_platforms[name] = mapping
+            private_platforms.setdefault(name, mapping)
         self.manifest_before = dst.read_bytes() if dst.exists() else None
         if self.manifest_before is not None: (self.run / 'private-manifest.before.json').write_bytes(self.manifest_before)
         self.manifest_changed = True
