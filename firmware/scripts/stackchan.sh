@@ -6,7 +6,6 @@ import signal, subprocess, sys, tempfile, time, shutil
 
 HOME = pathlib.Path('/home/kmac')
 DEFAULT_REPO = HOME / 'work/stackchan-context-recovery-20261109'
-SDK_ENV = HOME / 'work/stackchan-pr87-pr89-evidence/sdk-env.sh'
 IDF_ENV = HOME / '.local/share/esp32/esp-idf/export.sh'
 DEVICE_PYTHON = HOME / '.espressif/python_env/idf6.1_py3.12_env/bin/python'
 PRIVATE = pathlib.Path('/mnt/data/Development/stackchan/stack-chan/firmware/host/app/manifest_archive_private.json')
@@ -52,6 +51,22 @@ esac
 AUDIO_SAFE_SOURCE = "def safe_audio_line(line):\n    line=line.strip()\n    if line.startswith('[audio-state] '):\n        allowed={'ms','session','turn','drainTurn','state','previousState','provider','failureKind','drainUntil','hardwareUntil','resuming','head','tail','pending','queuedBytes','pcmBytes','asr','underruns','maxPumpGapMs'}\n        events={'tts-start','tts-stop','asr','text-final','mic-open','output-open','output-close','drain-start','drain-complete','health','failed','disconnected'}\n        fields=line.split()[1:];seen=set()\n        for field in fields:\n            key,sep,value=field.partition('=')\n            if not sep or key in seen: return None\n            seen.add(key)\n            if key=='event':\n                if value not in events:return None\n            elif key not in allowed or not re.fullmatch(r'-?[0-9]{1,16}',value):return None\n        return line if {'event','ms','session','state'}<=seen else None\n    if re.fullmatch(r'\\[playback\\] native queue starvation count=[0-9]+',line):return line\n    if re.fullmatch(r'\\[opus\\](?: (?:packets|pcm|captured|dropped_pcm|compressed|encode_avg|encode_max|decode_avg|decode_max|load)=[0-9]+(?:\\.[0-9]+)?(?:B|us|%)?)+',line):return line\n    if re.fullmatch(r'\\[heap\\](?: (?:nativeStackMinimumFree|internalFree|internalMinimum|internalLargest|psramFree|psramMinimum|psramLargest)=[0-9]+)+',line):return line\n    if line=='[xiaozhi] unsolicited speech suppressed; listening resumed':return line\n    if line.startswith(\"[audio-path] \"):\n        values={}\n        for field in line.split()[1:]:\n            key,sep,value=field.partition(\"=\")\n            if not sep or key in values:return None\n            values[key]=value\n        stage=values.pop(\"stage\",\"\")\n        required={\"decode\":{\"ms\",\"turn\",\"fragments\",\"skipped\",\"decoded\",\"failures\",\"pcmBytes\"},\"output\":{\"ms\",\"turn\",\"submittedBytes\",\"completedBytes\",\"completedChunks\",\"failures\",\"pending\",\"completed\",\"volume\"}}\n        if stage not in required or set(values)!=required[stage]:return None\n        return line if all(re.fullmatch(r\"[0-9]{1,16}\",v) for v in values.values()) else None\n    if re.fullmatch(r\"\\[asr\\] final chars=[0-9]{1,5}\",line):return line\n    if re.fullmatch(r\"\\[llm\\] output_final chars=[0-9]{1,5}\",line):return line\n    return None\n\ndef audio_packet_lines(packet, partial):\n    result=[]\n    if not isinstance(packet,dict) or packet.get('event')!='debug':return result,partial\n    fragments=packet.get('lines',[])\n    if not isinstance(fragments,list):return result,partial\n    for fragment in fragments[:16]:\n        if not isinstance(fragment,str):continue\n        if len(partial)+len(fragment)>4096:\n            partial='';result.append('[WARN] Oversized debug line omitted');continue\n        partial+=fragment\n        while '\\n' in partial:\n            line,partial=partial.split('\\n',1)\n            safe=safe_audio_line(line)\n            if safe:result.append(safe)\n    return result,partial\n"
 
 AUDIO_CAPTURE_SOURCE = "import json,time,sys\nfrom pathlib import Path\nfrom serial import Serial,SerialException\nfrom serial.tools import list_ports\nexpected=json.loads(sys.argv[1]);duration=int(sys.argv[2]);manifest=Path(sys.argv[3])\nns={};exec('import re\\n'+sys.argv[4],ns);filter_packet=ns['audio_packet_lines']\ntry: token=json.loads(manifest.read_text())['config']['archiveToken']\nexcept (OSError,ValueError,KeyError,TypeError):raise SystemExit('Diagnostic authentication unavailable; no request sent')\nif not isinstance(token,str) or not token:raise SystemExit('Diagnostic authentication unavailable; no request sent')\ndtr_mode=sys.argv[5] if len(sys.argv)>5 else 'off'\nif dtr_mode not in ('off','on'):raise SystemExit('Invalid DTR mode; no port opened')\nend=time.monotonic()+duration;seen=False;counter=0;partial='';lines=0;responses=0\ndef emit(line):print(time.strftime('%Y-%m-%dT%H:%M:%S%z')+' '+line,flush=True)\nemit('[INFO] Delivery times may differ from buffered event times; no transcript collection enabled')\nwhile time.monotonic()<end:\n ports=[p for p in list_ports.comports() if (p.vid,p.pid,p.serial_number,p.location)==(expected['vid'],expected['pid'],expected['serial'],expected['location'])]\n if len(ports)!=1:time.sleep(.5);continue\n try:\n  stage='open'\n  serial=Serial(port=None,baudrate=115200,timeout=.25,write_timeout=1,exclusive=True)\n  serial.dtr=(dtr_mode=='on');serial.rts=False;serial.port=ports[0].device\n  with serial:\n   seen=True;inflight=None;next_poll=0\n   emit('[audio-io] stage=open result=success dtr='+dtr_mode+' rts=off')\n   while time.monotonic()<end:\n    now=time.monotonic()\n    if inflight is not None and now-sent_at>5:\n     emit('[ERROR] debug/status timed out; VM stall or transport failure not distinguished')\n     raise SystemExit(1)\n    if inflight is None and now>=next_poll:\n     counter+=1;inflight=counter;sent_at=now\n     # The only RPC used. No SD enumeration, mode changes, conversation logging, photo or replay.\n     packet={'id':counter,'token':token,'op':'/debug/status','args':{}}\n     stage='write'\n     wire=('@SC '+json.dumps(packet,separators=(',',':'))+'\\n').encode()\n     emit('[audio-io] stage=write request='+str(counter))\n     written=serial.write(wire)\n     if written!=len(wire):raise SystemExit('Diagnostic request write incomplete; no replay')\n    stage='read'\n    raw=serial.readline(4096)\n    if not raw.startswith(b'@SC '):continue\n    try:packet=json.loads(raw[4:])\n    except (ValueError,UnicodeDecodeError):continue\n    if not isinstance(packet,dict):continue\n    if inflight is not None and packet.get('id')==inflight:\n     if 'error' in packet:raise SystemExit('debug/status rejected; response body omitted')\n     status=packet.get('result')\n     if not isinstance(status,dict):raise SystemExit('Unexpected diagnostic response; body omitted')\n     fields=[]\n     for key in ('queued','dropped','truncated','usbRetries'):\n      value=status.get(key)\n      if isinstance(value,int) and not isinstance(value,bool) and 0<=value<=9007199254740991:fields.append(key+'='+str(value))\n     emit('[audio-status] '+' '.join(fields));responses+=1;inflight=None;next_poll=now+2\n    safe,partial=filter_packet(packet,partial)\n    for line in safe:emit(line);lines+=1\n except (SerialException,OSError) as error:\n  kind=type(error).__name__\n  if kind not in ('SerialException','SerialTimeoutException','OSError','PermissionError','BlockingIOError','TimeoutError'):kind='SerialError'\n  number=getattr(error,'errno',None)\n  if not isinstance(number,int) or isinstance(number,bool):number=0\n  emit('[ERROR] USB transport stage='+stage+' type='+kind+' errno='+str(number))\n  present=[p for p in list_ports.comports() if (p.vid,p.pid,p.serial_number,p.location)==(expected['vid'],expected['pid'],expected['serial'],expected['location'])]\n  if present:\n   raise SystemExit('Verified device remains enumerated; stopped without reopening or resending')\n  emit('[WARN] Verified device is no longer enumerated; bounded same-device observation continues')\n  partial='';time.sleep(.5)\nif not seen:raise SystemExit('Known USB device never became available; no audio evidence collected')\nemit('[INFO] audio diagnostic responses='+str(responses)+' lines='+str(lines))\nif not responses:raise SystemExit('No authenticated diagnostic response; capture is incomplete')\nif not lines:emit('[WARN] No matching audio evidence; completion does not prove playback success')\n"
+
+def detect_sdk(env, candidates=None):
+    # Explicit paths fail closed: silently changing SDK could discard local patches.
+    choices = [pathlib.Path(env['MODDABLE'])] if env.get('MODDABLE') else (
+        candidates if candidates is not None else [
+            HOME / 'work/moddable-pr87-pr89',
+            pathlib.Path('/mnt/data/Development/stackchan-sdk/moddable'),
+            HOME / '.local/share/moddable', HOME / 'moddable'])
+    for root in choices:
+        root = pathlib.Path(root).resolve()
+        if all((root / f).is_file() for f in (
+            'tools/mcconfig.js', 'tools/VERSION', 'xs/includes/xs.h',
+            'build/devices/esp32/manifest.json', 'build/bin/lin/release/mcconfig')) and os.access(root / 'build/bin/lin/release/mcconfig', os.X_OK):
+            return root
+    raise RuntimeError('Moddable SDK invalid or missing; set MODDABLE to the existing patched SDK root (tools/mcconfig.js)')
+
 
 class Runner:
     def __init__(self, args):
@@ -112,7 +127,8 @@ class Runner:
         self.failed_command = name
         if name in ('flash-id', 'backup', 'flash', 'boot-stages'):
             self.flash_failure_diagnosis(name, path)
-        self.log('ERROR', 'STEP=' + name + ' ' + reason + ' CMD=' + shown + ' LOG=' + str(path))
+        self.log('FATAL', 'STEP=' + name + ' REASON=command-failed ' + reason + ' CMD=' + shown + ' LOG=' + str(path))
+        self.log('INFO', 'RECOVERY=inspect saved log and restore dependencies; rerun --test --build without --write')
         for line in path.read_text(errors='replace').splitlines()[-40:]:
             self.log('ERROR', self.redact(line)[:600])
 
@@ -228,7 +244,7 @@ class Runner:
         if self.a.sha and not getattr(self, 'pr_info', None) and self.a.sha != self.head: raise RuntimeError('HEAD differs from --sha')
         if self.query(['git', 'status', '--porcelain', '--untracked-files=no']): raise RuntimeError('tracked changes exist; preserve them and use a clean worktree')
         self.cmd('diff-check', ['git', 'diff', '--check'], self.repo)
-        for path in [SDK_ENV, IDF_ENV, DEVICE_PYTHON, NODE / 'node', PRIVATE]:
+        for path in [DEVICE_PYTHON, NODE / 'node', PRIVATE]:
             if not path.is_file(): raise RuntimeError('missing: ' + str(path))
         self.log('CHECK', 'HOST=' + os.uname().nodename + ' SHA=' + self.head + ' REPO=' + str(self.repo))
         self.log('CHECK', 'WORKTREE_BRANCH=' + (self.query(['git','branch','--show-current']) or '(detached)'))
@@ -412,14 +428,34 @@ class Runner:
             raise RuntimeError('cannot verify hub service state; preflight incomplete')
 
     def setup_env(self):
-        # Only source the known SDK exports; never evaluate user input as shell code.
-        source = 'set -e; source "$1" >&2; source "$2" >&2; env -0'
-        p = subprocess.run(['bash', '-c', source, 'stackchan-env', str(SDK_ENV), str(IDF_ENV)], env=self.env,
+        self.step = 'environment'
+        sdk = detect_sdk(self.env)
+        idf = pathlib.Path(self.env.get('IDF_PATH') or IDF_ENV.parent)
+        if not (idf / 'export.sh').is_file():
+            raise RuntimeError('ESP-IDF missing; set IDF_PATH to the existing ESP-IDF checkout')
+        env = {**self.env, 'MODDABLE': str(sdk), 'IDF_PATH': str(idf)}
+        env['PATH'] = str(NODE) + ':' + str(sdk / 'build/bin/lin/release') + ':' + env.get('PATH', '')
+        p = subprocess.run(['bash', '-c', 'set -e; source "$1" >&2; env -0',
+                            'stackchan-env', str(idf / 'export.sh')], env=env,
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        (self.run / 'environment.log').write_bytes(p.stderr)
-        if p.returncode: raise RuntimeError('SDK/IDF export failed; see environment.log')
+        (self.run / 'environment.log').write_text(self.redact(p.stderr.decode(errors='replace')))
+        if p.returncode: raise RuntimeError('ESP-IDF export failed; see environment.log; restore existing IDF Python/tools')
         self.env = dict(item.decode().split('=', 1) for item in p.stdout.split(b'\0') if b'=' in item)
-        self.env['PATH'] = str(NODE) + ':' + self.env['PATH']
+        for tool in ('node', 'npm', 'python', 'mcconfig', 'idf.py'):
+            if not shutil.which(tool, path=self.env['PATH']):
+                raise RuntimeError('missing dependency: ' + tool + '; restore SDK/IDF tool environment')
+        self.env['PATH'] = str(NODE) + ':' + str(sdk / 'build/bin/lin/release') + ':' + self.env['PATH']
+        self.log('CHECK', 'MODDABLE=' + str(sdk) + ' VERSION=' + (sdk / 'tools/VERSION').read_text().strip()
+                 + ' IDF_PATH=' + str(idf.resolve()))
+        self.cmd('tool-versions', ['bash', '-c', 'set -e; node --version; npm --version; python --version; idf.py --version'], self.fw)
+        if not (self.fw / 'node_modules/typescript').is_dir():
+            raise RuntimeError('npm dependencies missing; run npm ci in selected firmware worktree')
+
+    def npm_script(self, name):
+        scripts = json.loads((self.fw / 'package.json').read_text()).get('scripts', {})
+        if name not in scripts:
+            raise RuntimeError('npm script missing: ' + name + '; select a compatible worktree/package.json')
+        return ['npm', 'run', name]
 
     def fingerprint(self):
         sdk = pathlib.Path(self.env['MODDABLE'])
@@ -431,15 +467,18 @@ class Runner:
             p = sdk / os.fsdecode(name)
             h.update(name)
             h.update((sha(p) if p.is_file() else 'missing').encode())
-        return {'sha': self.head, 'sdk': h.hexdigest(), 'idf': self.query(['git', '-C', str(IDF_ENV.parent), 'rev-parse', 'HEAD']),
+        return {'sha': self.head, 'sdk': h.hexdigest(), 'idf': self.query(['git', '-C', str(pathlib.Path(self.env['IDF_PATH'])), 'rev-parse', 'HEAD']),
                 'private': sha(PRIVATE)}
 
     def test(self):
         self.cmd('cli', ['python3', self.fw / 'scripts/lib/stackchan-cli.test.py'], self.fw)
-        self.cmd('unit', ['npm', 'run', 'test:unit'], self.fw)
+        self.cmd('unit', self.npm_script('test:unit'), self.fw)
         self.cmd('archive', ['bash', '-c', 'node --experimental-vm-modules --test --test-concurrency=1 scripts/lib/archive-*.test.mjs'], self.fw)
 
     def build(self):
+        self.step = 'build-preflight'
+        build_command = self.npm_script('build:m5stackchan_cores3')
+        self.npm_script('prebuild:archive')
         dst = self.fw / 'host/app/manifest_archive_private.json'
         data = json.loads(PRIVATE.read_text())
         example = json.loads((self.fw / 'host/app/manifest_archive.example.json').read_text())
@@ -464,7 +503,8 @@ class Runner:
         if self.manifest_before is not None: (self.run / 'private-manifest.before.json').write_bytes(self.manifest_before)
         self.manifest_changed = True
         dst.write_text(json.dumps(data, indent=2) + '\n'); dst.chmod(0o600)
-        self.cmd('build', ['npm', 'run', 'build:archive:m5stackchan_cores3'], self.fw)
+        self.cmd('archive-resources', self.npm_script('prebuild:archive'), self.fw)
+        self.cmd('build', build_command + ['--', '--mode=release', '--manifest', str(dst)], self.fw)
         self.validate_layout()
         receipt = dict(self.fingerprint(), artifacts={v: sha(self.bin / v) for v in FILES.values()})
         self.receipt.parent.mkdir(parents=True, exist_ok=True)
@@ -827,7 +867,7 @@ def main(argv=None):
     try: runner.execute()
     except (Exception, SystemExit) as e:
         rc = e.code if isinstance(e, SystemExit) and isinstance(e.code,int) else 1
-        runner.log('ERROR', 'STEP='+runner.step+' '+str(e))
+        runner.log('FATAL', 'STEP='+runner.step+' REASON='+runner.redact(str(e))+' EXIT='+str(rc)+' LOG='+str(runner.run/'console.log')+' RECOVERY=restore dependencies and rerun --test --build')
     finally:
         failed_step=runner.step
         try: runner.cleanup()

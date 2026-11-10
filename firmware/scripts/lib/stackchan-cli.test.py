@@ -25,6 +25,64 @@ class CLITest(unittest.TestCase):
         self.r.log = lambda *args: None
         self.addCleanup(self.r.console.close)
 
+    def test_sdk_detection_unset_valid_and_invalid(self):
+        sdk = self.root / 'SDK with spaces'
+        for f in ('tools/mcconfig.js', 'tools/VERSION', 'xs/includes/xs.h',
+                  'build/devices/esp32/manifest.json', 'build/bin/lin/release/mcconfig'):
+            target = sdk / f
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.touch()
+            target.chmod(0o700)
+        self.assertEqual(m.detect_sdk({}, [sdk]), sdk.resolve())
+        self.assertEqual(m.detect_sdk({'MODDABLE': str(sdk)}), sdk.resolve())
+        with self.assertRaisesRegex(RuntimeError, 'SDK invalid'):
+            m.detect_sdk({'MODDABLE': str(self.root / 'missing')}, [sdk])
+
+    def test_missing_script_stops_before_private_manifest_change(self):
+        self.r.fw.mkdir(parents=True)
+        (self.r.fw / 'package.json').write_text('{"scripts":{}}')
+        with self.assertRaisesRegex(RuntimeError, 'npm script missing'):
+            self.r.build()
+        self.assertFalse(self.r.manifest_changed)
+
+    def test_build_failure_log_and_fatal(self):
+        messages = []
+        self.r.log = lambda *args: messages.append(args)
+        with self.assertRaisesRegex(RuntimeError, 'command failed'):
+            self.r.cmd('build', ['python3', '-c', 'print("compiler failed");raise SystemExit(9)'])
+        self.assertIn('compiler failed', (self.r.run / 'build.log').read_text())
+        self.assertTrue(any(level == 'FATAL' and 'STEP=build REASON=' in text and 'EXIT=9' in text
+                            for level, text in messages))
+
+    def test_environment_restores_sdk_and_idf_from_another_worktree(self):
+        sdk = self.root / 'patched-sdk'
+        for f in ('tools/mcconfig.js', 'tools/VERSION', 'xs/includes/xs.h',
+                  'build/devices/esp32/manifest.json', 'build/bin/lin/release/mcconfig'):
+            target = sdk / f
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('10.0.2' if f == 'tools/VERSION' else '')
+            target.chmod(0o700)
+        idf = self.root / 'idf'
+        idf.mkdir()
+        (idf / 'export.sh').write_text('export IDF_PATH="$1"\n')
+        (self.r.fw / 'node_modules/typescript').mkdir(parents=True)
+        self.r.env = {'PATH': '/usr/bin'}
+        expected = {**self.r.env, 'MODDABLE': str(sdk), 'IDF_PATH': str(idf)}
+        result = types.SimpleNamespace(returncode=0, stderr=b'', stdout=b'\0'.join(
+            (k + '=' + v).encode() for k, v in expected.items()) + b'\0')
+        calls = []
+        self.r.cmd = lambda *args: calls.append(args)
+        with patch.object(m, 'detect_sdk', return_value=sdk), patch.object(m, 'IDF_ENV', idf / 'export.sh'), \
+             patch.object(m.subprocess, 'run', return_value=result) as run, \
+             patch.object(m.shutil, 'which', return_value='/tool'):
+            self.r.setup_env()
+        self.assertEqual(self.r.env['MODDABLE'], str(sdk))
+        self.assertEqual(self.r.env['IDF_PATH'], str(idf))
+        self.assertIn(str(sdk / 'build/bin/lin/release'), self.r.env['PATH'])
+        self.assertEqual(run.call_args.kwargs['env']['MODDABLE'], str(sdk))
+        self.assertEqual(calls[0][2], self.r.fw)
+        self.assertNotIn('MODDABLE=', (self.r.run / 'environment.log').read_text())
+
     def kernel_filter(self, tool, text='usb connected\nordinary event\n', journal_rc=0, search_rc=None):
         # Execute the actual nested bash with an isolated PATH, not an outer-shell function.
         import os, shutil
@@ -185,7 +243,7 @@ class CLITest(unittest.TestCase):
         def failure(): calls.append('build');raise RuntimeError('injected build failure')
         self.r.build=failure
         self.r.write=lambda:calls.append('write')
-        with patch.dict(m.os.environ,{'TMUX':'test'}),self.assertRaisesRegex(RuntimeError,'injected'): self.r.execute()
+        with patch.object(m, 'HOME', self.root), patch.dict(m.os.environ,{'TMUX':'test'}),self.assertRaisesRegex(RuntimeError,'injected'): self.r.execute()
         self.assertEqual(calls,['check','test','build'])
         self.r.lock.close()
 
@@ -615,6 +673,8 @@ class CLITest(unittest.TestCase):
             self.r.write()
 
     def test_selected_worktree_cli_suite_is_used(self):
+        self.r.fw.mkdir(parents=True)
+        (self.r.fw / 'package.json').write_text(json.dumps({'scripts': {'test:unit': 'test'}}))
         calls = []
         self.r.cmd = lambda name, argv, *args, **kwargs: calls.append((name, argv))
         self.r.test()
@@ -683,6 +743,7 @@ class CLITest(unittest.TestCase):
             artifact = self.r.bin / filename
             artifact.parent.mkdir(parents=True, exist_ok=True)
             artifact.write_bytes(b'test')
+        (fw / 'package.json').write_text(json.dumps({'scripts': {'build:m5stackchan_cores3': 'build', 'prebuild:archive': 'prepare'}}))
         self.r.cmd = lambda *args, **kwargs: None
         self.r.validate_layout = lambda: None
         self.r.fingerprint = lambda: {'sha': 'a' * 40}
