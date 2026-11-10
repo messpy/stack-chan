@@ -42,7 +42,7 @@ jobs:
         run: |
           git config user.email "ci@users.noreply.github.com"
           git config user.name "Category Merge Preflight"
-          for name in voice-ai camera web ui system; do
+          for name in camera voice-ai web ui system; do
             echo "===== SEQUENTIAL $name ====="
             if git merge --no-commit --no-ff "origin/category/$name" >/tmp/category-merge.log 2>&1; then
               git commit -m "test: simulated category $name" >/dev/null
@@ -52,6 +52,19 @@ jobs:
               git diff --name-only --diff-filter=U | head -100
               echo 'UNMERGED_BLOB_SHA:'
               git ls-files --unmerged | head -80
+              echo 'CONFLICT_HUNKS:'
+              python3 - <<'PY'
+          import pathlib, subprocess
+          paths = subprocess.run(['git','diff','--name-only','--diff-filter=U'],capture_output=True,text=True).stdout.splitlines()
+          for path in paths[:12]:
+              data=pathlib.Path(path).read_text(errors='replace').splitlines()
+              starts=[i for i,line in enumerate(data) if line.startswith('<<<<<<< ')]
+              print('FILE',path,'hunks',len(starts))
+              for i in starts[:6]:
+                  end=next((j for j in range(i+1,len(data)) if data[j].startswith('>>>>>>> ')),min(i+50,len(data)-1))
+                  for j in range(max(0,i-2),min(len(data),end+3)):
+                      print(str(j+1)+': '+data[j][:230])
+          PY
               sed -n '1,25p' /tmp/category-merge.log
               git merge --abort
             fi
