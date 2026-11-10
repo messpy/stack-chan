@@ -393,11 +393,19 @@ export function setChatMode(on) {
   const starting = on && !enabled()
   if(!on){chatSaveFailedOff=true;closeChat();collectMemory()}
   let saveError
+  // Keep the previous persisted values so a failed audio handoff cannot leave
+  // conversation mode ON after setChatMode(true) has thrown.
+  const previousSettings=getSettings()
+  const previousChatMode=previousSettings.chatMode
+  const previousTranscriptionMode=previousSettings.transcriptionMode
+  let savedMode=false
   try {
     // Restoring an already persisted ON mode must not rewrite the SD card.
     const settings=getSettings()
-    if(settings.chatMode!==on||(on&&settings.transcriptionMode!==false))
+    if(settings.chatMode!==on||(on&&settings.transcriptionMode!==false)){
       changeSettings((data) => { data.chatMode=on; if(on)data.transcriptionMode=false })
+      savedMode=true
+    }
     chatSaveFailedOff=false
     if(on)recognitionSaveFailedOff=false
   } catch(e) {
@@ -405,7 +413,22 @@ export function setChatMode(on) {
     saveError='会話は停止しましたが、OFF設定を保存できませんでした。再起動後の設定を確認してください'
   }
   // Do not change audio ownership until the ON preference is safely persisted.
-  if(on||!saveError)modeChanged?.(on)
+  try {
+    if(on||!saveError)modeChanged?.(on)
+  } catch(e) {
+    if(on&&savedMode){
+      try {
+        changeSettings(data=>{
+          data.chatMode=previousChatMode
+          data.transcriptionMode=previousTranscriptionMode
+        })
+      } catch(rollbackError) {
+        trace('[direct-chat] mode rollback failed: '+String(rollbackError)+'\\n')
+        throw new Error('会話開始に失敗し、設定の復旧にも失敗しました: '+String(e))
+      }
+    }
+    throw e
+  }
   if(starting){
     if(recognitionMode())closeChat()
     beginConversation()

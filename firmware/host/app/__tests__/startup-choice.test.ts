@@ -66,32 +66,40 @@ function createManualTimer(): ManualTimer {
 }
 
 function installBareSpecifierPackages(): void {
-  const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
+  const testRoot = dirname(fileURLToPath(import.meta.url))
+  const hostRoot = resolve(testRoot, '..', '..')
   const appRoot = resolve(hostRoot, 'app')
+  const wasmRoot = resolve(appRoot, 'default-behavior/wasm')
 
-  writeAliasPackageSubpath(
-    hostRoot,
-    'app-default-behavior',
-    'startup-choice',
-    resolve(appRoot, 'default-behavior/startup-choice.js'),
-  )
-  writeAliasPackageSubpath(
-    hostRoot,
-    'app-default-behavior',
-    'wasm/on-launch',
-    resolve(appRoot, 'default-behavior/wasm/on-launch.js'),
-  )
-  writeAliasPackage(hostRoot, 'timer', resolve(hostRoot, 'modules/testing/fakes/timer.js'), { hasDefaultExport: true })
-  writeAliasPackage(
-    hostRoot,
-    'startup-splash',
-    resolve(appRoot, 'default-behavior/__tests__/startup-choice/startup-splash-stub.js'),
-  )
-  writeAliasPackage(
-    hostRoot,
-    'setup-mode',
-    resolve(appRoot, 'default-behavior/__tests__/startup-choice/setup-mode-stub.js'),
-  )
+  // Other test workers publish aliases into appRoot/node_modules at the same
+  // time. Node resolves that closer directory before hostRoot/node_modules;
+  // a half-created package can hide a complete parent alias. Keep these
+  // fixtures closest to both importers so no other worker writes over them.
+  for (const root of [testRoot, wasmRoot]) {
+    writeAliasPackageSubpath(
+      root,
+      'app-default-behavior',
+      'startup-choice',
+      resolve(appRoot, 'default-behavior/startup-choice.js'),
+    )
+    writeAliasPackageSubpath(
+      root,
+      'app-default-behavior',
+      'wasm/on-launch',
+      resolve(appRoot, 'default-behavior/wasm/on-launch.js'),
+    )
+    writeAliasPackage(root, 'timer', resolve(hostRoot, 'modules/testing/fakes/timer.js'), { hasDefaultExport: true })
+    writeAliasPackage(
+      root,
+      'startup-splash',
+      resolve(appRoot, 'default-behavior/__tests__/startup-choice/startup-splash-stub.js'),
+    )
+    writeAliasPackage(
+      root,
+      'setup-mode',
+      resolve(appRoot, 'default-behavior/__tests__/startup-choice/setup-mode-stub.js'),
+    )
+  }
 }
 
 test('startup choice automatically boots after the configured delay', async () => {

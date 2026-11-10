@@ -6,7 +6,6 @@ import signal, subprocess, sys, tempfile, time, shutil
 
 HOME = pathlib.Path('/home/kmac')
 DEFAULT_REPO = HOME / 'work/stackchan-context-recovery-20261109'
-SDK_ENV = HOME / 'work/stackchan-pr87-pr89-evidence/sdk-env.sh'
 IDF_ENV = HOME / '.local/share/esp32/esp-idf/export.sh'
 DEVICE_PYTHON = HOME / '.espressif/python_env/idf6.1_py3.12_env/bin/python'
 PRIVATE = pathlib.Path('/mnt/data/Development/stackchan/stack-chan/firmware/host/app/manifest_archive_private.json')
@@ -53,6 +52,22 @@ AUDIO_SAFE_SOURCE = "def safe_audio_line(line):\n    line=line.strip()\n    if l
 
 AUDIO_CAPTURE_SOURCE = "import json,time,sys\nfrom pathlib import Path\nfrom serial import Serial,SerialException\nfrom serial.tools import list_ports\nexpected=json.loads(sys.argv[1]);duration=int(sys.argv[2]);manifest=Path(sys.argv[3])\nns={};exec('import re\\n'+sys.argv[4],ns);filter_packet=ns['audio_packet_lines']\ntry: token=json.loads(manifest.read_text())['config']['archiveToken']\nexcept (OSError,ValueError,KeyError,TypeError):raise SystemExit('Diagnostic authentication unavailable; no request sent')\nif not isinstance(token,str) or not token:raise SystemExit('Diagnostic authentication unavailable; no request sent')\ndtr_mode=sys.argv[5] if len(sys.argv)>5 else 'off'\nif dtr_mode not in ('off','on'):raise SystemExit('Invalid DTR mode; no port opened')\nend=time.monotonic()+duration;seen=False;counter=0;partial='';lines=0;responses=0\ndef emit(line):print(time.strftime('%Y-%m-%dT%H:%M:%S%z')+' '+line,flush=True)\nemit('[INFO] Delivery times may differ from buffered event times; no transcript collection enabled')\nwhile time.monotonic()<end:\n ports=[p for p in list_ports.comports() if (p.vid,p.pid,p.serial_number,p.location)==(expected['vid'],expected['pid'],expected['serial'],expected['location'])]\n if len(ports)!=1:time.sleep(.5);continue\n try:\n  stage='open'\n  serial=Serial(port=None,baudrate=115200,timeout=.25,write_timeout=1,exclusive=True)\n  serial.dtr=(dtr_mode=='on');serial.rts=False;serial.port=ports[0].device\n  with serial:\n   seen=True;inflight=None;next_poll=0\n   emit('[audio-io] stage=open result=success dtr='+dtr_mode+' rts=off')\n   while time.monotonic()<end:\n    now=time.monotonic()\n    if inflight is not None and now-sent_at>5:\n     emit('[ERROR] debug/status timed out; VM stall or transport failure not distinguished')\n     raise SystemExit(1)\n    if inflight is None and now>=next_poll:\n     counter+=1;inflight=counter;sent_at=now\n     # The only RPC used. No SD enumeration, mode changes, conversation logging, photo or replay.\n     packet={'id':counter,'token':token,'op':'/debug/status','args':{}}\n     stage='write'\n     wire=('@SC '+json.dumps(packet,separators=(',',':'))+'\\n').encode()\n     emit('[audio-io] stage=write request='+str(counter))\n     written=serial.write(wire)\n     if written!=len(wire):raise SystemExit('Diagnostic request write incomplete; no replay')\n    stage='read'\n    raw=serial.readline(4096)\n    if not raw.startswith(b'@SC '):continue\n    try:packet=json.loads(raw[4:])\n    except (ValueError,UnicodeDecodeError):continue\n    if not isinstance(packet,dict):continue\n    if inflight is not None and packet.get('id')==inflight:\n     if 'error' in packet:raise SystemExit('debug/status rejected; response body omitted')\n     status=packet.get('result')\n     if not isinstance(status,dict):raise SystemExit('Unexpected diagnostic response; body omitted')\n     fields=[]\n     for key in ('queued','dropped','truncated','usbRetries'):\n      value=status.get(key)\n      if isinstance(value,int) and not isinstance(value,bool) and 0<=value<=9007199254740991:fields.append(key+'='+str(value))\n     emit('[audio-status] '+' '.join(fields));responses+=1;inflight=None;next_poll=now+2\n    safe,partial=filter_packet(packet,partial)\n    for line in safe:emit(line);lines+=1\n except (SerialException,OSError) as error:\n  kind=type(error).__name__\n  if kind not in ('SerialException','SerialTimeoutException','OSError','PermissionError','BlockingIOError','TimeoutError'):kind='SerialError'\n  number=getattr(error,'errno',None)\n  if not isinstance(number,int) or isinstance(number,bool):number=0\n  emit('[ERROR] USB transport stage='+stage+' type='+kind+' errno='+str(number))\n  present=[p for p in list_ports.comports() if (p.vid,p.pid,p.serial_number,p.location)==(expected['vid'],expected['pid'],expected['serial'],expected['location'])]\n  if present:\n   raise SystemExit('Verified device remains enumerated; stopped without reopening or resending')\n  emit('[WARN] Verified device is no longer enumerated; bounded same-device observation continues')\n  partial='';time.sleep(.5)\nif not seen:raise SystemExit('Known USB device never became available; no audio evidence collected')\nemit('[INFO] audio diagnostic responses='+str(responses)+' lines='+str(lines))\nif not responses:raise SystemExit('No authenticated diagnostic response; capture is incomplete')\nif not lines:emit('[WARN] No matching audio evidence; completion does not prove playback success')\n"
 
+def detect_sdk(env, candidates=None):
+    # Explicit paths fail closed: silently changing SDK could discard local patches.
+    choices = [pathlib.Path(env['MODDABLE'])] if env.get('MODDABLE') else (
+        candidates if candidates is not None else [
+            HOME / 'work/moddable-pr87-pr89',
+            pathlib.Path('/mnt/data/Development/stackchan-sdk/moddable'),
+            HOME / '.local/share/moddable', HOME / 'moddable'])
+    for root in choices:
+        root = pathlib.Path(root).resolve()
+        if all((root / f).is_file() for f in (
+            'tools/mcconfig.js', 'tools/VERSION', 'xs/includes/xs.h',
+            'build/devices/esp32/manifest.json', 'build/bin/lin/release/mcconfig')) and os.access(root / 'build/bin/lin/release/mcconfig', os.X_OK):
+            return root
+    raise RuntimeError('Moddable SDK invalid or missing; set MODDABLE to the existing patched SDK root (tools/mcconfig.js)')
+
+
 class Runner:
     def __init__(self, args):
         self.a = args
@@ -92,21 +107,30 @@ class Runner:
                                           env=env or self.env, **isolation)
             try:
                 rc = self.child.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                self.stop_child()
+                self.report_command_failure(name, path, 'TIMEOUT=' + str(timeout), shown)
+                raise
             except BaseException:
                 self.stop_child()
                 raise
             finally:
                 self.child = None
         if rc:
-            self.failed_command = name
-            self.log('ERROR', 'STEP=' + name + ' EXIT=' + str(rc) + ' CMD=' + shown + ' LOG=' + str(path))
-            for line in path.read_text(errors='replace').splitlines()[-40:]:
-                # Full tool output is private on disk; sanitize terminal error snippets.
-                self.log('ERROR', self.redact(line)[:600])
+            self.report_command_failure(name, path, 'EXIT=' + str(rc), shown)
             raise RuntimeError('command failed: ' + name)
         self.completed.append(name)
         self.log('INFO', 'PASS STEP=' + name + ' LOG=' + str(path))
         return path
+
+    def report_command_failure(self, name, path, reason, shown):
+        self.failed_command = name
+        if name in ('flash-id', 'backup', 'flash', 'boot-stages'):
+            self.flash_failure_diagnosis(name, path)
+        self.log('FATAL', 'STEP=' + name + ' REASON=command-failed ' + reason + ' CMD=' + shown + ' LOG=' + str(path))
+        self.log('INFO', 'RECOVERY=inspect saved log and restore dependencies; rerun --test --build without --write')
+        for line in path.read_text(errors='replace').splitlines()[-40:]:
+            self.log('ERROR', self.redact(line)[:600])
 
     def redact(self, line):
         # Tool failure logs stay private; also remove configured secrets from terminal tails.
@@ -220,7 +244,7 @@ class Runner:
         if self.a.sha and not getattr(self, 'pr_info', None) and self.a.sha != self.head: raise RuntimeError('HEAD differs from --sha')
         if self.query(['git', 'status', '--porcelain', '--untracked-files=no']): raise RuntimeError('tracked changes exist; preserve them and use a clean worktree')
         self.cmd('diff-check', ['git', 'diff', '--check'], self.repo)
-        for path in [SDK_ENV, IDF_ENV, DEVICE_PYTHON, NODE / 'node', PRIVATE]:
+        for path in [DEVICE_PYTHON, NODE / 'node', PRIVATE]:
             if not path.is_file(): raise RuntimeError('missing: ' + str(path))
         self.log('CHECK', 'HOST=' + os.uname().nodename + ' SHA=' + self.head + ' REPO=' + str(self.repo))
         self.log('CHECK', 'WORKTREE_BRANCH=' + (self.query(['git','branch','--show-current']) or '(detached)'))
@@ -305,6 +329,84 @@ class Runner:
         if latest_attempt: self.log('WARN', '成功未確認の書き込み記録あり: ' + str(latest_attempt/'console.log'))
         return None
 
+    def usb_snapshot(self, stage, expected=None):
+        """Read-only USB snapshot using the same Python environment as identity()."""
+        snapshot = {'stage': stage, 'expected_serial': SERIAL, 'devices': [], 'category': 'unknown'}
+        try:
+            helper = ('import json\nfrom serial.tools import list_ports\n'
+                      'print(json.dumps([dict(port=p.device,vid=p.vid,pid=p.pid,serial=p.serial_number,location=p.location) '
+                      'for p in list_ports.comports() if p.vid==0x303a and p.pid==0x1001]))\n')
+            result = subprocess.run([str(DEVICE_PYTHON), '-c', helper],
+                                    capture_output=True, text=True, timeout=8)
+            if result.returncode: raise RuntimeError('USB enumeration helper failed')
+            devices = json.loads(result.stdout)
+            if not isinstance(devices, list): raise ValueError('USB helper returned invalid JSON')
+            for device in devices:
+                if not isinstance(device, dict): raise ValueError('USB helper returned invalid entry')
+                item = {'port': device['port'], 'vid': device['vid'], 'pid': device['pid'],
+                        'serial_match': device['serial'] == SERIAL,
+                        'location': device['location'] or 'unknown'}
+                snapshot['devices'].append(item)
+            matches = [p for p in snapshot['devices'] if p['serial_match']]
+            if not matches:
+                snapshot['category'] = 'device-not-enumerated' if not snapshot['devices'] else 'identity-mismatch'
+            elif len(matches) != 1:
+                snapshot['category'] = 'ambiguous-device'
+            elif expected and matches[0]['location'] != expected.get('location'):
+                snapshot['category'] = 'physical-port-changed'
+            else:
+                port = matches[0]['port']
+                if not os.access(port, os.R_OK | os.W_OK):
+                    snapshot['category'] = 'permission-denied'
+                else:
+                    try:
+                        busy = subprocess.run(['fuser', port], capture_output=True, timeout=3)
+                        snapshot['category'] = ('port-available' if busy.returncode == 1
+                            else 'port-busy' if busy.returncode == 0 else 'occupancy-unknown')
+                    except (OSError, subprocess.TimeoutExpired):
+                        snapshot['category'] = 'occupancy-unknown'
+        except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError, RuntimeError) as error:
+            snapshot['category'] = 'diagnostic-unavailable'
+            snapshot['error_type'] = type(error).__name__
+        target = self.run / ('usb-' + stage + '.json')
+        target.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + '\n')
+        self.log('CHECK', 'STEP=USB-DIAG STAGE=' + stage + ' CATEGORY=' +
+                 snapshot['category'] + ' LOG=' + str(target))
+        return snapshot
+
+    def flash_failure_diagnosis(self, stage, path):
+        """Best-effort classification that cannot hide the original failure."""
+        try:
+            self._flash_failure_diagnosis(stage, path)
+        except Exception as error:
+            self.log('WARN', 'STEP=FLASH-DIAG STAGE=' + stage +
+                     ' diagnosis-unavailable=' + type(error).__name__)
+
+    def _flash_failure_diagnosis(self, stage, path):
+        """Classify evidence without treating a suspected cause as proven."""
+        try:
+            output = path.read_text(errors='replace')[-160000:]
+        except OSError:
+            output = ''
+        patterns = (
+            ('serial-permission', r'permission denied|could not open port.*permission'),
+            ('serial-port-missing', r'no such file or directory|could not open port.*not found'),
+            ('serial-port-busy', r'device or resource busy|port is busy'),
+            ('rom-connect-timeout', r'failed to connect|no serial data received|timed out waiting for packet header'),
+            ('transport-disconnected', r'device disconnected|write timeout|read timeout|serialexception|input/output error'),
+            ('flash-write-error', r'failed to write|write failed|invalid head of packet'),
+            ('flash-verification-error', r'verification failed|hash of data verified.*failed|checksum mismatch'),
+        )
+        category = next((name for name, pattern in patterns if re.search(pattern, output, re.I)), 'unclassified')
+        snapshot = self.usb_snapshot('failure-' + stage)
+        evidence = {'step': stage, 'suspected_category': category,
+                    'usb_category': snapshot['category'], 'source_log': str(path),
+                    'note': 'Classification is heuristic; not proof of physical USB failure'}
+        target = self.run / ('diagnosis-' + stage + '.json')
+        target.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + '\n')
+        self.log('ERROR', 'STEP=FLASH-DIAG STAGE=' + stage + ' SUSPECT=' + category +
+                 ' USB=' + snapshot['category'] + ' LOG=' + str(target))
+
     def check_usb(self):
         usb_error = None
         try: self.log('CHECK', 'USB=' + self.identity()['port'])
@@ -314,6 +416,7 @@ class Runner:
         else:
             for line in state.stdout.splitlines(): self.log('CHECK', 'HUB.' + line)
         if usb_error:
+            self.usb_snapshot('preflight')
             journal = subprocess.run(['journalctl','-k','--since','-15 min','--no-pager','-o','short-iso'],capture_output=True,text=True)
             path = self.run / 'usb-kernel.log'
             lines = [line for line in journal.stdout.splitlines() if re.search(r'usb|ttyACM|cdc_acm',line,re.I)]
@@ -325,14 +428,34 @@ class Runner:
             raise RuntimeError('cannot verify hub service state; preflight incomplete')
 
     def setup_env(self):
-        # Only source the known SDK exports; never evaluate user input as shell code.
-        source = 'set -e; source "$1" >&2; source "$2" >&2; env -0'
-        p = subprocess.run(['bash', '-c', source, 'stackchan-env', str(SDK_ENV), str(IDF_ENV)], env=self.env,
+        self.step = 'environment'
+        sdk = detect_sdk(self.env)
+        idf = pathlib.Path(self.env.get('IDF_PATH') or IDF_ENV.parent)
+        if not (idf / 'export.sh').is_file():
+            raise RuntimeError('ESP-IDF missing; set IDF_PATH to the existing ESP-IDF checkout')
+        env = {**self.env, 'MODDABLE': str(sdk), 'IDF_PATH': str(idf)}
+        env['PATH'] = str(NODE) + ':' + str(sdk / 'build/bin/lin/release') + ':' + env.get('PATH', '')
+        p = subprocess.run(['bash', '-c', 'set -e; source "$1" >&2; env -0',
+                            'stackchan-env', str(idf / 'export.sh')], env=env,
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        (self.run / 'environment.log').write_bytes(p.stderr)
-        if p.returncode: raise RuntimeError('SDK/IDF export failed; see environment.log')
+        (self.run / 'environment.log').write_text(self.redact(p.stderr.decode(errors='replace')))
+        if p.returncode: raise RuntimeError('ESP-IDF export failed; see environment.log; restore existing IDF Python/tools')
         self.env = dict(item.decode().split('=', 1) for item in p.stdout.split(b'\0') if b'=' in item)
-        self.env['PATH'] = str(NODE) + ':' + self.env['PATH']
+        for tool in ('node', 'npm', 'python', 'mcconfig', 'idf.py'):
+            if not shutil.which(tool, path=self.env['PATH']):
+                raise RuntimeError('missing dependency: ' + tool + '; restore SDK/IDF tool environment')
+        self.env['PATH'] = str(NODE) + ':' + str(sdk / 'build/bin/lin/release') + ':' + self.env['PATH']
+        self.log('CHECK', 'MODDABLE=' + str(sdk) + ' VERSION=' + (sdk / 'tools/VERSION').read_text().strip()
+                 + ' IDF_PATH=' + str(idf.resolve()))
+        self.cmd('tool-versions', ['bash', '-c', 'set -e; node --version; npm --version; python --version; idf.py --version'], self.fw)
+        if not (self.fw / 'node_modules/typescript').is_dir():
+            raise RuntimeError('npm dependencies missing; run npm ci in selected firmware worktree')
+
+    def npm_script(self, name):
+        scripts = json.loads((self.fw / 'package.json').read_text()).get('scripts', {})
+        if name not in scripts:
+            raise RuntimeError('npm script missing: ' + name + '; select a compatible worktree/package.json')
+        return ['npm', 'run', name]
 
     def fingerprint(self):
         sdk = pathlib.Path(self.env['MODDABLE'])
@@ -344,26 +467,44 @@ class Runner:
             p = sdk / os.fsdecode(name)
             h.update(name)
             h.update((sha(p) if p.is_file() else 'missing').encode())
-        return {'sha': self.head, 'sdk': h.hexdigest(), 'idf': self.query(['git', '-C', str(IDF_ENV.parent), 'rev-parse', 'HEAD']),
+        return {'sha': self.head, 'sdk': h.hexdigest(), 'idf': self.query(['git', '-C', str(pathlib.Path(self.env['IDF_PATH'])), 'rev-parse', 'HEAD']),
                 'private': sha(PRIVATE)}
 
     def test(self):
-        self.cmd('cli', ['python3', DEFAULT_REPO / 'firmware/scripts/lib/stackchan-cli.test.py'], self.fw)
-        self.cmd('unit', ['npm', 'run', 'test:unit'], self.fw)
+        self.cmd('cli', ['python3', self.fw / 'scripts/lib/stackchan-cli.test.py'], self.fw)
+        self.cmd('unit', self.npm_script('test:unit'), self.fw)
         self.cmd('archive', ['bash', '-c', 'node --experimental-vm-modules --test --test-concurrency=1 scripts/lib/archive-*.test.mjs'], self.fw)
 
     def build(self):
+        self.step = 'build-preflight'
+        build_command = self.npm_script('build:m5stackchan_cores3')
+        self.npm_script('prebuild:archive')
         dst = self.fw / 'host/app/manifest_archive_private.json'
         data = json.loads(PRIVATE.read_text())
         example = json.loads((self.fw / 'host/app/manifest_archive.example.json').read_text())
-        for name in ['archive-camera-handoff', 'archive-camera-release', 'archive-chat-pause-gate']:
-            data.setdefault('modules', {})[name] = example['modules'][name]
-        data.setdefault('platforms', {})['esp32/m5stackchan_cores3'] = example['platforms']['esp32/m5stackchan_cores3']
+        # Preserve private settings while synchronizing public module mappings.
+        # Removed modules must not be resurrected from an older private manifest.
+        modules = data.setdefault('modules', {})
+        public_modules = example.get('modules', {})
+        # Remove only retired generated mappings; keep user/private module entries.
+        for name in ('archive-camera-handoff', 'archive-camera-release', 'archive-chat-pause-gate'):
+            if name not in public_modules:
+                modules.pop(name, None)
+        for name, mapping in public_modules.items():
+            modules[name] = mapping
+        # The public example uses m5stack_cores3, while the private target may
+        # define m5stackchan_cores3. Never overwrite that private target with
+        # a missing public key.
+        public_platforms = example.get('platforms', {})
+        private_platforms = data.setdefault('platforms', {})
+        for name, mapping in public_platforms.items():
+            private_platforms.setdefault(name, mapping)
         self.manifest_before = dst.read_bytes() if dst.exists() else None
         if self.manifest_before is not None: (self.run / 'private-manifest.before.json').write_bytes(self.manifest_before)
         self.manifest_changed = True
         dst.write_text(json.dumps(data, indent=2) + '\n'); dst.chmod(0o600)
-        self.cmd('build', ['npm', 'run', 'build:archive:m5stackchan_cores3'], self.fw)
+        self.cmd('archive-resources', self.npm_script('prebuild:archive'), self.fw)
+        self.cmd('build', build_command + ['--', '--mode=release', '--manifest', str(dst)], self.fw)
         self.validate_layout()
         receipt = dict(self.fingerprint(), artifacts={v: sha(self.bin / v) for v in FILES.values()})
         self.receipt.parent.mkdir(parents=True, exist_ok=True)
@@ -527,10 +668,14 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
             base = [DEVICE_PYTHON, '-m', 'esptool', '--chip', 'esp32s3', '--port', expected['port'], '--before', 'no-reset', '--after', 'no-reset', '--connect-attempts', '1']
             connect = self.connection_command(base)
             info = self.cmd('flash-id', connect + ['--no-stub', 'flash-id'], timeout=30)
-            if not re.search(r'Detected flash size: 16(?:MB| MiB)', info.read_text()): raise RuntimeError('16MiB flash not verified')
+            if not re.search(r'Detected flash size: 16(?:MB| MiB)', info.read_text()):
+                self.flash_failure_diagnosis('flash-id', info)
+                raise RuntimeError('16MiB flash not verified')
             backup = self.run / 'flash-16MiB.bin'
             self.cmd('backup', base + ['read-flash', '0', '0x1000000', backup], timeout=600)
-            if backup.stat().st_size != 16777216: raise RuntimeError('backup length mismatch')
+            if backup.stat().st_size != 16777216:
+                self.flash_failure_diagnosis('backup', self.run / 'backup.log')
+                raise RuntimeError('backup length mismatch')
             digest = sha(backup)
             (self.run / 'flash-16MiB.sha256').write_text(digest + '  flash-16MiB.bin\n')
             if sha(backup) != digest: raise RuntimeError('backup checksum mismatch')
@@ -547,6 +692,7 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
             self.cmd('flash', argv, timeout=300)
             record['verified_at'] = datetime.datetime.now().astimezone().isoformat()
             self.save_flash_record(record)
+            self.log('CHECK', 'STEP=FLASH-DIAG TRANSFER=success VERIFICATION=esptool-completed')
             self.log('INFO', '書き込み検証完了。通常起動ログを取得します。本体RSTを短く1回押してください。')
             self.capture(expected)
             self.validate_boot()
@@ -639,15 +785,19 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
                 continue
         def short(value):
             return str(value)[:12] if value else 'unknown'
-        lines = ['========== StackChan 最終結果 ==========',
-                 '対象        ' + ('PR #' + str(self.a.pr) if self.a.pr else branch),
-                 'ブランチ    ' + branch,
-                 'コミット    ' + short(commit),
-                 '結果        ' + ('成功' if rc == 0 else '失敗 (' + failed_step + ')')]
+        result_text = '成功' if rc == 0 else '失敗 (' + failed_step + ')'
+        target_text = 'PR #' + str(self.a.pr) if self.a.pr else branch
+        lines = [
+            '========== StackChan 最終結果 ==========',
+            '対象        ' + target_text,
+            'ブランチ    ' + branch,
+            'コミット    ' + short(commit),
+            '結果        ' + result_text,
+        ]
         for label, state in states.items():
             if label == 'テスト' and counts['tests']:
-                state += ' (' + str(counts['pass']) + '/' + str(counts['tests']) +
-                         ' 成功、' + str(counts['fail']) + '件失敗)'
+                state += (' (' + str(counts['pass']) + '/' + str(counts['tests']) +
+                          ' 成功、' + str(counts['fail']) + '件失敗)')
             lines.append(label + '    ' + state)
         if fw_hash: lines.append('ビルドSHA256  ' + short(fw_hash))
         if rc:
@@ -717,7 +867,7 @@ def main(argv=None):
     try: runner.execute()
     except (Exception, SystemExit) as e:
         rc = e.code if isinstance(e, SystemExit) and isinstance(e.code,int) else 1
-        runner.log('ERROR', 'STEP='+runner.step+' '+str(e))
+        runner.log('FATAL', 'STEP='+runner.step+' REASON='+runner.redact(str(e))+' EXIT='+str(rc)+' LOG='+str(runner.run/'console.log')+' RECOVERY=restore dependencies and rerun --test --build')
     finally:
         failed_step=runner.step
         try: runner.cleanup()
