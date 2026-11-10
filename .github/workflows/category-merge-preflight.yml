@@ -82,6 +82,8 @@ jobs:
         shell: bash
         run: |
           git fetch origin refs/heads/category/ui refs/heads/stackchan-super
+          git config user.name "StackChan CI"
+          git config user.email "ci@users.noreply.github.com"
           git switch --create category-ui-reconcile origin/category/ui
           if git merge --no-ff --no-commit origin/stackchan-super > /tmp/ui-reconcile.log 2>&1; then
             echo '[CHECK] UI merge had no conflicting paths'
@@ -89,6 +91,7 @@ jobs:
             paths="$(git diff --name-only --diff-filter=U)"
             if [ "$paths" != "firmware/host/app/archive-offline.js" ]; then
               echo "[FATAL] Unexpected UI conflicts"
+              sed -n '1,60p' /tmp/ui-reconcile.log
               printf '%s\n' "$paths"
               exit 1
             fi
