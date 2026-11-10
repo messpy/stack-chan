@@ -781,11 +781,14 @@ async function connect() {
             }),
           }
     let ollamaBusy = false,recognitionTurnCurrent=()=>false,deliveredCameraContinuation=''
+    let headHandled,visualAllowed=false
     async function executeTool(name, args) {
       if (chat !== instance&&!recognitionTurnCurrent()) throw new Error('会話が切り替わりました')
       if (name === 'camera_describe') {
+        if (!visualAllowed) return {error:'撮影を依頼していません'}
         if (!photoHandler) throw new Error('Camera unavailable')
         if (cameraHandoff.active) throw new Error('Camera busy')
+        visualAllowed=false
         cameraRequestContext=cameraContextVersion
         cameraRequestSpeaker=currentSpeaker()?.id??null
         cameraRequest = String(args?.question || '写真を撮って確認する').slice(0, 180)
@@ -795,6 +798,17 @@ async function connect() {
         return result.analysis?.status === 'complete'
           ? { photo: result.image, description: result.analysis.text }
           : { photo: result.image, error: result.analysis?.error || '画像認識できませんでした' }
+      }
+      if(name==='head_move'&&headHandled){
+        const previous=headHandled
+        headHandled=undefined
+        if(args?.direction===previous.direction){
+          const result=await previous.promise
+          if(result?.commanded!==true)throw new Error('首振り動作が完了していません')
+          return {...result,duplicate:true}
+        }
+        // Wait for the previous move before commanding a different direction.
+        try{await previous.promise}catch(_){}
       }
       if (memoryTools.some((t) => t.name === name)) {
         if (name === 'conversation_identify') {
@@ -960,11 +974,16 @@ async function connect() {
               }catch(_){trace('[speaker] introduction needs clarification\n')}
             }
             const recognized=input;input = ''
-            // A short, explicit physical command should not depend on whether
-            // the cloud chooses a function call or only speaks an acknowledgement.
+            // Permit camera tool calls only after a user-requested visual turn.
+            visualAllowed=/写真|撮影|カメラ|映して|写って|見える|見て/.test(recognized)
+            // Deduplicate local motor commands against subsequent AI tool calls.
             if (!standalone && !recognitionOnly) {
               const direction=headDirectionFromText(recognized)
-              if(direction) Promise.resolve(callDeviceTool('head_move',{direction})).catch(()=>trace('[head-motion] voice command failed\n'))
+              if(direction){
+                const promise=Promise.resolve().then(()=>callDeviceTool('head_move',{direction}))
+                headHandled={direction,promise}
+                promise.catch(()=>trace('[head-motion] voice command failed\n'))
+              }
             }
             if(recognitionOnly)Timer.set(()=>recognitionTurn(recognized),0)
           }
