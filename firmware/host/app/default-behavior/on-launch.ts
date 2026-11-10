@@ -21,6 +21,6 @@ export const onLaunch: NonNullable<StackchanAppBehavior['onLaunch']> = async () 
       continue
     }
     const setupChoice = await startSetupMode(startupChoice.application)
-    if (setupChoice === 'boot') return true
+    if (setupChoice === 'boot' || setupChoice === 'offline') return true
   }
 }

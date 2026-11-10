@@ -1,3 +1,4 @@
+import { createContextInitializer, createAsyncContextInitializer, type ContextInitializer, type StartupComponentEvent, type StartupComponent, type StartupComponentState, type StartupScreenDiagnostics } from 'context-startup'
 import loadPreferences, { loadModConfig, loadPreferenceConfig } from 'loadPreference'
 import System from 'embedded:system'
 import { runContextCreatedBehaviors, type StackchanAppBehavior } from 'app-behavior'
@@ -5,6 +6,7 @@ import { resolveAppBehaviors } from 'app-behavior-resolver'
 import defaultBehavior from 'app-default-behavior'
 import { installLaunchShortcut, type LaunchShortcutButton, prepareAppLaunch } from 'app-launch'
 import { type BootWiFiStatus, startHostBootServices } from 'boot-services'
+import { classifyBootWiFiFailure, waitForBootWiFiRecoveryChoiceWithTimeout } from 'boot-network-recovery'
 import type { StackchanContext } from 'capabilities'
 import { createStackchanContext, getHostDeviceEnvironment } from 'compose'
 import { DOMAIN } from 'consts'
@@ -21,6 +23,7 @@ import {
   startupErrorClass,
 } from 'startup-splash'
 import { applyTimezone } from 'timezone-settings'
+import Timer from 'timer'
 
 type DeviceButton = {
   onChanged: (this: DeviceButton) => void
@@ -65,44 +68,53 @@ function installModManagerShortcut(): void {
 }
 
 function waitForBootWiFiRecoveryChoice(status: BootWiFiStatus & { reason: string }): Promise<'retry' | 'offline'> {
-  return new Promise((resolve) => {
-    let resolved = false
-    const previousAHandler = globalEnv.button?.a?.onChanged
-    const previousCHandler = globalEnv.button?.c?.onChanged
-
-    const restoreButtons = () => {
-      if (globalEnv.button?.a) {
-        globalEnv.button.a.onChanged = previousAHandler ?? noopButtonHandler
-      }
-      if (globalEnv.button?.c) {
-        globalEnv.button.c.onChanged = previousCHandler ?? noopButtonHandler
-      }
-    }
-    const choose = (choice: 'retry' | 'offline') => {
-      if (resolved) return
-      resolved = true
-      restoreButtons()
-      resolve(choice)
-    }
-
-    trace(`[network] ${status.message}: ${status.reason}\n`)
-    showWiFiRecoveryChoice({
-      message: status.message,
-      onRetry: () => choose('retry'),
-      onOffline: () => choose('offline'),
-    })
-    if (globalEnv.button?.a) {
-      globalEnv.button.a.onChanged = () => choose('retry')
-    }
-    if (globalEnv.button?.c) {
-      globalEnv.button.c.onChanged = () => choose('offline')
-    }
-  })
+  const previousAHandler = globalEnv.button?.a?.onChanged
+  const previousCHandler = globalEnv.button?.c?.onChanged
+  const restoreButtons = () => {
+    if (globalEnv.button?.a) globalEnv.button.a.onChanged = previousAHandler ?? noopButtonHandler
+    if (globalEnv.button?.c) globalEnv.button.c.onChanged = previousCHandler ?? noopButtonHandler
+  }
+  return waitForBootWiFiRecoveryChoiceWithTimeout(
+    Timer,
+    (choose) => {
+      trace(`[network] recovery prompt: ${classifyBootWiFiFailure(status.reason)}\n`)
+      showWiFiRecoveryChoice({
+        message: status.message,
+        onRetry: () => choose('retry'),
+        onOffline: () => choose('offline'),
+      })
+      if (globalEnv.button?.a) globalEnv.button.a.onChanged = () => choose('retry')
+      if (globalEnv.button?.c) globalEnv.button.c.onChanged = () => choose('offline')
+    },
+    restoreButtons,
+    15000,
+    () => trace('[network] recovery deadline; starting offline\n'),
+  )
 }
 
 async function main() {
+  let startupCheckpoint: ((phase: string, error?: unknown, component?: StartupComponent, state?: StartupComponentState) => void) | undefined
+  let startupSnapshot: (() => StartupScreenDiagnostics | undefined) | undefined
+  let phase: StartupPhase = 'initialization'
+  let startupComponent: StartupComponent = 'none'
+  let startupFailureRecorded = false
+  const markStartup = (phase: string, error?: unknown, component: StartupComponent = 'none', state: StartupComponentState = 'begin') => { try { startupCheckpoint?.(phase, error, component, state) } catch {} }
+  const reportStartup = (event: StartupComponentEvent) => {
+    if (startupFailureRecorded) return
+    startupComponent = event.component
+    startupFailureRecorded = event.state === 'failed'
+    markStartup(phase, event.error, event.component, event.state)
+  }
+  const initialize = createContextInitializer(reportStartup)
+  const initializeAsync = createAsyncContextInitializer(reportStartup)
   try {
-    if (Modules.has('archive-debug')) (Modules.importNow('archive-debug') as { installDebugLog: () => void }).installDebugLog()
+    if (Modules.has('archive-debug')) {
+      const diagnostics = Modules.importNow('archive-debug') as { installDebugLog: () => void; recordStartupCheckpoint?: typeof startupCheckpoint; startupDiagnosticSnapshot?: typeof startupSnapshot }
+      diagnostics.installDebugLog()
+      startupCheckpoint = diagnostics.recordStartupCheckpoint
+      startupSnapshot = diagnostics.startupDiagnosticSnapshot
+      markStartup('initialization')
+    }
   } catch { trace('[debug] log initialization unavailable\n') }
   try {
     if (Modules.has('archive-screen')) (Modules.importNow('archive-screen') as { installScreenCapture: () => void }).installScreenCapture()
@@ -110,7 +122,6 @@ async function main() {
   trace('[main] start\n')
   let dockRuntime: StackchanDockRuntime | undefined
   let context: StackchanContext | undefined
-  let phase: StartupPhase = 'initialization'
   try {
     dockRuntime = startStackchanDock(Modules, loadModConfig())
     if (dockRuntime) trace('[main] Stackchan Dock started\n')
@@ -123,6 +134,7 @@ async function main() {
     // Launch behaviors run before startHostBootServices so the splash screen is
     // visible while network setup blocks.
     phase = 'launch'
+    markStartup(phase)
     const launch = await prepareAppLaunch(appBehaviors, prepareExperimentalMiniApps)
     trace(`[main] onLaunch shouldCreateContext=${launch.shouldCreateContext}\n`)
     if (!launch.shouldCreateContext) {
@@ -135,6 +147,7 @@ async function main() {
     const experimentalMiniApps = launch.prepared
 
     phase = 'network'
+    markStartup(phase)
     const bootServices = startHostBootServices({
       wifi: {
         onStatusChanged: showWiFiConnectionStatus,
@@ -144,25 +157,37 @@ async function main() {
     const networkReady = await bootServices.connectivity.network.ready
     trace(`[main] network ready: ${networkReady.status}\n`)
     phase = 'context'
-    const preferences = loadPreferenceConfig()
+    markStartup(phase)
+    const preferences = initialize('preferences', loadPreferenceConfig)
     const ownedDock = dockRuntime
     context = createStackchanContext(preferences, {
+      initialize,
       connectivity: bootServices.connectivity,
       remoteConversationSession: ownedDock?.remoteConversationSession,
       closeHandlers: ownedDock ? [() => ownedDock.close()] : undefined,
     })
     phase = 'behavior'
-    ownedDock?.onContextCreated(context)
-    registerExperimentalMiniApps(experimentalMiniApps, context.ui.miniApps)
+    markStartup(phase)
+    initialize('dock-context', () => ownedDock?.onContextCreated(context!))
+    initialize('experimental-miniapps', () => registerExperimentalMiniApps(experimentalMiniApps, context!.ui.miniApps))
     trace('[main] app context created\n')
-    await runContextCreatedBehaviors(appBehaviors, context, {
+    await initializeAsync('context-behaviors', () => runContextCreatedBehaviors(appBehaviors, context!, {
+      initialize,
       device: getHostDeviceEnvironment(),
       config: preferences,
-    })
-    if (Modules.has('lan-archive')) (Modules.importNow('lan-archive') as { startArchive: (context: StackchanContext) => void }).startArchive(context)
+    }))
+    if (Modules.has('lan-archive')) {
+      const archive = initialize('archive-import', () => Modules.importNow('lan-archive')) as { startArchive: (context: StackchanContext, initialize?: ContextInitializer) => void }
+      initialize('archive-start', () => archive.startArchive(context!, initialize))
+    }
     trace('[main] app behaviors ready\n')
-    installModManagerShortcut()
+    initialize('mod-shortcut', installModManagerShortcut)
+    markStartup('ready')
   } catch (error) {
+    // Save failure before cleanup, which can itself fail or block.
+    if (!startupFailureRecorded) markStartup(phase, error, startupComponent, 'failed')
+    let diagnostic: StartupScreenDiagnostics | undefined
+    try { diagnostic = startupSnapshot?.() } catch {}
     // A newer/disposed view during async cleanup owns its screen. Do not
     // replace it with an older startup attempt's failure.
     const failedApplication = globalEnv.application
@@ -175,14 +200,13 @@ async function main() {
       trace(`[main] cleanup error ${startupErrorClass(closeError)}\n`)
     }
     trace(`[main] startup failed phase=${phase} error=${startupErrorClass(error)}\n`)
-    trace(`[main] startup detail: ${error instanceof Error ? error.message : 'unknown'}\n`)
     if (
       globalEnv.application === failedApplication &&
       (!failedApplication ||
         (failedApplication.behavior === failedBehavior && failedApplication.first === failedContent))
     ) {
       try {
-        showStartupError({ phase, error, onRestart: () => System.restart?.() })
+        showStartupError({ phase, error, diagnostic, onRestart: () => System.restart?.() })
         installModManagerShortcut()
       } catch (displayError) {
         trace(`[main] startup error display failed ${startupErrorClass(displayError)}\n`)

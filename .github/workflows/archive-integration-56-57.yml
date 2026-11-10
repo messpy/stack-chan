@@ -1,0 +1,78 @@
+name: CoreS3 PR56 + PR57 Integration Checks
+
+on:
+  push:
+    branches:
+      - test/pr56-pr57-core-s3-20261107
+    paths:
+      - 'firmware/host/app/archive-*.js'
+      - 'firmware/host/app/lan-archive.js'
+      - 'firmware/host/app/manifest_local.json'
+      - 'firmware/host/app/archive-usb.c'
+      - 'firmware/host/modules/camera/device/camera.ts'
+      - 'firmware/host/app/runtime-camera.ts'
+      - 'firmware/scripts/lib/archive-camera-lifecycle.test.mjs'
+      - 'firmware/scripts/lib/archive-photo-faults.test.mjs'
+      - 'firmware/scripts/lib/archive-diagnostic-no-sd.test.mjs'
+      - 'firmware/scripts/camera-probe-session.py'
+      - 'firmware/scripts/lib/camera-probe-session.test.py'
+      - 'firmware/scripts/lib/archive-usb-rpc.test.mjs'
+      - 'firmware/scripts/lib/archive-camera-polling.test.mjs'
+      - 'firmware/scripts/stackchan-ci.sh'
+      - 'firmware/scripts/update-archive.sh'
+      - 'firmware/scripts/patch-core-s3-camera.py'
+      - 'firmware/scripts/lib/patch-core-s3-camera.test.py'
+      - 'firmware/host/modules/camera/manifest_device.json'
+      - 'firmware/scripts/stackchan-camera-probe.py'
+      - 'firmware/scripts/lib/archive-usb-psram.test.mjs'
+      - 'firmware/scripts/lib/archive-conversation-log.test.mjs'
+      - 'firmware/scripts/lib/archive-direct-photo.test.mjs'
+      - 'firmware/scripts/lib/archive-memory-policy.test.mjs'
+      - '.github/workflows/archive-integration-56-57.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integrated-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate integrated USB diagnostic and PSRAM tests
+        run: |
+          node --experimental-vm-modules --test \
+            firmware/scripts/lib/archive-conversation-log.test.mjs \
+            firmware/scripts/lib/archive-usb-psram.test.mjs \
+            firmware/scripts/lib/archive-direct-photo.test.mjs \
+            firmware/scripts/lib/archive-camera-polling.test.mjs \
+            firmware/scripts/lib/archive-camera-lifecycle.test.mjs \
+            firmware/scripts/lib/archive-usb-rpc.test.mjs \
+            firmware/scripts/lib/archive-photo-faults.test.mjs \
+            firmware/scripts/lib/archive-diagnostic-no-sd.test.mjs
+      - name: Preserve admission guard
+        run: node firmware/scripts/lib/archive-memory-policy.test.mjs
+      - name: Validate CoreS3 two-frame SDK camera patch
+        run: python3 firmware/scripts/lib/patch-core-s3-camera.test.py
+      - name: Validate durable probe supervision without a device
+        run: python3 firmware/scripts/lib/camera-probe-session.test.py
+      - name: Parse JavaScript modules and manifests
+        run: |
+          node --check firmware/host/app/archive-usb-rpc.js
+          node --check firmware/host/app/archive-memory-policy.js
+          node --check firmware/host/app/archive-direct-chat.js
+          node --check firmware/host/app/lan-archive.js
+          python3 -m json.tool firmware/host/app/manifest_local.json > /dev/null
+          python3 -m json.tool firmware/host/app/manifest_archive.example.json > /dev/null
+      - name: Check shell and Python syntax
+        run: |
+          bash -n firmware/scripts/stackchan-ci.sh firmware/scripts/update-archive.sh
+          python3 -m py_compile firmware/scripts/camera-probe-session.py firmware/scripts/stackchan-camera-probe.py firmware/scripts/stackchan-voice-diagnostic.py firmware/scripts/patch-core-s3-camera.py
+      - name: Check patch whitespace
+        run: git diff --check HEAD^ HEAD

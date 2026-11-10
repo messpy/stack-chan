@@ -613,9 +613,9 @@ const SettingsOfflineView = {
         new ActionButton(
           {
             icon: 'play',
-            label: localize('settings.clearAndBoot'),
+            label: localize('settings.bootOffline'),
             onTap: context.actions.bootOffline,
-            tone: 'danger',
+            tone: 'success',
           },
           { left: 164, bottom: 16, width: 148 },
         ),

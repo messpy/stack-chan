@@ -14,7 +14,7 @@ const DEFAULT_WIDTH = 176
 const DEFAULT_HEIGHT = 144
 const DEFAULT_IMAGE_TYPE: CameraImageType = 'rgb565le'
 const FORMAT_DISPOSABLE_BUFFER = 'buffer/disposable'
-const INITIAL_FRAME_TIMEOUT_MS = 500
+const INITIAL_FRAME_TIMEOUT_MS = 1800
 const INITIAL_FRAME_POLL_MS = 30
 const DEFAULT_CAPTURE_REQUEST: CameraCaptureRequest = {
   width: DEFAULT_WIDTH,
@@ -43,7 +43,7 @@ type NativeImageInCameraConstructor = new (options: {
   height: number
   imageType: number
   format: typeof FORMAT_DISPOSABLE_BUFFER
-  onReadable: () => void
+  onReadable?: () => void
 }) => NativeImageInCamera
 
 const ImageInCamera = NativeCamera as NativeImageInCameraConstructor
@@ -63,7 +63,6 @@ export default class Camera implements RobotCamera {
   readonly available = true
 
   #camera: NativeImageInCamera | undefined
-  #frame: DisposableCameraBuffer | undefined
   #width = DEFAULT_WIDTH
   #height = DEFAULT_HEIGHT
   #imageType: CameraImageType = DEFAULT_IMAGE_TYPE
@@ -96,7 +95,6 @@ export default class Camera implements RobotCamera {
       height: request.height,
       imageType: nativeImageType,
       format: FORMAT_DISPOSABLE_BUFFER,
-      onReadable: () => this.#readLatestFrame(),
     })
     trace(`[camera] native constructor ready width=${camera.width} height=${camera.height}\n`)
 
@@ -152,47 +150,51 @@ export default class Camera implements RobotCamera {
   }
 
   #closeCamera(): void {
-    if (this.#camera) trace('[camera] close\n')
-    this.#stopCamera()
-    if (this.#camera) trace('[camera] native close begin\n')
-    this.#camera?.close()
-    if (this.#camera) trace('[camera] native close done\n')
-    this.#camera = undefined
-    this.#running = false
+    const camera = this.#camera
+    let failure: unknown
+    try { this.#stopCamera() } catch (error) { failure = error }
+    try {
+      if (camera) trace('[camera] native close begin\n')
+      camera?.close()
+      if (camera) trace('[camera] native close done\n')
+    } catch (error) { failure ??= error }
+    finally {
+      this.#camera = undefined
+      this.#running = false
+    }
+    if (failure) throw failure
   }
 
   #startCamera(): void {
     if (!this.#camera || this.#running) return
-    closeFrame(this.#frame)
-    this.#frame = undefined
     trace('[camera] native start begin\n')
-    this.#camera.start()
+    try {
+      this.#camera.start()
+    } catch (error) {
+      trace('[camera] native start threw\n')
+      throw error
+    }
     this.#running = true
     trace('[camera] native start done\n')
   }
 
   #stopCamera(): void {
-    if (this.#camera && this.#running) {
-      trace('[camera] native stop begin\n')
-      this.#camera.stop()
-      trace('[camera] native stop done\n')
-    }
-    closeFrame(this.#frame)
-    this.#frame = undefined
-    this.#running = false
-  }
-
-  #readLatestFrame(): void {
-    const frame = this.#camera?.read()
-    if (!frame) return
-    closeFrame(this.#frame)
-    this.#frame = frame
+    // Callers must release their disposable frame before native stop.
+    let failure: unknown
+    try {
+      if (this.#camera && this.#running) {
+        trace('[camera] native stop begin\n')
+        this.#camera.stop()
+        trace('[camera] native stop done\n')
+      }
+    } catch (error) { failure ??= error }
+    finally { this.#running = false }
+    if (failure) throw failure
   }
 
   #takeFrame(camera: NativeImageInCamera): DisposableCameraBuffer | undefined {
-    const frame = this.#frame ?? camera.read()
-    this.#frame = undefined
-    return frame
+    // Pull frames only on request; avoid native-to-JS callbacks while audio is active.
+    return camera.read()
   }
 
   #waitForFrame(camera: NativeImageInCamera): Promise<DisposableCameraBuffer | undefined> {

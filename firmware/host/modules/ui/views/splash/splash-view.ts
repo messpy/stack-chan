@@ -1,3 +1,4 @@
+import { startupDiagnosticLines, type StartupScreenDiagnostics } from 'context-startup'
 import { localize } from 'localization'
 import type { Application as PiuApplication, Container as PiuContainer, Label as PiuLabel } from 'piu/MC'
 import { Application, Column, Container, Label } from 'piu/MC'
@@ -40,6 +41,7 @@ export function startupErrorClass(error: unknown): string {
 export function showStartupError(options: {
   phase: StartupPhase
   error: unknown
+  diagnostic?: StartupScreenDiagnostics
   onRestart: () => void
 }): PiuApplication {
   const environment = globalThis as typeof globalThis & { application?: PiuApplication }
@@ -78,6 +80,9 @@ export function showStartupError(options: {
             string: startupErrorClass(options.error),
             style: styles.bodyMuted,
           }),
+          ...startupDiagnosticLines(options.diagnostic).map(string => new Label(null, {
+            left: 0, right: 0, height: 20, string, style: styles.bodyMuted,
+          })),
         ],
       }),
       new ActionButton(

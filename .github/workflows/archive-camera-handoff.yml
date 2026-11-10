@@ -1,0 +1,52 @@
+name: Archive Camera Handoff
+on:
+  pull_request:
+    branches: [stackchan-super]
+    paths: ['firmware/**', '.github/workflows/archive-camera-handoff.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+# Keep only the latest validation for an actively edited pull request.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/checkout@v4
+        with:
+          repository: Moddable-OpenSource/moddable
+          ref: 80076c48f5ab87ce29de728071b7408599071a12
+          path: .ci-moddable
+      - run: npm ci
+        working-directory: firmware
+      - run: npm run test:unit
+        working-directory: firmware
+      - run: node --experimental-vm-modules --test --test-concurrency=1 scripts/lib/archive-*.test.mjs
+        working-directory: firmware
+        env:
+          MODDABLE: ${{ github.workspace }}/.ci-moddable
+  cores3-build:
+    needs: regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          target-branch: 10.0.2
+      - name: Check SDK and build official StackChan CoreS3 Archive
+        working-directory: firmware
+        shell: bash
+        run: |
+          source "$HOME/.local/share/xs-dev-export.sh"
+          test "$(git -C "$MODDABLE" rev-parse HEAD)" = 80076c48f5ab87ce29de728071b7408599071a12
+          npm run init:archive
+          npm run build:archive:m5stackchan_cores3
+          test -s dist/bin/esp32/m5stackchan_cores3/release/stack-chan-host/xs_esp32.bin

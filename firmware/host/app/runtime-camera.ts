@@ -108,27 +108,27 @@ export class StackchanRuntimeCamera implements RobotCamera {
   }
 
   close(): Promise<void> | void {
-    const finish = () => {
-      const result = this.#camera.close?.()
+    // Shutdown close intentionally leaves touch stopped; routine release calls stop first.
+    const finish = (stopError?: unknown): Promise<void> | void => {
+      this.#cameraActive = false
+      this.#touchPanelPaused = false
       const done = () => {
         traceMessage('[runtime-camera] close done\n')
+        if (stopError) throw stopError
       }
+      const result = this.#camera.close?.()
       if (isThenable(result)) return result.then(done)
       done()
     }
-
+    let result: Promise<void> | void
     try {
       traceMessage('[runtime-camera] close begin\n')
-      const result = this.#camera.stop()
-      this.#cameraActive = false
-      this.#touchPanelPaused = false
-      if (isThenable(result)) return result.then(() => finish())
-      return finish()
+      result = this.#camera.stop()
     } catch (error) {
-      this.#cameraActive = false
-      this.#touchPanelPaused = false
-      throw error
+      return finish(error)
     }
+    if (isThenable(result)) return result.then(() => finish(), (error) => finish(error))
+    return finish()
   }
 
   async capture(options?: Parameters<RobotCamera['capture']>[0]) {
@@ -137,10 +137,16 @@ export class StackchanRuntimeCamera implements RobotCamera {
     try {
       traceMessage('[runtime-camera] capture begin\n')
       const frame = await this.#camera.capture(options)
+      // Implicit capture starts native camera DMA even without explicit start().
+      // Keep touch/I2C suspended until stop() releases the camera.
+      this.#cameraActive = true
       traceMessage(`[runtime-camera] capture done frame=${frame ? 'yes' : 'no'}\n`)
       return frame
-    } finally {
+    } catch (error) {
+      // Failed captures must not leave touch disabled if the caller aborts.
+      this.#cameraActive = false
       if (!wasActive) this.#resumeTouchPanel()
+      throw error
     }
   }
 

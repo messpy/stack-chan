@@ -41,6 +41,9 @@
     "archive-checks": "./archive-checks",
     "archive-web-page": "./archive-web-page",
     "archive-direct-chat": "./archive-direct-chat",
+    "archive-camera-handoff": "./archive-camera-handoff",
+    "archive-camera-release": "./archive-camera-release",
+    "archive-chat-pause-gate": "./archive-chat-pause-gate",
     "archive-offline": "./archive-offline",
     "archive-offline-policy": "./archive-offline-policy",
     "archive-offline-speech": "./archive-offline-speech",
@@ -162,6 +165,29 @@
       ]
     },
     "esp32/m5stack_cores3": {
+      "dependency": [
+        {
+          "idf": "esp_driver_usb_serial_jtag"
+        },
+        {
+          "idf": "mbedtls"
+        },
+        {
+          "idf": "nvs_flash"
+        },
+        {
+          "name": "esp_audio_codec",
+          "version": "~2.5.0",
+          "includes": [
+            "include/decoder",
+            "include/decoder/impl",
+            "include/encoder",
+            "include/encoder/impl"
+          ]
+        }
+      ]
+    },
+    "esp32/m5stackchan_cores3": {
       "dependency": [
         {
           "idf": "esp_driver_usb_serial_jtag"
