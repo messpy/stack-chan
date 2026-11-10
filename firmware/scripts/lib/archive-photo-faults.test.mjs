@@ -1,49 +1,67 @@
-import {test} from 'node:test'
+import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
 
-// Execute the production photo function with hardware boundary fault injection.
-const code=fs.readFileSync(new URL('../../host/app/lan-archive.js',import.meta.url),'utf8')
-  .replace(/^import .*;\n/gm,'').replace(/export /g,'')
-function fixture(fault) {
-  const events=[]
-  const fail=where=>{events.push(where);if(fault===where)throw new Error(where+' failure')}
-  const c=vm.createContext({
-    trace(){},traceConversation(){},photoRecoveryCheckpoint(){},
-    photoRecoveryWatchdog:on=>events.push(on?'arm':'disarm'),
-    quarantineCameraHandoff:()=>events.push('quarantine'),
-    encodeJPEG(){fail('jpeg');return new ArrayBuffer(4)},
-    withSDCard:fn=>fn({createDirectory(){},openFile(){fail('save');return {
-      write(){fail('write')},flush(){fail('flush')},close(){events.push('file.close')}
-    }}}),
-  })
-  vm.runInContext(code,c)
-  const frame={width:176,height:144,imageType:'rgb565le',buffer:new ArrayBuffer(50688),close(){fail('frame.close')}}
-  c.robot={camera:{async captureWithProcessor(options,process){fail('capture');return process(frame)},close(stage){fail('camera.close');stage('CAMERA_NATIVE_CLOSE_DONE')}}}
-  return {events,run:()=>vm.runInContext('photo(robot,{analyze:false})',c)}
+// Test the current capture -> JPEG -> native teardown -> SD sequence.
+// Camera-release error branches are exercised with the production cleanup helper.
+const source=fs.readFileSync(new URL('../../host/app/lan-archive.js',import.meta.url),'utf8')
+const start=source.indexOf('async function photo(')
+const end=source.indexOf('async function describeImage(',start)
+assert.ok(start>=0&&end>start,'current photo implementation exists')
+const implementation=source.slice(start,end)
+const releaseSource=fs.readFileSync(new URL('../../host/app/archive-camera-release.js',import.meta.url),'utf8')
+const {releaseCameraResources}=await import('data:text/javascript;base64,'+Buffer.from(releaseSource).toString('base64'))
+
+function fixture(fault='none'){
+  const events=[],logs=[]
+  const fail=stage=>{events.push(stage);if(fault===stage)throw Error(stage+' failed')}
+  const frame={width:176,height:144,imageType:'rgb565le',buffer:new ArrayBuffer(50688),close(){fail('frame-close')}}
+  const camera={
+    async capture(){fail('capture');return frame},
+    stop(){fail('camera-stop')},
+    close(){fail('camera-close')},
+  }
+  const ctx={
+    busy:false,
+    Date,
+    trace:s=>logs.push(String(s)),
+    id:()=>String(11),
+    directChatStatus:()=>({cameraCaptureActive:false,speaker:null}),
+    heapStatus:()=>({internalFree:100000,internalLargest:70000,psramFree:7000000}),
+    releaseCameraResources,
+    encodeJPEG(){fail('jpeg');return new Uint8Array([1,2,3])},
+    save(){fail('save')},
+  }
+  const photo=vm.runInNewContext(implementation+'\nphoto',ctx)
+  return {events,logs,run:()=>photo({camera},{analyze:false}),ctx}
 }
-test('DMA frame/camera released exactly once before file I/O, also on repeated captures',async()=>{
+
+test('repeated captures release native camera before any SD operation',async()=>{
   const f=fixture()
-  for(let n=0;n<3;n++)assert.equal((await f.run()).width,176)
-  assert.equal(f.events.filter(e=>e==='frame.close').length,3)
-  assert.equal(f.events.filter(e=>e==='camera.close').length,3)
-  assert.ok(f.events.indexOf('jpeg')<f.events.indexOf('frame.close'))
-  assert.ok(f.events.indexOf('camera.close')<f.events.indexOf('save'))
-  assert.ok(f.events.indexOf('flush')<f.events.indexOf('file.close'))
-  assert.equal(f.events.filter(e=>e==='quarantine').length,0)
+  for(let i=0;i<3;i++){
+    const result=await f.run()
+    assert.equal(result.image,'photo-11.jpg')
+    assert.equal(result.width,176)
+    assert.equal(f.ctx.busy,false)
+  }
+  for(const stage of ['capture','jpeg','frame-close','camera-stop','camera-close','save']){
+    assert.equal(f.events.filter(x=>x===stage).length,3,stage)
+  }
+  assert.deepEqual(f.events.slice(0,6),['capture','jpeg','frame-close','camera-stop','camera-close','save'])
 })
-for(const fault of ['capture','jpeg','save','write','flush','frame.close','camera.close']) {
-  test('photo safely handles '+fault+' failure',async()=>{
-    const f=fixture(fault)
-    await assert.rejects(f.run(),new RegExp(fault.replace('.','\\.')))
-    assert.equal(f.events.filter(e=>e==='camera.close').length,1)
-    assert.equal(f.events.filter(e=>e==='frame.close').length,fault==='capture'?0:1)
-    if(fault==='frame.close'||fault==='camera.close') {
-      assert.ok(f.events.includes('quarantine'))
-      assert.ok(!f.events.includes('disarm'))
-      assert.ok(!f.events.includes('save'))
-    }else assert.ok(f.events.includes('disarm'))
-    if(fault==='write'||fault==='flush')assert.ok(f.events.includes('file.close'))
+
+for(const failure of ['capture','jpeg','frame-close','camera-stop','camera-close','save']){
+  test('photo '+failure+' failure releases ownership and preserves error stage',async()=>{
+    const f=fixture(failure)
+    await assert.rejects(f.run(),new RegExp(failure+' failed'))
+    assert.equal(f.ctx.busy,false,'photo busy flag is released')
+    assert.equal(f.events.filter(x=>x==='camera-stop').length,1,'camera stop attempted')
+    assert.equal(f.events.filter(x=>x==='camera-close').length,1,'camera close attempted')
+    assert.equal(f.events.includes('frame-close'),failure!=='capture','frame close attempted when captured')
+    if(failure!=='save')assert.ok(!f.events.includes('save'),'never write SD after camera failure')
+    if(failure==='save')assert.ok(f.events.indexOf('camera-close')<f.events.indexOf('save'))
+    const expectedStage=['frame-close','camera-stop','camera-close'].includes(failure)?'camera-release':failure==='capture'?'camera-start':failure==='jpeg'?'jpeg-encode':'sd-save'
+    assert.ok(f.logs.some(s=>s.includes('failed stage='+expectedStage)),expectedStage+' is reported')
   })
 }
