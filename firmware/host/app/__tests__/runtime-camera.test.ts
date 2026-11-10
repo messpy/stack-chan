@@ -184,7 +184,27 @@ test('StackchanRuntimeCamera brackets direct capture calls with touchPanel pause
 
   const runtime = new StackchanRuntimeCamera({ camera, touchPanel })
   await runtime.camera.capture()
+  // No touch input is allowed while the implicit native camera remains active.
+  assert.deepEqual(events, ['touch.stop', 'camera.capture'])
+  await runtime.camera.stop()
 
+  assert.deepEqual(events, ['touch.stop', 'camera.capture', 'camera.stop', 'touch.start'])
+})
+
+test('failed implicit capture always restores touch on rejection', async () => {
+  const events: string[] = []
+  const runtime = new StackchanRuntimeCamera({
+    camera: {
+      start() {},
+      stop() { events.push('camera.stop') },
+      async capture() { events.push('camera.capture'); throw new Error('capture failed') },
+    },
+    touchPanel: {
+      stop() { events.push('touch.stop') },
+      start() { events.push('touch.start') },
+    },
+  })
+  await assert.rejects(runtime.camera.capture(), /capture failed/)
   assert.deepEqual(events, ['touch.stop', 'camera.capture', 'touch.start'])
 })
 
