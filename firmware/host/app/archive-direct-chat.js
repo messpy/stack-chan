@@ -381,6 +381,7 @@ export function configureDirectChat(value) {
   return { configured: true }
 }
 export function setChatMode(on) {
+  trace('[action] chat_mode requested='+(on?'on':'off')+'\n')
   if(on&&chatProvider()==='gemini'&&!getSettings().api?.gemini)throw new Error('Gemini APIキーを保存してください')
   if (on && chatProvider() === 'ollama' && (!getSettings().api?.ollama || (!usesXiaoZhiRecognition()&&!getSettings().api?.gemini)))
     throw new Error('Ollama Cloudと音声用GeminiのAPIキーを保存してください')
@@ -389,22 +390,27 @@ export function setChatMode(on) {
     throw new Error(
       chatProvider() === 'gemini' ? '設定ページでGemini APIキーを保存してください' : '会話の初期登録が必要です',
     )
-  modeChanged?.(on)
-  if (on && !enabled()) {
-    if(recognitionMode())closeChat()
-    beginConversation()
-    greetingPending = true
-    resetTranscripts()
-  }
+  const starting = on && !enabled()
   if(!on){chatSaveFailedOff=true;closeChat();collectMemory()}
   let saveError
   try {
-    changeSettings((data) => { data.chatMode=on; if(on)data.transcriptionMode=false })
+    // Restoring an already persisted ON mode must not rewrite the SD card.
+    const settings=getSettings()
+    if(settings.chatMode!==on||(on&&settings.transcriptionMode!==false))
+      changeSettings((data) => { data.chatMode=on; if(on)data.transcriptionMode=false })
     chatSaveFailedOff=false
     if(on)recognitionSaveFailedOff=false
   } catch(e) {
     if(on)throw e
     saveError='会話は停止しましたが、OFF設定を保存できませんでした。再起動後の設定を確認してください'
+  }
+  // Do not change audio ownership until the ON preference is safely persisted.
+  if(on||!saveError)modeChanged?.(on)
+  if(starting){
+    if(recognitionMode())closeChat()
+    beginConversation()
+    greetingPending=true
+    resetTranscripts()
   }
   retryAt = 0
   retryDelay = 3000
@@ -426,13 +432,21 @@ export function setChatMode(on) {
   return directChatStatus()
 }
 export function setRecognitionMode(on){
+  trace('[action] recognition_mode requested='+(on?'on':'off')+'\n')
   if(typeof on!=='boolean')throw new Error('文字起こしのON/OFFを指定してください')
   if(on&&!cloudConfig()?.cloudConsent)throw new Error('XiaoZhiの初期登録が必要です')
-  if(on){modeChanged?.(true);if(enabled())setChatMode(false)}
   if(!on){recognitionSaveFailedOff=true;closeChat();collectMemory()}
   let saveError
-  try{changeSettings(data=>{data.transcriptionMode=on;if(on)data.chatMode=false});recognitionSaveFailedOff=false;if(on)chatSaveFailedOff=false}
+  try{
+    const settings=getSettings()
+    if(settings.transcriptionMode!==on||(on&&settings.chatMode!==false))
+      changeSettings(data=>{data.transcriptionMode=on;if(on)data.chatMode=false})
+    recognitionSaveFailedOff=false
+    if(on)chatSaveFailedOff=false
+  }
   catch(e){if(on)throw e;saveError='文字起こしは停止しましたが、OFF設定を保存できませんでした'}
+  // A failed ON save must not interrupt audio or the current chat session.
+  if(on)modeChanged?.(true)
   enrollment.reset();closeChat();resetTranscripts();greetingPending=false;
   retryAt=0;retryDelay=3000;error='';detail='';state=running()?'waiting':'off';
   refreshRecognition?.();refreshAITalk?.();
@@ -830,6 +844,7 @@ async function connect() {
               receiveRegistrationName(text)
               return
             }
+            trace('[asr] final chars='+input.length+'\n')
             const event = archive('input', input)
             lastInputId = event?.id || ''
             if(standalone){
@@ -867,6 +882,7 @@ async function connect() {
           }
           if (!more && output) {
             if (!enrollment.active) {
+              trace('[llm] output_final chars='+output.length+'\n')
               archive('output', output)
               if(conversationStage==='greeting')advanceConversation('conversation')
               lastSubtitle=output
