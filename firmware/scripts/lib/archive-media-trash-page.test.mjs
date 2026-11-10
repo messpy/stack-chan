@@ -2,7 +2,7 @@ import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:asser
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const here=path.dirname(fileURLToPath(import.meta.url));
-const projectRoot=process.env.STACKCHAN_PROJECTS_ROOT || path.resolve(here,'../../../../../..');
+const projectRoot=process.env.STACKCHAN_PROJECTS_ROOT || path.resolve(here,'../../../../..');
 const pcHub=process.env.STACKCHAN_PC_HUB || path.join(projectRoot,'repository/hub/index.html');
 for(const [kind,source,end] of [['LAN',new URL('../../host/app/archive-web-page.js',import.meta.url),'async function messages(){'],['PC',pcHub,'async function refresh(){']]){
  test(kind+' delete requires confirmation, then refreshes; restore does not delete other data',async()=>{
