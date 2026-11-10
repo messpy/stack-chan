@@ -1,0 +1,58 @@
+name: Archive Voice Reconnect and Upload Safety
+
+on:
+  push:
+    branches:
+      - fix/archive-voice-upload-reconnect-20261106
+  pull_request:
+    branches:
+      - fix/archive-photo-local-voice-dispatch-20261105
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: archive-voice-safety-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  voice-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check source syntax
+        run: |
+          node --check firmware/host/app/archive-direct-chat.js
+          node --check firmware/host/app/archive-chat-audioio.js
+          node --check firmware/host/app/archive-memory-policy.js
+          node --check firmware/host/modules/conversation/chat-audioio/xiaozhi-model.js
+      - name: Run audio and session regressions
+        run: |
+          node --experimental-vm-modules --test \
+            firmware/scripts/lib/archive-memory-policy.test.mjs \
+            firmware/scripts/lib/archive-xiaozhi-recognition.test.mjs \
+            firmware/scripts/lib/archive-playback-buffer.test.mjs \
+            firmware/scripts/lib/archive-issues-33-36.test.mjs
+
+  cores3-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Generate synthetic Archive configuration
+        working-directory: firmware
+        run: npm run init:archive
+      - name: Build CoreS3 (no flash)
+        working-directory: firmware
+        shell: bash
+        run: |
+          source "$HOME/.local/share/xs-dev-export.sh"
+          node scripts/clean.mjs
+          npm run build:archive
+      - name: Verify firmware artifact
+        run: test -s firmware/dist/bin/esp32/m5stack_cores3/release/stack-chan-host/xs_esp32.bin
