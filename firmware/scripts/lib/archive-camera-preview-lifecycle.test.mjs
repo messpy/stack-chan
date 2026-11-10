@@ -6,37 +6,45 @@ import { test } from 'node:test'
 const source=fs.readFileSync(new URL('../../host/app/lan-archive.js',import.meta.url),'utf8')
 const start=source.indexOf('async function cameraPreview(robot) {')
 const end=source.indexOf('async function photo(',start)
-assert.ok(start>=0&&end>start,'cameraPreview implementation is present')
+assert.ok(start>=0&&end>start,'cameraPreview implementation exists')
 const implementation=source.slice(start,end)
+const releaseSource=fs.readFileSync(new URL('../../host/app/archive-camera-release.js',import.meta.url),'utf8')
+const {releaseCameraResources}=await import('data:text/javascript;base64,'+Buffer.from(releaseSource).toString('base64'))
 
-function harness(failCapture=false){
+function harness(fault){
   const events=[]
   const context={
     busy:false,
-    pauseDirectChat(){events.push('pause-chat');return true},
-    resumeDirectChat(){events.push('resume-chat')},
-    encodeJPEG:()=>new Uint8Array([1,2,3])
+    directChatStatus:()=>({busy:false,cameraCaptureActive:false}),
+    holdDirectChat(reason){events.push('pause:'+reason);return()=>events.push('resume')},
+    releaseCameraResources,
+    trace(){},
+    encodeJPEG(){events.push('jpeg');return new Uint8Array([1,2,3])},
   }
-  const robot={camera:{
-    async start(){events.push('start')},
-    async capture(){events.push('capture');if(failCapture)throw Error('preview failed');return {buffer:new ArrayBuffer(4),width:176,height:144,imageType:'rgb565le',close(){events.push('frame-close')}}},
-    async stop(){events.push('stop')}
-  }}
-  const cameraPreview=vm.runInNewContext(implementation+'\ncameraPreview',context)
-  return {cameraPreview,context,robot,events}
+  const camera={
+    async capture(){events.push('capture');if(fault==='capture')throw Error('preview failed');return {buffer:new ArrayBuffer(4),width:176,height:144,imageType:'rgb565le',close(){events.push('frame-close');if(fault==='frame')throw Error('frame failed')}}},
+    stop(){events.push('stop');if(fault==='stop')throw Error('stop failed')},
+    close(){events.push('close');if(fault==='close')throw Error('close failed')},
+  }
+  const preview=vm.runInNewContext(implementation+'\ncameraPreview',context)
+  return {events,context,run:()=>preview({camera})}
 }
 
-test('preview starts camera explicitly and stops before resuming chat',async()=>{
+test('preview holds chat, captures JPEG, releases all resources, then resumes chat',async()=>{
   const h=harness()
-  const jpeg=await h.cameraPreview(h.robot)
+  const jpeg=await h.run()
   assert.equal(jpeg.byteLength,3)
-  assert.deepEqual(h.events,['pause-chat','start','capture','frame-close','stop','resume-chat'])
+  assert.deepEqual(h.events,['pause:camera-preview','capture','jpeg','frame-close','stop','close','resume'])
   assert.equal(h.context.busy,false)
 })
 
-test('preview capture failure still stops camera and resumes chat',async()=>{
-  const h=harness(true)
-  await assert.rejects(h.cameraPreview(h.robot),/preview failed/)
-  assert.deepEqual(h.events,['pause-chat','start','capture','stop','resume-chat'])
-  assert.equal(h.context.busy,false)
-})
+for(const fault of ['capture','frame','stop','close']){
+  test('preview '+fault+' failure still releases chat lease and attempts native cleanup',async()=>{
+    const h=harness(fault)
+    await assert.rejects(h.run(),new RegExp(fault==='capture'?'preview failed':fault+' failed'))
+    assert.equal(h.events.at(-1),'resume')
+    assert.equal(h.events.filter(e=>e==='stop').length,1)
+    assert.equal(h.events.filter(e=>e==='close').length,1)
+    assert.equal(h.context.busy,false)
+  })
+}
