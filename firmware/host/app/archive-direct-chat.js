@@ -1,4 +1,5 @@
 import {headDirectionFromText} from 'archive-head-motion'
+import {showChatCaption} from 'archive-chat-caption'
 import {heapStatus,collectMemory} from 'archive-usb'
 import {checkVoiceMemory,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
 import { ollamaChat, ollamaModel, validOllamaModel, geminiTextChat, DEFAULT_GEMINI_TEXT_MODEL, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
@@ -749,11 +750,11 @@ async function connect() {
           await (provider==='ollama'?ollamaChat:geminiTextChat)([{role:'system',content:conversationInstructions()},{role:'user',content:text}],Object.values(tools),executeTool,isCurrent);
         if(!isCurrent())return
         archive('output',answer);if(conversationStage==='greeting')advanceConversation('conversation');
-        lastSubtitle=answer;robot.showBalloon(answer,{bottom:40,height:24,paddingY:4,holdMs:60000});state='speaking';conversationIndicator('off');
+        lastSubtitle=answer;showChatCaption(robot,answer,60000);state='speaking';conversationIndicator('off');
         const speech=new RecognitionTTS({volume:robot.audio.volume});recognitionSpeech=speech;
         await new Promise((resolve,reject)=>speech.stream(answer,robot.audio.volume,e=>e?reject(e):resolve()));
         if(recognitionSpeech===speech)recognitionSpeech=undefined;
-      }catch(e){if(isCurrent()){error='返答処理に失敗しました';detail=String(e.message||e).slice(0,160);for(const key of [getSettings().api?.gemini,getSettings().api?.ollama])if(key)detail=detail.split(key).join('[redacted]');robot.showBalloon(error);trace('[recognition] response failed\n')}}
+      }catch(e){if(isCurrent()){error='返答処理に失敗しました';detail=String(e.message||e).slice(0,160);for(const key of [getSettings().api?.gemini,getSettings().api?.ollama])if(key)detail=detail.split(key).join('[redacted]');showChatCaption(robot,error);trace('[recognition] response failed\n')}}
       finally{recognitionTurnCurrent=()=>false;if(generation===turn){closeChat();state=enabled()?'waiting':'off';retryAt=Date.now()+1000}}
     }
     const instance = new ChatService({
@@ -791,7 +792,7 @@ async function connect() {
             }, 0)
           }
           if (value === ChatState.CONNECTED || value === ChatState.SPEAKING) {
-            if(lastSubtitle){robot.showBalloon(lastSubtitle,{bottom:40,height:24,paddingY:4,holdMs:15000});lastSubtitle=''}
+            if(lastSubtitle){showChatCaption(robot,lastSubtitle,15000);lastSubtitle=''}
             const becameReady = state !== 'listening'
             state = 'listening'
             microphoneAt=Date.now()
@@ -846,7 +847,7 @@ async function connect() {
             const event = archive('input', input)
             lastInputId = event?.id || ''
             if(standalone){
-              robot.showBalloon(input,{bottom:40,height:24,paddingY:4,holdMs:15000});
+              showChatCaption(robot,input,15000);
             }else if(!currentSpeaker()){
               const candidate=explicitSpeakerName(input)
               if(candidate&&lastInputId)try{
@@ -875,7 +876,7 @@ async function connect() {
           else output = (output + (text || '')).slice(-4096)
           if (text && !enrollment.active && (Date.now()-subtitleAt>=250 || !more)) {
             lastSubtitle=output
-            robot.showBalloon(output,{bottom:40,height:24,paddingY:4,holdMs:60000})
+            showChatCaption(robot,output,60000)
             subtitleAt=Date.now()
           }
           if (!more && output) {
@@ -884,7 +885,7 @@ async function connect() {
               archive('output', output)
               if(conversationStage==='greeting')advanceConversation('conversation')
               lastSubtitle=output
-              robot.showBalloon(output,{bottom:40,height:24,paddingY:4,holdMs:60000})
+              showChatCaption(robot,output,60000)
             }
             output = ''
           }
@@ -919,7 +920,7 @@ async function connect() {
               return executeTool(name, args)
             })
             .then((result) => {
-              if(name==='conversation_identify'&&result?.message)try{robot.showBalloon(result.message,{bottom:40,height:24,paddingY:4,holdMs:10000})}catch(_){trace('[speaker] result display unavailable\n')}
+              if(name==='conversation_identify'&&result?.message)try{showChatCaption(robot,result.message,10000)}catch(_){trace('[speaker] result display unavailable\n')}
               return chat === instance ? instance.sendFunctionResult(call, name, result) : undefined
             })
             .catch((e) => {
@@ -931,7 +932,7 @@ async function connect() {
                 for (const key of [getSettings().api?.ollama, getSettings().api?.gemini])
                   if (key) message = message.split(key).join('[redacted]')
                 error = message.slice(0, 200)
-                robot.showBalloon(error)
+                showChatCaption(robot,error)
               }
               return instance.sendFunctionResult(call, name, { error: message.slice(0, 200) })
             })
@@ -986,7 +987,7 @@ export function requestListening(){
     greetingPending=false
     state='waiting'
     retryAt=0
-    robot.showBalloon('聞き取りを準備しています。緑になったら話してください',{bottom:40,height:24,paddingY:4})
+    showChatCaption(robot,'聞き取りを準備しています。緑になったら話してください')
     void connect()
   }
   trace('[direct-chat] manual listening requested\n')
@@ -997,7 +998,7 @@ function showSpeakerStrip(){
   let people=[];try{people=speakerList().people}catch(_){trace('[speaker] stored list unavailable\n')}
   const selected=currentSpeaker(), recent=people[0]
   const strip=new Container(null,{left:4,right:4,bottom:4,height:speakerExpanded?76:36})
-  const add=(label,fn,left,width,top=0)=>strip.add(new ActionButton({label,onTap:()=>{try{fn()}catch(e){robot.showBalloon(String(e.message||'選択できませんでした'))}}},{left,width,top,height:34}))
+  const add=(label,fn,left,width,top=0)=>strip.add(new ActionButton({label,onTap:()=>{try{fn()}catch(e){showChatCaption(robot,String(e.message||'選択できませんでした'))}}},{left,width,top,height:34}))
   const person=selected?.id?people.find(p=>p.id===selected.id):recent
   add(selected?.guest?(selected.name?selected.name+'（仮）':'ゲスト'):person?((selected?'会話中: ':'前回: ')+person.name):'名前を教えてね',()=>{if(selected)requestListening();else if(person)selectSpeaker(person);else openSpeakerChooser()},0,268)
   add('^',()=>{speakerExpanded=!speakerExpanded;showSpeakerStrip()},272,40)
@@ -1016,7 +1017,7 @@ export function registerAITalk(robot, actions) {
         // Run after the launcher finishes closing, so speaker selection stays visible.
         Timer.set(() => {
           try { actions.toggle(); refresh() }
-          catch (error) { robot.showBalloon(String(error.message || '会話設定を確認してください')) }
+          catch (error) { showChatCaption(robot,String(error.message || '会話設定を確認してください')) }
         }, 0)
         return {content}
       },
@@ -1093,7 +1094,7 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
                   try {
                     setChatMode(!enabled())
                   } catch (e) {
-                    robot.showBalloon(String(e.message || '会話設定を確認してください'))
+                    showChatCaption(robot,String(e.message || '会話設定を確認してください'))
                   }
                 },
               },
