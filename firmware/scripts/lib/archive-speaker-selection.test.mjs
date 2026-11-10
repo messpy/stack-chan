@@ -198,7 +198,7 @@ class AdapterBase{constructor(){this.onStateChanged=()=>{}}ensureInput(){}}
 let forwarded;
 class AdapterWorker{postMessage(message){forwarded=message}terminate(){}}
 const resumeTimers=[];
-const adapterContext=vm.createContext({Timer:{set:fn=>{resumeTimers.push(fn);return resumeTimers.length}},ChatAudioIOBase:AdapterBase,Worker:AdapterWorker,SharedArrayBuffer,trace(){},writePcmRing(){},globalThis:{}});
+const adapterContext=vm.createContext({Timer:{set:fn=>{resumeTimers.push(fn);return resumeTimers.length},repeat:()=>1,clear(){}},ChatAudioIOBase:AdapterBase,Worker:AdapterWorker,SharedArrayBuffer,trace(){},writePcmRing(){},globalThis:{}});
 vm.runInContext(fs.readFileSync(root+'archive-chat-audioio.js','utf8').replace(/^import .*$/gm,'').replace('export default class ChatAudioIO','class ChatAudioIO').replace(/^export (class|function) /gm,(_match,kind)=>kind+' '),adapterContext);
 for(const channels of [1,2]){
  adapterContext.channelCount=channels;
