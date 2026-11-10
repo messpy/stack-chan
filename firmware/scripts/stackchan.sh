@@ -427,12 +427,19 @@ class Runner:
         # Removed modules must not be resurrected from an older private manifest.
         modules = data.setdefault('modules', {})
         public_modules = example.get('modules', {})
-        for name in list(modules):
-            if name.startswith('archive-') and name not in public_modules:
-                del modules[name]
+        # Remove only retired generated mappings; keep user/private module entries.
+        for name in ('archive-camera-handoff', 'archive-camera-release', 'archive-chat-pause-gate'):
+            if name not in public_modules:
+                modules.pop(name, None)
         for name, mapping in public_modules.items():
             modules[name] = mapping
-        data.setdefault('platforms', {})['esp32/m5stackchan_cores3'] = example['platforms']['esp32/m5stackchan_cores3']
+        # The public example uses m5stack_cores3, while the private target may
+        # define m5stackchan_cores3. Never overwrite that private target with
+        # a missing public key.
+        public_platforms = example.get('platforms', {})
+        private_platforms = data.setdefault('platforms', {})
+        for name, mapping in public_platforms.items():
+            private_platforms[name] = mapping
         self.manifest_before = dst.read_bytes() if dst.exists() else None
         if self.manifest_before is not None: (self.run / 'private-manifest.before.json').write_bytes(self.manifest_before)
         self.manifest_changed = True
