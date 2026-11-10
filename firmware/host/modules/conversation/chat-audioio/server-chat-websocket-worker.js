@@ -28,8 +28,19 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
     this.path = '/'
     this.port = 443
     this.headers = []
+    this.transportStats = { submittedSocketBytes: 0, droppedNoSocketBytes: 0, backpressureFailures: 0 }
     this.outputMinimum = (options.outputSampleRate ?? 24000) >> 1
     this.silence = new ArrayBuffer(this.outputMinimum)
+  }
+
+  transportStatus() {
+    return {
+      connectionState: this.#state,
+      queuedBytes: this.#queuedBytes,
+      submittedSocketBytes: this.transportStats.submittedSocketBytes,
+      droppedNoSocketBytes: this.transportStats.droppedNoSocketBytes,
+      backpressureFailures: this.transportStats.backpressureFailures,
+    }
   }
 
   close() {
@@ -60,13 +71,19 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
       path: this.path,
       port: this.port,
       headers: this.headers,
-      onClose: () => {},
+      onClose: () => {
+        trace('[audio-path] stage=transport event=socket_close ms=' + Date.now() +
+          ' connectionState=' + this.#state + '\n')
+      },
       onControl: (opcode, data) => {
         switch (opcode) {
           case WebSocketClient.close: {
             const bytes = new Uint8Array(data)
             const code = bytes.length >= 2 ? (bytes[0] << 8) | bytes[1] : 1006
             const reason = bytes.length > 2 ? String.fromArrayBuffer(bytes.buffer.slice(2)) : 'connection closed'
+            trace('[audio-path] stage=transport event=close_frame ms=' + Date.now() +
+              ' closeCode=' + code + ' reasonLength=' + (bytes.length > 2 ? bytes.length - 2 : 0) +
+              ' queuedBytes=' + this.#queuedBytes + '\n')
             if (code !== 1000) this.postMessage({ id: 'failed', string: reason })
             else this.postMessage({ id: 'disconnected' })
             this.close()
@@ -79,6 +96,10 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
       },
       onError: (error) => {
         const detail = error?.message ?? error
+        trace('[audio-path] stage=transport event=error ms=' + Date.now() +
+          ' kind=' + (typeof error?.name === 'string' && /^[A-Za-z]+Error$/.test(error.name) ? error.name : 'unknown') +
+          ' detailLength=' + String(detail ?? '').length +
+          ' queuedBytes=' + this.#queuedBytes + '\n')
         this.postMessage({ id: 'failed', string: detail ? `network error: ${detail}` : 'network error' })
         this.close()
       },
@@ -127,6 +148,7 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
   #open() {
     if (this.#state !== 0) return
     this.#state = 1
+    trace('[audio-path] stage=transport event=open ms=' + Date.now() + '\n')
     this.onOpen()
   }
 
@@ -161,7 +183,10 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
   }
 
   write(data, options) {
-    if (!this.ws) return
+    if (!this.ws) {
+      this.transportStats.droppedNoSocketBytes += data.byteLength
+      return
+    }
     if (this.#buffers.length) {
       this.enqueue(data, options)
       return
@@ -169,6 +194,7 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
     const writable = this.#writable
     if (data.byteLength <= writable) {
       this.#writable = this.ws.write(data, options)
+      this.transportStats.submittedSocketBytes += data.byteLength
       return
     }
     if (writable > 0) {
@@ -176,6 +202,7 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
         ...options,
         more: true,
       })
+      this.transportStats.submittedSocketBytes += writable
       this.enqueue(data.slice(writable), options)
       return
     }
@@ -184,6 +211,9 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
 
   enqueue(data, options) {
     if (this.#queuedBytes + data.byteLength > MAX_QUEUED_BYTES) {
+      this.transportStats.backpressureFailures++
+      trace('[audio-path] stage=transport event=backpressure ms=' + Date.now() +
+        ' queuedBytes=' + this.#queuedBytes + ' attemptedBytes=' + data.byteLength + '\n')
       this.postMessage({ id: 'failed', string: 'websocket backpressure' })
       this.close()
       return
@@ -199,6 +229,7 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
       const writable = this.#writable
       if (data.byteLength <= writable) {
         this.#writable = this.ws.write(data, buffer.options)
+        this.transportStats.submittedSocketBytes += data.byteLength
         this.#queuedBytes -= data.byteLength
         this.#buffers.shift()
         continue
@@ -208,6 +239,7 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
           ...buffer.options,
           more: true,
         })
+        this.transportStats.submittedSocketBytes += writable
         buffer.data = data.slice(writable)
         this.#queuedBytes -= writable
       }
