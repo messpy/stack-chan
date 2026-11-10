@@ -33,6 +33,13 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
     this.silence = new ArrayBuffer(this.outputMinimum)
   }
 
+  transportDiagnostic(event, details = '') {
+    const line = '[audio-path] stage=transport event=' + event + ' ms=' + Date.now() +
+      (details ? ' ' + details : '') + '\n'
+    if (typeof this.postAudioDiagnostic === 'function') this.postAudioDiagnostic(line)
+    else try { trace(line) } catch (_) {}
+  }
+
   transportStatus() {
     return {
       connectionState: this.#state,
@@ -72,8 +79,7 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
       port: this.port,
       headers: this.headers,
       onClose: () => {
-        trace('[audio-path] stage=transport event=socket_close ms=' + Date.now() +
-          ' connectionState=' + this.#state + '\n')
+        this.transportDiagnostic('socket_close', 'connectionState=' + this.#state)
       },
       onControl: (opcode, data) => {
         switch (opcode) {
@@ -81,9 +87,9 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
             const bytes = new Uint8Array(data)
             const code = bytes.length >= 2 ? (bytes[0] << 8) | bytes[1] : 1006
             const reason = bytes.length > 2 ? String.fromArrayBuffer(bytes.buffer.slice(2)) : 'connection closed'
-            trace('[audio-path] stage=transport event=close_frame ms=' + Date.now() +
-              ' closeCode=' + code + ' reasonLength=' + (bytes.length > 2 ? bytes.length - 2 : 0) +
-              ' queuedBytes=' + this.#queuedBytes + '\n')
+            this.transportDiagnostic('close_frame', 'closeCode=' + code +
+              ' reasonLength=' + (bytes.length > 2 ? bytes.length - 2 : 0) +
+              ' queuedBytes=' + this.#queuedBytes)
             if (code !== 1000) this.postMessage({ id: 'failed', string: reason })
             else this.postMessage({ id: 'disconnected' })
             this.close()
@@ -96,10 +102,9 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
       },
       onError: (error) => {
         const detail = error?.message ?? error
-        trace('[audio-path] stage=transport event=error ms=' + Date.now() +
-          ' kind=' + (typeof error?.name === 'string' && /^[A-Za-z]+Error$/.test(error.name) ? error.name : 'unknown') +
-          ' detailLength=' + String(detail ?? '').length +
-          ' queuedBytes=' + this.#queuedBytes + '\n')
+        this.transportDiagnostic('error', 'kind=' +
+          (typeof error?.name === 'string' && /^[A-Za-z]+Error$/.test(error.name) ? error.name : 'unknown') +
+          ' detailLength=' + String(detail ?? '').length + ' queuedBytes=' + this.#queuedBytes)
         this.postMessage({ id: 'failed', string: detail ? `network error: ${detail}` : 'network error' })
         this.close()
       },
@@ -148,7 +153,7 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
   #open() {
     if (this.#state !== 0) return
     this.#state = 1
-    trace('[audio-path] stage=transport event=open ms=' + Date.now() + '\n')
+    this.transportDiagnostic('open')
     this.onOpen()
   }
 
@@ -212,8 +217,7 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
   enqueue(data, options) {
     if (this.#queuedBytes + data.byteLength > MAX_QUEUED_BYTES) {
       this.transportStats.backpressureFailures++
-      trace('[audio-path] stage=transport event=backpressure ms=' + Date.now() +
-        ' queuedBytes=' + this.#queuedBytes + ' attemptedBytes=' + data.byteLength + '\n')
+      this.transportDiagnostic('backpressure', 'queuedBytes=' + this.#queuedBytes + ' attemptedBytes=' + data.byteLength)
       this.postMessage({ id: 'failed', string: 'websocket backpressure' })
       this.close()
       return
