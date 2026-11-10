@@ -16,7 +16,7 @@ SERIAL = '44:1B:F6:DF:5A:D0'
 FILES = {'0x0': 'bootloader.bin', '0x8000': 'partition-table.bin', '0x10000': 'xs_esp32.bin'}
 
 # No arbitrary trace lines: settings, tokens and conversation text must not leak.
-SAFE_SOURCE = "def safe_line(line):\n    s = line.strip()\n    if s.startswith('@SC '):\n        try:\n            packet=json.loads(s[4:])\n            if packet.get('event')!='startup': return None\n            phase=packet.get('phase');error=packet.get('error');reason=packet.get('reason');site=packet.get('site','')\n            if phase not in ('initialization','launch','network','context','behavior','ready','unknown'): return None\n            if error not in ('none','Error','TypeError','RangeError','ReferenceError','SyntaxError','URIError','unknown'): return None\n            if reason not in ('none','memory','storage','network','unclassified'): return None\n            if site and not re.fullmatch(r'[A-Za-z0-9_-]+(?:\\.(?:js|ts))?(?::[0-9]+(?::[0-9]+)?)?',site): return None\n            component=packet.get('component','none');state=packet.get('componentState','begin')\n            if component not in ('none','preferences','selection','driver','ui','tts','touch','head-touch','touch-panel','imu','microphone','camera','speaker','media','led','runtime','runtime-motion','runtime-ui','runtime-audio','runtime-input','runtime-camera','runtime-lighting','runtime-timer','dock-context','experimental-miniapps','context-behaviors','archive-import','archive-start','mod-shortcut','archive-debug','archive-clock','archive-face','archive-offline','archive-history','archive-volume','archive-ai-settings','archive-wifi-display','archive-timer','archive-alarms','default-setup','default-face','default-hands','default-colors','default-imu'): return None\n            if state not in ('begin','done','failed'): return None\n            fields=[]\n            for key in ('sequence','stage','previousValid','previousSequence','previousStage','previousError','resetReason','internalFree','internalLargest','psramFree'):\n                value=packet.get(key)\n                if not isinstance(value,int) or isinstance(value,bool): return None\n                fields.append(key+'='+str(value))\n            for key in ('componentCode','previousComponent','previousInternalFree','previousInternalLargest','previousPsramFree'):\n                if key in packet:\n                    if not isinstance(packet[key],int) or isinstance(packet[key],bool): return None\n                    fields.append(key+'='+str(packet[key]))\n            result='[startup] component='+component+' state='+state+' phase='+phase+' error='+error+' reason='+reason+' site='+site+' '+' '.join(fields)\n            if error!='none': result+='\\n[main] startup failed phase='+phase+' error='+error\n            elif phase=='ready': result+='\\n[main] app behaviors ready'\n            return result\n        except (ValueError,TypeError,AttributeError): return None\n    patterns = (\n        r'\\[main\\] (?:start|loading app behaviors|app context created|app behaviors ready)',\n        r'\\[main\\] onLaunch shouldCreateContext=(?:true|false)',\n        r'\\[main\\] network ready: (?:connected|skipped|failed)',\n        r'\\[main\\] startup failed phase=[a-z-]+ error=[A-Za-z]+',\n        r'\\[network\\] offline boot selected; saved credentials preserved',\n        r'\\[settings\\] (?:Wi-Fi connected|Wi-Fi connection failed|SD configuration unavailable|initialization failed; USB remains available)',\n        r'rst:0x[0-9a-f]+ \\([A-Z0-9_]+\\),boot:0x[0-9a-f]+ \\([A-Z0-9_]+\\)',\n        r'ESP-ROM:[a-zA-Z0-9-]+',\n    )\n    if any(re.fullmatch(p, s) for p in patterns): return s\n    if s.startswith('[main] startup detail:'): return '[main] startup detail: [omitted; may contain private values]'\n    return None"
+SAFE_SOURCE = "def safe_line(line):\n    s = line.strip()\n    if s.startswith('@SC '):\n        try:\n            packet=json.loads(s[4:])\n            if packet.get('event')!='startup': return None\n            phase=packet.get('phase');error=packet.get('error');reason=packet.get('reason');site=packet.get('site','')\n            if phase not in ('initialization','launch','network','context','behavior','ready','unknown'): return None\n            if error not in ('none','Error','TypeError','RangeError','ReferenceError','SyntaxError','URIError','unknown'): return None\n            if reason not in ('none','memory','storage','network','unclassified'): return None\n            if site and not re.fullmatch(r'[A-Za-z0-9_-]+(?:\\.(?:js|ts))?(?::[0-9]+(?::[0-9]+)?)?',site): return None\n            component=packet.get('component','none');state=packet.get('componentState','begin')\n            if component not in ('none','preferences','selection','driver','ui','tts','touch','head-touch','touch-panel','imu','microphone','camera','speaker','media','led','runtime','runtime-motion','runtime-ui','runtime-audio','runtime-input','runtime-camera','runtime-lighting','runtime-timer','dock-context','experimental-miniapps','context-behaviors','archive-import','archive-start','mod-shortcut','archive-debug','archive-clock','archive-face','archive-offline','archive-history','archive-volume','archive-ai-settings','archive-wifi-display','archive-timer','archive-alarms','default-setup','default-face','default-hands','default-colors','default-imu'): return None\n            if state not in ('begin','done','failed'): return None\n            fields=[]\n            for key in ('sequence','stage','previousValid','previousSequence','previousStage','previousError','resetReason','internalFree','internalLargest','psramFree'):\n                value=packet.get(key)\n                if not isinstance(value,int) or isinstance(value,bool): return None\n                fields.append(key+'='+str(value))\n            for key in ('componentCode','previousComponent','previousInternalFree','previousInternalLargest','previousPsramFree'):\n                if key in packet:\n                    if not isinstance(packet[key],int) or isinstance(packet[key],bool): return None\n                    fields.append(key+'='+str(packet[key]))\n            for key,allowed in (\n                ('bootNetwork',('unknown','connected','skipped','failed')),\n                ('bootOffline',('unknown','selected','not-selected','automatic')),\n                ('bootNetworkReason',('unknown','connected','offline-selected','automatic-offline','usb-only','missing-credentials','timeout','scan-exhausted','connection-failed','not-started')),\n            ):\n                if key in packet:\n                    if packet[key] not in allowed: return None\n                    fields.append(key+'='+packet[key])\n            result='[startup] component='+component+' state='+state+' phase='+phase+' error='+error+' reason='+reason+' site='+site+' '+' '.join(fields)\n            if error!='none': result+='\\n[main] startup failed phase='+phase+' error='+error\n            elif phase=='ready': result+='\\n[main] app behaviors ready'\n            return result\n        except (ValueError,TypeError,AttributeError): return None\n    patterns = (\n        r'\\[main\\] (?:start|loading app behaviors|app context created|app behaviors ready)',\n        r'\\[main\\] onLaunch shouldCreateContext=(?:true|false)',\n        r'\\[main\\] network ready: (?:connected|skipped|failed)',\n        r'\\[main\\] startup failed phase=[a-z-]+ error=[A-Za-z]+',\n        r'\\[network\\] offline boot selected; saved credentials preserved',\n        r'\\[settings\\] (?:Wi-Fi connected|Wi-Fi connection failed|SD configuration unavailable|initialization failed; USB remains available)',\n        r'rst:0x[0-9a-f]+ \\([A-Z0-9_]+\\),boot:0x[0-9a-f]+ \\([A-Z0-9_]+\\)',\n        r'ESP-ROM:[a-zA-Z0-9-]+',\n    )\n    if any(re.fullmatch(p, s) for p in patterns): return s\n    if s.startswith('[main] startup detail:'): return '[main] startup detail: [omitted; may contain private values]'\n    return None"
 exec(SAFE_SOURCE)
 
 def sha(path):
@@ -24,6 +24,34 @@ def sha(path):
     with open(path, 'rb') as f:
         for b in iter(lambda: f.read(1024 * 1024), b''): h.update(b)
     return h.hexdigest()
+
+
+# Resolve tools inside the actual child shell; outer shell aliases/functions are irrelevant.
+KERNEL_USB_SOURCE = r"""set +e
+if command -v rg >/dev/null 2>&1; then
+    search=(rg -i -e 'usb|ttyACM|cdc_acm|oom|out of memory')
+elif command -v grep >/dev/null 2>&1; then
+    search=(grep -Ei -e 'usb|ttyACM|cdc_acm|oom|out of memory')
+else
+    printf '%s\n' '[ERROR] Neither rg nor grep is available for kernel-usb' >&2
+    exit 127
+fi
+journalctl -k --since '-30 min' --no-pager -o short-iso | "${search[@]}"
+status=("${PIPESTATUS[@]}")
+if (( status[0] != 0 )); then
+    printf '[ERROR] journalctl failed exit=%s; search exit=%s\n' "${status[0]}" "${status[1]}" >&2
+    exit "${status[0]}"
+fi
+case "${status[1]}" in
+    0) exit 0 ;;
+    1) printf '%s\n' '[INFO] No matching kernel USB/OOM events in the selected interval'; exit 0 ;;
+    *) printf '[ERROR] Kernel search failed exit=%s\n' "${status[1]}" >&2; exit "${status[1]}" ;;
+esac
+"""
+
+AUDIO_SAFE_SOURCE = "def safe_audio_line(line):\n    line=line.strip()\n    if line.startswith('[audio-state] '):\n        allowed={'ms','session','turn','drainTurn','state','previousState','provider','failureKind','drainUntil','hardwareUntil','resuming','head','tail','pending','queuedBytes','pcmBytes','asr','underruns','maxPumpGapMs'}\n        events={'tts-start','tts-stop','asr','text-final','mic-open','output-open','output-close','drain-start','drain-complete','health','failed','disconnected'}\n        fields=line.split()[1:];seen=set()\n        for field in fields:\n            key,sep,value=field.partition('=')\n            if not sep or key in seen: return None\n            seen.add(key)\n            if key=='event':\n                if value not in events:return None\n            elif key not in allowed or not re.fullmatch(r'-?[0-9]{1,16}',value):return None\n        return line if {'event','ms','session','state'}<=seen else None\n    if re.fullmatch(r'\\[playback\\] native queue starvation count=[0-9]+',line):return line\n    if re.fullmatch(r'\\[opus\\](?: (?:packets|pcm|captured|dropped_pcm|compressed|encode_avg|encode_max|decode_avg|decode_max|load)=[0-9]+(?:\\.[0-9]+)?(?:B|us|%)?)+',line):return line\n    if re.fullmatch(r'\\[heap\\](?: (?:nativeStackMinimumFree|internalFree|internalMinimum|internalLargest|psramFree|psramMinimum|psramLargest)=[0-9]+)+',line):return line\n    if line=='[xiaozhi] unsolicited speech suppressed; listening resumed':return line\n    if line.startswith(\"[audio-path] \"):\n        values={}\n        for field in line.split()[1:]:\n            key,sep,value=field.partition(\"=\")\n            if not sep or key in values:return None\n            values[key]=value\n        stage=values.pop(\"stage\",\"\")\n        required={\"decode\":{\"ms\",\"turn\",\"fragments\",\"skipped\",\"decoded\",\"failures\",\"pcmBytes\"},\"output\":{\"ms\",\"turn\",\"submittedBytes\",\"completedBytes\",\"completedChunks\",\"failures\",\"pending\",\"completed\",\"volume\"}}\n        if stage not in required or set(values)!=required[stage]:return None\n        return line if all(re.fullmatch(r\"[0-9]{1,16}\",v) for v in values.values()) else None\n    if re.fullmatch(r\"\\[asr\\] final chars=[0-9]{1,5}\",line):return line\n    if re.fullmatch(r\"\\[llm\\] output_final chars=[0-9]{1,5}\",line):return line\n    return None\n\ndef audio_packet_lines(packet, partial):\n    result=[]\n    if not isinstance(packet,dict) or packet.get('event')!='debug':return result,partial\n    fragments=packet.get('lines',[])\n    if not isinstance(fragments,list):return result,partial\n    for fragment in fragments[:16]:\n        if not isinstance(fragment,str):continue\n        if len(partial)+len(fragment)>4096:\n            partial='';result.append('[WARN] Oversized debug line omitted');continue\n        partial+=fragment\n        while '\\n' in partial:\n            line,partial=partial.split('\\n',1)\n            safe=safe_audio_line(line)\n            if safe:result.append(safe)\n    return result,partial\n"
+
+AUDIO_CAPTURE_SOURCE = "import json,time,sys\nfrom pathlib import Path\nfrom serial import Serial,SerialException\nfrom serial.tools import list_ports\nexpected=json.loads(sys.argv[1]);duration=int(sys.argv[2]);manifest=Path(sys.argv[3])\nns={};exec('import re\\n'+sys.argv[4],ns);filter_packet=ns['audio_packet_lines']\ntry: token=json.loads(manifest.read_text())['config']['archiveToken']\nexcept (OSError,ValueError,KeyError,TypeError):raise SystemExit('Diagnostic authentication unavailable; no request sent')\nif not isinstance(token,str) or not token:raise SystemExit('Diagnostic authentication unavailable; no request sent')\ndtr_mode=sys.argv[5] if len(sys.argv)>5 else 'off'\nif dtr_mode not in ('off','on'):raise SystemExit('Invalid DTR mode; no port opened')\nend=time.monotonic()+duration;seen=False;counter=0;partial='';lines=0;responses=0\ndef emit(line):print(time.strftime('%Y-%m-%dT%H:%M:%S%z')+' '+line,flush=True)\nemit('[INFO] Delivery times may differ from buffered event times; no transcript collection enabled')\nwhile time.monotonic()<end:\n ports=[p for p in list_ports.comports() if (p.vid,p.pid,p.serial_number,p.location)==(expected['vid'],expected['pid'],expected['serial'],expected['location'])]\n if len(ports)!=1:time.sleep(.5);continue\n try:\n  stage='open'\n  serial=Serial(port=None,baudrate=115200,timeout=.25,write_timeout=1,exclusive=True)\n  serial.dtr=(dtr_mode=='on');serial.rts=False;serial.port=ports[0].device\n  with serial:\n   seen=True;inflight=None;next_poll=0\n   emit('[audio-io] stage=open result=success dtr='+dtr_mode+' rts=off')\n   while time.monotonic()<end:\n    now=time.monotonic()\n    if inflight is not None and now-sent_at>5:\n     emit('[ERROR] debug/status timed out; VM stall or transport failure not distinguished')\n     raise SystemExit(1)\n    if inflight is None and now>=next_poll:\n     counter+=1;inflight=counter;sent_at=now\n     # The only RPC used. No SD enumeration, mode changes, conversation logging, photo or replay.\n     packet={'id':counter,'token':token,'op':'/debug/status','args':{}}\n     stage='write'\n     wire=('@SC '+json.dumps(packet,separators=(',',':'))+'\\n').encode()\n     emit('[audio-io] stage=write request='+str(counter))\n     written=serial.write(wire)\n     if written!=len(wire):raise SystemExit('Diagnostic request write incomplete; no replay')\n    stage='read'\n    raw=serial.readline(4096)\n    if not raw.startswith(b'@SC '):continue\n    try:packet=json.loads(raw[4:])\n    except (ValueError,UnicodeDecodeError):continue\n    if not isinstance(packet,dict):continue\n    if inflight is not None and packet.get('id')==inflight:\n     if 'error' in packet:raise SystemExit('debug/status rejected; response body omitted')\n     status=packet.get('result')\n     if not isinstance(status,dict):raise SystemExit('Unexpected diagnostic response; body omitted')\n     fields=[]\n     for key in ('queued','dropped','truncated','usbRetries'):\n      value=status.get(key)\n      if isinstance(value,int) and not isinstance(value,bool) and 0<=value<=9007199254740991:fields.append(key+'='+str(value))\n     emit('[audio-status] '+' '.join(fields));responses+=1;inflight=None;next_poll=now+2\n    safe,partial=filter_packet(packet,partial)\n    for line in safe:emit(line);lines+=1\n except (SerialException,OSError) as error:\n  kind=type(error).__name__\n  if kind not in ('SerialException','SerialTimeoutException','OSError','PermissionError','BlockingIOError','TimeoutError'):kind='SerialError'\n  number=getattr(error,'errno',None)\n  if not isinstance(number,int) or isinstance(number,bool):number=0\n  emit('[ERROR] USB transport stage='+stage+' type='+kind+' errno='+str(number))\n  present=[p for p in list_ports.comports() if (p.vid,p.pid,p.serial_number,p.location)==(expected['vid'],expected['pid'],expected['serial'],expected['location'])]\n  if present:\n   raise SystemExit('Verified device remains enumerated; stopped without reopening or resending')\n  emit('[WARN] Verified device is no longer enumerated; bounded same-device observation continues')\n  partial='';time.sleep(.5)\nif not seen:raise SystemExit('Known USB device never became available; no audio evidence collected')\nemit('[INFO] audio diagnostic responses='+str(responses)+' lines='+str(lines))\nif not responses:raise SystemExit('No authenticated diagnostic response; capture is incomplete')\nif not lines:emit('[WARN] No matching audio evidence; completion does not prove playback success')\n"
 
 class Runner:
     def __init__(self, args):
@@ -35,6 +63,8 @@ class Runner:
         self.run = pathlib.Path(tempfile.mkdtemp(prefix=datetime.datetime.now().strftime('run-%Y%m%d-%H%M%S-'), dir=base))
         self.console = (self.run / 'console.log').open('a', buffering=1)
         self.step = 'preflight'
+        self.completed = []
+        self.failed_command = None
         self.child = None
         self.lock = None
         self.restored = False
@@ -68,11 +98,13 @@ class Runner:
             finally:
                 self.child = None
         if rc:
+            self.failed_command = name
             self.log('ERROR', 'STEP=' + name + ' EXIT=' + str(rc) + ' CMD=' + shown + ' LOG=' + str(path))
             for line in path.read_text(errors='replace').splitlines()[-40:]:
                 # Full tool output is private on disk; sanitize terminal error snippets.
                 self.log('ERROR', self.redact(line)[:600])
             raise RuntimeError('command failed: ' + name)
+        self.completed.append(name)
         self.log('INFO', 'PASS STEP=' + name + ' LOG=' + str(path))
         return path
 
@@ -182,6 +214,7 @@ class Runner:
         self.log('INFO','USB recovery verified for known device. No firmware has been written by recovery.')
 
     def check(self):
+        self.report_last_flash()
         if not (self.repo / 'AGENTS.md').is_file() or not self.fw.is_dir(): raise RuntimeError('repository missing: ' + str(self.repo))
         self.head = self.query(['git', 'rev-parse', 'HEAD'])
         if self.a.sha and not getattr(self, 'pr_info', None) and self.a.sha != self.head: raise RuntimeError('HEAD differs from --sha')
@@ -190,11 +223,87 @@ class Runner:
         for path in [SDK_ENV, IDF_ENV, DEVICE_PYTHON, NODE / 'node', PRIVATE]:
             if not path.is_file(): raise RuntimeError('missing: ' + str(path))
         self.log('CHECK', 'HOST=' + os.uname().nodename + ' SHA=' + self.head + ' REPO=' + str(self.repo))
+        self.log('CHECK', 'WORKTREE_BRANCH=' + (self.query(['git','branch','--show-current']) or '(detached)'))
         self.log('CHECK', 'DISK_FREE_GiB=' + str(round(shutil.disk_usage(self.repo).free / 2**30, 1)))
         self.cmd('host-uptime', ['uptime'])
         if getattr(self.a, 'check', False) or not any((self.a.test, self.a.build, self.a.write, self.a.logs)):
             self.check_usb()
         self.log('INFO', 'No GitHub merge/push, SD backup, settings erase or photo request. Flash backup retained.')
+
+    def save_flash_record(self, record):
+        path = self.run / 'flash-record.json'
+        temporary = path.with_suffix('.tmp')
+        with temporary.open('x', encoding='utf-8') as out:
+            json.dump(record, out, indent=2, ensure_ascii=True)
+            out.write('\n'); out.flush(); os.fsync(out.fileno())
+        temporary.replace(path)
+
+    def flash_record_snapshot(self, expected):
+        receipt = json.loads(self.receipt.read_text())
+        return dict(version=1, sha=self.head,
+                    branch=self.query(['git','branch','--show-current']) or '(detached)',
+                    repo=str(self.repo), serial=expected['serial'],
+                    firmware_sha256=receipt['artifacts']['xs_esp32.bin'],
+                    artifacts=receipt['artifacts'], boot='not-verified', origin='recorded-at-flash')
+
+    def legacy_flash_record(self, run, text):
+        match = re.search(r'^\[CHECK\] HOST=.*? SHA=([0-9a-f]{40}) .*?REPO=(.+)$', text, re.M)
+        if not match: return None
+        commit, repo = match.groups()
+        record = dict(sha=commit, repo=repo, branch='unknown', firmware_sha256='unknown',
+                      boot='startup-confirmed' if 'PASS boot-check:' in text else 'not-verified', origin='legacy-log')
+        # Old logs did not snapshot branch/hash. Infer only from a matching
+        # worktree/receipt, and label the inference rather than claiming a read
+        # of the currently running device.
+        try:
+            def git(*args):
+                return subprocess.check_output(['git','-C',repo,*args], text=True, stderr=subprocess.DEVNULL).strip()
+            if git('rev-parse','HEAD') == commit:
+                record['branch'] = git('branch','--show-current') or '(detached)'
+                record['branch_inferred'] = True
+            receipt = json.loads((pathlib.Path(repo)/'firmware/dist/stackchan-build-receipt.json').read_text())
+            app = pathlib.Path(repo)/'firmware/dist/bin/esp32/m5stackchan_cores3/release/stack-chan-host/xs_esp32.bin'
+            digest = receipt.get('artifacts', {}).get('xs_esp32.bin')
+            if receipt.get('sha') == commit and isinstance(digest,str) and re.fullmatch('[0-9a-f]{64}',digest) and sha(app) == digest:
+                record['firmware_sha256'] = digest
+                record['hash_inferred'] = True
+        except (OSError, ValueError, subprocess.SubprocessError): pass
+        return record
+
+    def report_last_flash(self):
+        latest_attempt = None
+        for run in sorted(self.run.parent.glob('run-*'), reverse=True):
+            if not run.is_dir() or run == self.run: continue
+            try:
+                text = (run/'console.log').read_text(errors='replace')
+                if not (run/'flash.command.txt').is_file() and '[INFO] PASS STEP=flash LOG=' not in text: continue
+                saved = run/'flash-record.json'
+                try: record = json.loads(saved.read_text()) if saved.is_file() else None
+                except (OSError,ValueError): record = None
+                if isinstance(record,dict) and record.get('serial',SERIAL) != SERIAL: continue
+                if latest_attempt is None: latest_attempt = run
+                # A later failed build/test/backup is not a new flash. A later
+                # interrupted write CAN have changed the device: warn below.
+                if '[INFO] PASS STEP=flash LOG=' not in text: continue
+                if not isinstance(record,dict) or not re.fullmatch('[0-9a-f]{40}',str(record.get('sha',''))):
+                    record = self.legacy_flash_record(run,text)
+                if record is None: continue
+                digest = record.get('firmware_sha256','unknown')
+                if digest != 'unknown' and not re.fullmatch('[0-9a-f]{64}',str(digest)): continue
+            except (OSError,ValueError): continue
+            self.log('CHECK', 'LAST_FLASH_COMMIT=' + record['sha'])
+            self.log('CHECK', 'LAST_FLASH_BRANCH=' + json.dumps(record.get('branch','unknown'),ensure_ascii=True))
+            self.log('CHECK', 'LAST_FLASH_FIRMWARE_SHA256=' + digest)
+            self.log('CHECK', 'LAST_FLASH_BOOT=' + record.get('boot','not-verified') + ' LOG=' + str(run/'console.log'))
+            self.log('INFO', '最終書き込みのホスト記録です。実機の現在値を読み出した結果ではありません。')
+            if record.get('origin') == 'legacy-log':
+                self.log('WARN', '旧ログ: ブランチは現在の同SHA worktree、SHA256は同SHAの現存ビルドからの推定。確認できない項目はunknown。')
+            if latest_attempt != run:
+                self.log('WARN', '後続の書き込みは未完了。実機内容は不明: ' + str(latest_attempt/'console.log'))
+            return record
+        self.log('CHECK', 'LAST_FLASH_COMMIT=unknown LAST_FLASH_BRANCH=unknown LAST_FLASH_FIRMWARE_SHA256=unknown')
+        if latest_attempt: self.log('WARN', '成功未確認の書き込み記録あり: ' + str(latest_attempt/'console.log'))
+        return None
 
     def check_usb(self):
         usb_error = None
@@ -348,7 +457,7 @@ p=ps[0];print(json.dumps(dict(port=p.device,vid=p.vid,pid=p.pid,serial=p.serial_
         if p.returncode != 1: raise RuntimeError('USB port occupied or occupancy check failed')
 
     def capture(self, expected):
-        self.log('INFO', '起動phase/reset reasonのみ保存。必要ならログ取得中に本体を操作してください。自動RSTはしません。')
+        self.log('INFO', '起動phase/reset reasonのみ保存。次のSTEP=boot-stages表示後、本体RSTを短く1回押してください。指定した秒数だけ収集します。自動RSTはしません。')
         self.cmd('boot-stages', [DEVICE_PYTHON, '-c', '''import json,time,sys
 from serial import Serial,SerialException
 from serial.tools import list_ports
@@ -370,8 +479,14 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
 ''', json.dumps(expected), str(self.a.seconds), 'import re,json\n' + SAFE_SOURCE], timeout=self.a.seconds + 10)
         self.log('WARN', 'ログ収集の終了は正常起動・撮影成功の判定ではありません。')
 
+    def capture_audio(self, expected):
+        self.log('INFO', '音声の状態・数値のみ保存します。RSTは押さず、そのまま取得してください。AIモード・会話本文ログは変更しません。')
+        self.cmd('audio-logs', [DEVICE_PYTHON, '-c', AUDIO_CAPTURE_SOURCE, json.dumps(expected),
+                                str(self.a.seconds), PRIVATE, AUDIO_SAFE_SOURCE, getattr(self.a, 'dtr', 'off')], timeout=self.a.seconds + 10)
+        self.log('WARN', 'ログ取得完了は音声再生の成功判定ではありません。')
+
     def logs(self):
-        self.cmd('kernel-usb', ['bash', '-c', "journalctl -k --since '-30 min' --no-pager -o short-iso | rg -i 'usb|ttyACM|cdc_acm|oom|out of memory' || test ${PIPESTATUS[0]} -eq 0"])
+        self.cmd('kernel-usb', ['bash', '-c', KERNEL_USB_SOURCE])
         # Do not dump raw hub logs or general journal entries containing private values.
         source = pathlib.Path('/mnt/data/Development/stackchan/hub/logs/diagnostic.log')
         if source.exists():
@@ -381,11 +496,13 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
                     marker = line.find('[main]')
                     safe = safe_line(line[marker:]) if marker >= 0 else None
                     if safe: out.write(safe + '\n')
-        self.confirm('本体へ要求を送らず、USB起動ログを' + str(self.a.seconds) + '秒取得しますか？')
+        audio = getattr(self.a, 'audio', False)
+        self.confirm(('認証済みdebug/statusのみで音声ログを' if audio else '本体へ要求を送らず、USB起動ログを') + str(self.a.seconds) + '秒取得しますか？')
         expected = self.identity()
         with self.own_usb():
             self.unoccupied(expected['port'])
-            self.capture(expected)
+            if audio: self.capture_audio(expected)
+            else: self.capture(expected)
 
     def connection_command(self, base):
         command = list(base)
@@ -426,10 +543,15 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
             base[base.index('--port')+1] = now['port']
             argv = base + ['write-flash', '--flash-mode', 'dio', '--flash-size', '16MB', '--flash-freq', '80m']
             for offset, name in FILES.items(): argv += [offset, self.bin / name]
+            record = self.flash_record_snapshot(now)
             self.cmd('flash', argv, timeout=300)
+            record['verified_at'] = datetime.datetime.now().astimezone().isoformat()
+            self.save_flash_record(record)
             self.log('INFO', '書き込み検証完了。通常起動ログを取得します。本体RSTを短く1回押してください。')
             self.capture(expected)
             self.validate_boot()
+            record['boot'] = 'startup-confirmed'
+            self.save_flash_record(record)
         self.log('INFO', 'Rollback backup=' + str(backup) + '; restore requires separate approval. Hardware acceptance remains unverified.')
 
     def validate_boot(self):
@@ -457,6 +579,101 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
         if self.a.write: self.write()
         if self.a.logs and not self.a.write: self.logs()
 
+    def final_summary(self, rc, failed_step):
+        def git(*args):
+            try:
+                return subprocess.check_output(['git', '-C', str(self.repo), *args],
+                    stderr=subprocess.DEVNULL, text=True, timeout=5).strip()
+            except Exception:
+                return ''
+        commit = getattr(self, 'head', None) or git('rev-parse', 'HEAD')
+        branch = git('branch', '--show-current') or '(detached)'
+        selected = {'状態確認': True, 'テスト': self.a.test,
+                    'ビルド': self.a.build, '書き込み': self.a.write,
+                    '起動確認': self.a.write or self.a.logs}
+        required = {'状態確認': ('diff-check', 'host-uptime'),
+                    'テスト': ('cli', 'unit', 'archive'),
+                    'ビルド': ('build',), '書き込み': ('flash',),
+                    '起動確認': ('boot-check',)}
+        completed = set(self.completed)
+        states = {}
+        for label, names in required.items():
+            if not selected[label]: states[label] = '対象外'
+            elif all(n in completed for n in names): states[label] = '成功'
+            elif rc and (failed_step in names or self.failed_command in names):
+                states[label] = '失敗'
+            else: states[label] = '未実行'
+        if self.a.write and 'flash' in completed:
+            states['起動確認'] = ('失敗' if rc and failed_step == 'boot-check'
+                                   else '成功' if rc == 0 else '未実行')
+        if rc and states['状態確認'] == '未実行':
+            states['状態確認'] = '失敗' if not completed else '未実行'
+        counts = {'tests': 0, 'pass': 0, 'fail': 0}
+        failures = []
+        for name in ('unit', 'archive'):
+            path = self.run / (name + '.log')
+            if not path.exists(): continue
+            output = path.read_text(errors='replace')
+            for key in counts:
+                values = re.findall(r'^# ' + key + r'\s+(\d+)\s*$', output, re.M)
+                if values: counts[key] += int(values[-1])
+            failures.extend({'step': name, 'test': m.group(1)[:160]}
+                for m in re.finditer(r'^not ok\s+\d+\s+-\s+(.+)$', output, re.M))
+        if self.failed_command == 'cli':
+            failures.append({'step': 'cli', 'test': 'CLI回帰テスト失敗'})
+        fw_hash = None
+        try:
+            receipt = json.loads(self.receipt.read_text())
+            if receipt.get('sha') == commit:
+                fw_hash = receipt.get('artifacts', {}).get('xs_esp32.bin')
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+        last_flash = None
+        root = pathlib.Path(self.a.log_root).expanduser()
+        for path in sorted(root.glob('run-*/flash-record.json'),
+                           key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                last_flash = json.loads(path.read_text())
+                break
+            except (OSError, ValueError, TypeError):
+                continue
+        def short(value):
+            return str(value)[:12] if value else 'unknown'
+        lines = ['========== StackChan 最終結果 ==========',
+                 '対象        ' + ('PR #' + str(self.a.pr) if self.a.pr else branch),
+                 'ブランチ    ' + branch,
+                 'コミット    ' + short(commit),
+                 '結果        ' + ('成功' if rc == 0 else '失敗 (' + failed_step + ')')]
+        for label, state in states.items():
+            if label == 'テスト' and counts['tests']:
+                state += ' (' + str(counts['pass']) + '/' + str(counts['tests']) +
+                         ' 成功、' + str(counts['fail']) + '件失敗)'
+            lines.append(label + '    ' + state)
+        if fw_hash: lines.append('ビルドSHA256  ' + short(fw_hash))
+        if rc:
+            lines.append('失敗STEP    ' + failed_step)
+            for item in failures[:5]:
+                lines.append('失敗テスト  ' + self.redact(item['test']))
+            if len(failures) > 5:
+                lines.append('その他      ' + str(len(failures)-5) + '件（詳細ログ参照）')
+        if last_flash:
+            lines.extend(['最終書込    ' + short(last_flash.get('sha')),
+                          '実機FW SHA  ' + short(last_flash.get('firmware_sha256')),
+                          '前回起動    ' + str(last_flash.get('boot', 'unknown')) + '（ホスト記録）'])
+        lines.append('ログ        ' + str(self.run / 'console.log'))
+        lines.append('=======================================')
+        summary = {'result': 'success' if rc == 0 else 'failed', 'exit_code': rc,
+                   'pr': self.a.pr, 'branch': branch, 'commit': commit,
+                   'steps': states, 'test_counts': counts, 'failed_tests': failures,
+                   'failed_step': failed_step if rc else None,
+                   'firmware_sha256': fw_hash, 'last_flash': last_flash,
+                   'log': str(self.run / 'console.log')}
+        target = self.run / 'summary.json'
+        temporary = self.run / 'summary.json.tmp'
+        temporary.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
+        temporary.replace(target)
+        for line in lines: self.log('INFO', line)
+
     def cleanup(self):
         self.stop_child()
         dst = self.fw / 'host/app/manifest_archive_private.json'
@@ -470,6 +687,8 @@ USB_RECOVERY_SOURCE = "import pathlib,sys,time,signal\nbus,port,serial=sys.argv[
 def main(argv=None):
     p = argparse.ArgumentParser(prog='stackchan.sh', description='StackChan統一操作。指定した処理だけ実行。無指定は--check。書き込みはyes/no確認。')
     for mode in ('check', 'test', 'build', 'write', 'logs', 'all'): p.add_argument('--'+mode, action='store_true')
+    p.add_argument('--dtr', choices=('off','on'), default='off', help='音声採取時のDTR状態。onは既存Hubと同じ通常接続設定。RTSは常にoff、パルスなし')
+    p.add_argument('--audio', action='store_true', help='--logsと併用。debug/statusで音声の数値ログのみ収集。RST・AI切替・会話本文記録なし')
     p.add_argument('--recover-usb', action='store_true', help='明示した外部USBポートだけを再初期化。root権限が必要。全controllerはリセットしない')
     p.add_argument('--usb-path', help='復旧対象のroot-hub接続経路（例1-1）。内部USBや別機器は拒否')
     p.add_argument('--reset', choices=('manual','usb'), default='manual', help='ROM接続方法。usbは最初の接続確認だけUSB用リセットを実行。失敗時は停止し再送しない')
@@ -487,6 +706,8 @@ def main(argv=None):
     if not 1 <= a.seconds <= 300: p.error('--seconds must be 1..300')
     if a.sha and not re.fullmatch('[0-9a-f]{40}', a.sha): p.error('--sha must be a full lowercase Git SHA')
     if a.all: a.check = a.test = a.build = a.write = True
+    if a.dtr != 'off' and not (a.audio and a.logs): p.error('--dtr on requires --logs --audio')
+    if a.audio and (not a.logs or a.write or a.recover_usb): p.error('--audio requires --logs and cannot be used with --write/--all/--recover-usb')
     if not any((a.check,a.test,a.build,a.write,a.logs,a.recover_usb)): a.check=True
     os.umask(0o077)
     runner = Runner(a)
@@ -502,6 +723,9 @@ def main(argv=None):
         try: runner.cleanup()
         except Exception as e:
             rc=1;runner.log('ERROR','cleanup/service restore failed: '+str(e))
+        try: runner.final_summary(rc, failed_step)
+        except Exception as e:
+            rc=1;runner.log('ERROR','final summary failed: '+str(e))
         runner.log('INFO','EXIT='+str(rc)+' STEP='+failed_step+' LOG='+str(runner.run/'console.log'))
         runner.console.close()
     return rc

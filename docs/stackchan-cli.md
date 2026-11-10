@@ -1,5 +1,18 @@
 # StackChan 操作スクリプト
 
+`stackchan --check`（`bash ~/stackchan.sh --check` と同じ入口）は、現在の
+worktree情報に加えて、ログ保存先全体から最後に書き込み検証が成功した記録を表示します。
+`LAST_FLASH_COMMIT`、`LAST_FLASH_BRANCH`、`LAST_FLASH_FIRMWARE_SHA256`
+（appのSHA256）、`LAST_FLASH_BOOT`、根拠となるログパスを出します。
+USB未接続で事前確認が失敗しても、その前にこれらの情報を表示します。
+
+今後の書き込みでは、成功直後にコミット・その時点のブランチ・成果物SHA256を
+実行フォルダの `flash-record.json` へ原子的に保存し、起動成功は別に追記します。
+古いログでは、同じSHAの現存worktree／ビルド記録から得た情報を「推定」と表示し、
+確認できなければ `unknown` とします。後続の書き込みが失敗・中断していれば、
+実機内容が不明であることも警告します。これはホストの履歴表示であり、
+現在動いている本体から読み出したファームウェア識別結果ではありません。
+
 Release impact: none（ホスト側操作の統一。本体ファームウェアの変更なし）。
 
 入口は `firmware/scripts/stackchan.sh`。kmacの `~/stackchan.sh` はこのファイルへのリンクです。引数なしは `--check`。重複していた旧ホストスクリプトは、削除前に復元可能なアーカイブへ保存します。ログ・フラッシュバックアップ・元の認証設定は削除しません。
@@ -93,3 +106,59 @@ bash ~/stackchan.sh --recover-usb --usb-path 1-1 --yes
 引き続き停止します。詳しい根拠・実機source SHA・USB切り分けは
 [context/USB調査](recovery/2026-11-09-context-usb.md)を参照してください。
 起動エラー画面には秘密を含まない失敗componentとcheckpoint時のRAMを表示します。
+
+
+### kernel-usb診断の検索コマンド
+
+`--logs` のカーネル検索は、実際に実行する子bash内で `rg` の有無を判定し、なければ `grep -Ei` を使用します。検索0件は正常終了してUSBログ取得へ進みます。journalctlの失敗、検索コマンドの実行エラー、両コマンドとも未導入の場合は区別して停止・ログ保存します。外側のaliasや関数の定義は不要です。本体への要求や自動リセットは追加しません。
+
+
+### オフライン起動の確認
+
+起動snapshotは `ready` 到達後も `bootNetwork`（connected/skipped/failed/unknown）、`bootOffline`（automatic/selected/not-selected/unknown）、`bootNetworkReason`（定型分類のみ）を保持します。SSID・パスワード・接続エラー本文は記録しません。これは起動時点の結果で、現在のインターネット疎通を意味しません。旧ファームウェアでフィールドがない場合も収集できますが、オフライン起動の証拠にはできません。
+
+```bash
+# 現在のローカル修正ブランチをビルドして書き込み（tmux内）
+bash ~/stackchan.sh --build --write --reset usb --yes
+# 成功済みビルドを書き込むだけ
+bash ~/stackchan.sh --write --reset usb --yes
+# 起動ログのみ取得
+bash ~/stackchan.sh --logs --seconds 90 --yes
+```
+
+`bootNetwork=skipped bootOffline=selected bootNetworkReason=offline-selected` と同じ起動sequenceで `phase=ready` が観測されれば、オフライン選択からのアプリ起動を確認できます。`usb-only` はWi-Fi接続失敗によるオフライン選択と区別します。ネットワークがfailedのままreadyに達した場合も、未接続でローカル起動できた結果として区別して報告します。公式Face・タッチ操作は別途確認します。資格情報を消して試験しません。
+
+push前のローカル修正を使う際は `--PR` を付けません。`--PR 92` はGitHub側のコードから別の統合worktreeを選ぶため、未pushの修正は含まれません。
+
+
+標準の本体起動では、Wi-Fi接続失敗時に選択画面を出さず自動でオフライン起動します。既定の上限は3試行×各20秒、試行間500msで、失敗がタイムアウトの場合は約61秒以内（スケジューリング等を除く）にローカル起動へ進みます。設定なしは試行を繰り返しません。保存済み資格情報は変更せず、設定画面から再接続できます。
+
+新しい証拠は `phase=ready bootNetwork=skipped bootOffline=automatic bootNetworkReason=automatic-offline` です。USB専用起動の分岐は従来どおり別扱いです。この判定はWi-Fi接続結果であり、Wi-Fi接続後のインターネット疎通を検査するものではありません。
+
+### XiaoZhiなどの音声ログ（会話本文は保存しない）
+
+```bash
+# tmux内。既存のログ排出を有効化して90秒収集。RSTを押さずに実行する
+bash ~/stackchan.sh --logs --audio --seconds 90 --yes
+```
+
+`--audio` は `--logs` 専用で、書込・`--all`・USB復旧とは併用できません。開始時に一意な実行フォルダを作成し、同一本体のVID/PID・シリアル・物理ポートと占有状態を確認します。hubが元からactiveの場合のみ一時停止・復帰します。
+
+認証済み `/debug/status` の読取りだけを最大2秒に1回行います。同時要求は1件までで、5秒応答がなければ停止します。このRPCも同じVM上で処理するため、VM停止を回避・復旧するものではありません。`/status`・ファイル走査・AIモード切替・会話本文ログの有効化・撮影・再生要求・自動RST要求は送りません。認証値は引数やログへ出しません。USB切断後は同一性が合う本体だけを再検出し、診断の読取り以外は再送しません。
+
+保存先は実行フォルダの `audio-logs.log`。会話本文・認証情報・任意のエラー本文は除外し、次だけを許可します。
+
+- `[audio-state]`: TTS開始/終了、ASRイベント数、返答テキスト確定、出力open/close、drain開始/完了、マイクopen、失敗・切断、2秒に1回の再生health。
+- event時刻`ms`、session、TTS開始ごとのturnとdrain開始時のdrainTurn、provider（1=XiaoZhi、2=Gemini、0=その他/未特定）、state/previousState（SDK: 4=マイク送信、5=音声受信、6=終了待ち、-1=失敗）、head/tail、pending/queuedBytes、累積pcmBytes、underruns、maxPumpGapMs、drainUntil/hardwareUntil、resuming。
+- failureKindは0=未分類、1=接続系候補、2=メモリ系候補、3=音声系候補。エラー文の定型分類であり、根本原因の確定ではありません。
+- 既存の数値Opus統計、再生キュー不足カウンタ、数値の内部RAM/PSRAM snapshot、定型の未要求音声抑制通知。
+- `[audio-status]`: 本体ログリングのqueued/dropped/truncated/usbRetries。欠落カウンタも確認してください。
+
+旧ファームウェアでも残っているOpus/再生不足のログは取得できます。新しい`audio-state`の詳細は、診断追加版を本体へ書き込んだ後から記録されます。過去の会話を新しく復元する機能ではありません。既存リングログのPC受信時刻と、本来の発生時刻は異なる場合があります。新しいイベントには本体側でハンドラを処理した時点のms/sessionを含めます（サーバー送信時刻ではありません）。ホスト側Git SHAだけで本体のビルドを判定しません。
+
+0件・正常終了は会話成功を意味しません。XiaoZhiの再生状態競合（#93）を直す変更は含めず、次TTS開始時にstate=6のままか、tts-stop前にdrain完了・mic-openが起きるかを観測するための診断です。
+
+音声採取中のI/O例外は `USB transport stage=open|write|read type=... errno=...` として記録し、例外本文は保存しません。errno=0はエラーがなかった意味ではなく、例外にerrnoがないことを表します。例外後も同一本体が列挙されている場合は、その場で停止して再オープン・再送をしません。認識から消えた場合だけ、指定した収集時間内で同一本体の再出現を待ちます。USB I/Oエラーだけで物理切断・本体クラッシュとは断定しません。
+
+
+USBは開くがwrite timeoutの場合、接続設定の比較として `bash ~/stackchan.sh --logs --audio --dtr on --seconds 15 --yes` を明示指定できます。DTR=on/RTS=offは既存Hubと同じ設定で、ポートを開く前に設定します。開いた後の信号切替・RTSパルスは送りません。既定DTR=offは維持します。USB-Serial/JTAGのDTR/RTSはリセット制御にも関わるため、あらゆるOS/ドライバ環境でオープン時のリセットが起きないと保証するものではありません。同じwrite timeoutなら再オープンを繰り返さず停止します。この比較だけで本体故障・設定原因・復旧成功と断定しません。

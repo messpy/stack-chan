@@ -25,6 +25,93 @@ class CLITest(unittest.TestCase):
         self.r.log = lambda *args: None
         self.addCleanup(self.r.console.close)
 
+    def kernel_filter(self, tool, text='usb connected\nordinary event\n', journal_rc=0, search_rc=None):
+        # Execute the actual nested bash with an isolated PATH, not an outer-shell function.
+        import os, shutil
+        bindir=self.root/'bin';bindir.mkdir(exist_ok=True)
+        journal=bindir/'journalctl'
+        journal.write_text('#!/bin/sh\nprintf %s '+m.shlex.quote(text)+'\nexit '+str(journal_rc)+'\n')
+        journal.chmod(0o700)
+        if tool == 'rg-fixture':
+            # Test the rg branch's shell/exit-code contract without requiring
+            # optional ripgrep on the host. This is not a real-rg integration.
+            executable=shutil.which('grep')
+            self.assertIsNotNone(executable,'grep is required on this Linux host')
+            fake=bindir/'rg'
+            fake.write_text('#!/bin/sh\nexec '+m.shlex.quote(executable)+' -E "$@"\n')
+            fake.chmod(0o700)
+        elif tool:
+            if search_rc is None:
+                executable=shutil.which(tool)
+                self.assertIsNotNone(executable,tool+' is required for this regression test')
+                (bindir/tool).symlink_to(executable)
+            else:
+                fake=bindir/tool;fake.write_text('#!/bin/sh\nwhile IFS= read -r line; do :; done\nexit '+str(search_rc)+'\n');fake.chmod(0o700)
+        return m.subprocess.run(['/bin/bash','-c',m.KERNEL_USB_SOURCE],env={**os.environ,'PATH':str(bindir)},text=True,capture_output=True)
+
+    def test_kernel_filter_rg_and_grep_match(self):
+        for tool in ('rg-fixture','grep'):
+            with self.subTest(tool=tool):
+                self.setUpFilterDir()
+                result=self.kernel_filter(tool,'ordinary event\nUSB connected\ncdc_acm ttyACM0\n')
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual(result.stdout,'USB connected\ncdc_acm ttyACM0\n')
+
+    def setUpFilterDir(self):
+        import shutil
+        shutil.rmtree(self.root/'bin',ignore_errors=True)
+
+    def test_kernel_filter_no_matches_is_success(self):
+        for tool in ('rg-fixture','grep'):
+            with self.subTest(tool=tool):
+                self.setUpFilterDir();result=self.kernel_filter(tool,'ordinary event\n')
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertIn('No matching',result.stdout)
+
+    def test_kernel_journal_error_is_not_hidden_by_search(self):
+        for tool in ('rg-fixture','grep'):
+            for text in ('usb partial\n','ordinary event\n'):
+                with self.subTest(tool=tool,text=text):
+                    self.setUpFilterDir();result=self.kernel_filter(tool,text,journal_rc=7)
+                    self.assertEqual(result.returncode,7);self.assertIn('journalctl failed',result.stderr)
+
+    def test_optional_real_ripgrep_integration(self):
+        import shutil
+        if not shutil.which('rg'):
+            self.skipTest('optional real-ripgrep integration: rg not installed; portable shell and grep tests still run')
+        result=self.kernel_filter('rg','ordinary event\nUSB connected\n')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout,'USB connected\n')
+
+    def test_kernel_filter_error_and_missing_tools_are_failures(self):
+        for tool in ('rg','grep'):
+            with self.subTest(tool=tool):
+                self.setUpFilterDir();result=self.kernel_filter(tool,search_rc=2)
+                self.assertEqual(result.returncode,2);self.assertIn('search failed',result.stderr)
+        self.setUpFilterDir();result=self.kernel_filter(None)
+        self.assertEqual(result.returncode,127);self.assertIn('Neither rg nor grep',result.stderr)
+
+    def test_empty_kernel_search_continues_to_capture(self):
+        import os
+        self.kernel_filter('grep','ordinary event\n')
+        (self.root/'bin/bash').symlink_to('/bin/bash')
+        self.r.env={**os.environ,'PATH':str(self.root/'bin')}
+        with patch.object(self.r,'confirm'), patch.object(self.r,'identity',return_value={'port':'fake'}), \
+             patch.object(self.r,'own_usb',return_value=contextlib.nullcontext()), patch.object(self.r,'unoccupied'), \
+             patch.object(self.r,'capture') as capture:
+            self.r.logs()
+        capture.assert_called_once_with({'port':'fake'})
+        self.assertIn('No matching',(self.r.run/'kernel-usb.log').read_text())
+
+    def test_kernel_execution_error_stops_before_usb_access(self):
+        import os
+        self.kernel_filter('grep',journal_rc=7)
+        (self.root/'bin/bash').symlink_to('/bin/bash')
+        self.r.env={**os.environ,'PATH':str(self.root/'bin')}
+        with patch.object(self.r,'identity') as identity, patch.object(self.r,'capture') as capture:
+            with self.assertRaisesRegex(RuntimeError,'kernel-usb'):self.r.logs()
+        identity.assert_not_called();capture.assert_not_called()
+
     def test_all_selects_fixed_order(self):
         calls=[]
         with patch.object(m.Runner,'execute',lambda r:calls.extend(k for k in ('check','test','build','write') if getattr(r.a,k))), \
@@ -38,6 +125,56 @@ class CLITest(unittest.TestCase):
              patch.object(m.Runner,'cleanup'), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(m.main(['--log-root',str(self.root/'default')]),0)
         self.assertEqual(selected,[True,False,False,False,False])
+
+    def flash_history(self, name, record=None, success=True, attempt=True):
+        run=self.r.run.parent/name;run.mkdir()
+        text='[CHECK] HOST=test SHA='+('a'*40)+' REPO='+str(self.root/'missing')+'\n'
+        if success:text+='[INFO] PASS STEP=flash LOG='+str(run/'flash.log')+'\n'
+        (run/'console.log').write_text(text)
+        if attempt:(run/'flash.command.txt').write_text('esptool write-flash\n')
+        if record is not None:(run/'flash-record.json').write_text(json.dumps(record))
+        return run
+
+    def test_last_flash_ignores_later_failed_test_and_preserves_branch_snapshot(self):
+        record=dict(sha='a'*40,branch='original-branch',serial=m.SERIAL,firmware_sha256='b'*64,boot='startup-confirmed')
+        self.flash_history('run-20260101-010000-success',record)
+        self.flash_history('run-20260102-010000-test-failed',success=False,attempt=False)
+        self.assertEqual(self.r.report_last_flash(),record)
+
+    def test_unfinished_flash_warns_that_last_success_is_not_current_device_proof(self):
+        record=dict(sha='a'*40,branch='original',firmware_sha256='b'*64)
+        self.flash_history('run-20260101-010000-success',record)
+        self.flash_history('run-20260102-010000-interrupted',success=False)
+        output=[];self.r.log=lambda level,line:output.append((level,line))
+        self.assertEqual(self.r.report_last_flash(),record)
+        self.assertTrue(any(level=='WARN' and '実機内容は不明' in line for level,line in output))
+
+    def test_missing_and_malformed_records_do_not_invent_a_firmware_hash(self):
+        self.assertIsNone(self.r.report_last_flash())
+        self.flash_history('run-20260101-010000-old-success')
+        record=self.r.report_last_flash()
+        self.assertEqual(record['sha'],'a'*40)
+        self.assertEqual(record['branch'],'unknown')
+        self.assertEqual(record['firmware_sha256'],'unknown')
+
+    def test_flash_record_atomic_update_keeps_flash_success_separate_from_boot(self):
+        record=dict(sha='a'*40,branch='reviewed',firmware_sha256='b'*64,boot='not-verified')
+        self.r.save_flash_record(record)
+        self.assertEqual(json.loads((self.r.run/'flash-record.json').read_text()),record)
+        record['boot']='startup-confirmed';self.r.save_flash_record(record)
+        self.assertEqual(json.loads((self.r.run/'flash-record.json').read_text())['boot'],'startup-confirmed')
+        self.assertFalse((self.r.run/'flash-record.tmp').exists())
+
+    def test_flash_snapshot_keeps_exact_source_and_app_hash_without_secrets(self):
+        self.r.head='a'*40;self.r.receipt.parent.mkdir(parents=True)
+        self.r.receipt.write_text(json.dumps(dict(artifacts={'xs_esp32.bin':'b'*64},private='PRIVATE_FINGERPRINT')))
+        self.r.query=lambda argv:'reviewed-branch'
+        record=self.r.flash_record_snapshot({'serial':m.SERIAL})
+        self.assertEqual(record['sha'],self.r.head)
+        self.assertEqual(record['branch'],'reviewed-branch')
+        self.assertEqual(record['firmware_sha256'],'b'*64)
+        self.assertEqual(record['boot'],'not-verified')
+        self.assertNotIn('PRIVATE_FINGERPRINT',json.dumps(record))
 
     def test_build_failure_never_writes(self):
         self.args.test=self.args.build=self.args.write=True
@@ -294,6 +431,161 @@ class CLITest(unittest.TestCase):
             self.assertIsNotNone(line);self.assertIn('component='+component,line);self.assertIn('site=lan-archive:219',line)
             packet['site']='https://private-host/token'
             self.assertIsNone(m.safe_line('@SC '+json.dumps(packet)))
+
+    def test_network_boot_evidence_and_private_field_rejection(self):
+        packet=dict(event='startup',phase='ready',error='none',reason='none',site='',sequence=3,stage=5,
+                    previousValid=1,previousSequence=2,previousStage=4,previousError=4,resetReason=11,
+                    internalFree=143123,internalLargest=69632,psramFree=6697308)
+        for status,offline,reason in [('connected','not-selected','connected'),('skipped','selected','offline-selected'),
+                                     ('skipped','not-selected','usb-only'),('failed','not-selected','timeout'),('skipped','automatic','automatic-offline')]:
+            packet.update(bootNetwork=status,bootOffline=offline,bootNetworkReason=reason,ssid='secret-ssid',password='secret-password')
+            line=m.safe_line('@SC '+json.dumps(packet))
+            self.assertIn('bootNetwork='+status,line);self.assertIn('bootOffline='+offline,line)
+            self.assertIn('bootNetworkReason='+reason,line);self.assertNotIn('secret-',line)
+        for key in ('bootNetwork','bootOffline','bootNetworkReason'):
+            bad=dict(packet);bad[key]='secret-password'
+            self.assertIsNone(m.safe_line('@SC '+json.dumps(bad)))
+
+    def audio_filter(self):
+        import re
+        ns={'re':re};exec(m.AUDIO_SAFE_SOURCE,ns);return ns
+
+    def test_audio_filter_omits_content_and_reassembles_only_bounded_scalar_lines(self):
+        ns=self.audio_filter();safe=ns['safe_audio_line']
+        good='[audio-state] event=tts-start ms=123 session=2 turn=2 drainTurn=1 state=6 previousState=6 pending=0'
+        self.assertEqual(safe(good),good)
+        for bad in (good+' token=SECRET',good.replace('state=6','state=SECRET'),
+                    '[asr] input=SECRET conversation','[llm] text=SECRET',good+' event=SECRET'):
+            self.assertIsNone(safe(bad))
+        collect=ns['audio_packet_lines']
+        lines,partial=collect({'event':'debug','lines':[good[:30]]},'');self.assertEqual(lines,[])
+        lines,partial=collect({'event':'debug','lines':[good[30:]+'\n[asr] SECRET\n']},partial)
+        self.assertEqual(lines,[good]);self.assertEqual(partial,'')
+        lines,partial=collect({'event':'debug','lines':['SECRET'*1000]},'')
+        self.assertEqual(partial,'');self.assertNotIn('SECRET',''.join(lines))
+        self.assertIsNotNone(safe('[opus] packets=4 pcm=1920B encode_avg=2us load=0.2%'))
+        self.assertIsNotNone(safe('[playback] native queue starvation count=2'))
+        self.assertIsNotNone(safe('[heap] internalFree=123 internalLargest=64 psramFree=456'))
+        self.assertIsNone(safe('[heap] internalFree=SECRET'))
+
+    def test_transcript_final_counts_are_kept_but_content_is_rejected(self):
+        safe=self.audio_filter()["safe_audio_line"]
+        for line in ("[asr] final chars=12","[llm] output_final chars=34"):
+            self.assertEqual(safe(line),line)
+            self.assertIsNone(safe(line+" text=SECRET"))
+        self.assertIsNone(safe("[asr] final chars=SECRET"))
+
+    def test_audio_path_counts_require_known_stages_and_numeric_complete_fields(self):
+        safe=self.audio_filter()['safe_audio_line']
+        lines=('[audio-path] stage=decode ms=1 turn=2 fragments=3 skipped=0 decoded=3 failures=0 pcmBytes=2880',
+               '[audio-path] stage=output ms=1 turn=2 submittedBytes=2880 completedBytes=2880 completedChunks=1 failures=0 pending=0 completed=1 volume=400')
+        for line in lines:
+            self.assertEqual(safe(line),line)
+            self.assertIsNone(safe(line+' text=SECRET'))
+            self.assertIsNone(safe(line.replace('ms=1','ms=SECRET')))
+            self.assertIsNone(safe(line.replace('stage=','stage=unknown')))
+
+    def run_audio_capture(self, mode='normal'):
+        import sys
+        clock=[0.0];requests=[];frames=[];opens=[]
+        class SerialError(Exception):pass
+        class SerialTimeoutException(SerialError):pass
+        fake_time=types.ModuleType('time')
+        def monotonic():clock[0]+=.05;return clock[0]
+        fake_time.monotonic=monotonic;fake_time.sleep=lambda n:clock.__setitem__(0,clock[0]+n)
+        fake_time.strftime=lambda _:'2000-01-01T00:00:00+0000'
+        class Serial:
+            def __init__(self,**kwargs):self.dtr=True;self.rts=True;self.port=None;self.kwargs=kwargs
+            def __enter__(serial):
+                if mode=='open-error':raise OSError(71,'SECRET open error')
+                self.assertEqual(serial.dtr,mode=='dtr-on');self.assertFalse(serial.rts);self.assertTrue(serial.kwargs['exclusive'])
+                opens.append(serial.port);return serial
+            def __exit__(self,*args):pass
+            def write(serial,raw):
+                if mode=='write-error':raise OSError(110,'SECRET write error')
+                if mode=='write-timeout':raise SerialTimeoutException('SECRET write timeout')
+                request=json.loads(raw.decode()[4:]);requests.append(request)
+                if mode=='timeout':return len(raw)
+                packet={'id':request['id'],'result':{'queued':1,'dropped':0,'truncated':0,'usbRetries':0,'SECRET':'not logged'}}
+                if mode=='reject':packet={'id':request['id'],'error':'SECRET response'}
+                frames.append(('@SC '+json.dumps(packet)+'\n').encode())
+                frames.append(('@SC '+json.dumps({'event':'debug','lines':['[audio-state] event=tts-start ms=1 session=1 state=6\n[llm] SECRET conversation\n']})+'\n').encode())
+                return len(raw)
+            def readline(serial,_size):
+                if mode=='read-error':raise OSError(5,'SECRET read error')
+                return frames.pop(0) if frames else b''
+        serial=types.ModuleType('serial');serial.Serial=Serial;serial.SerialException=SerialError
+        tools=types.ModuleType('serial.tools');ports=types.ModuleType('serial.tools.list_ports')
+        device=types.SimpleNamespace(vid=0x303a,pid=0x1001,serial_number='test-device',location='1-1',device='verified-port')
+        ports.comports=lambda:[device] if mode!='mismatch' else [types.SimpleNamespace(**{**device.__dict__,'serial_number':'other-device'})]
+        tools.list_ports=ports;serial.tools=tools
+        config=self.root/'capture-config.json';config.write_text(json.dumps({'config':{'archiveToken':'SECRET_TOKEN'}}))
+        expected=dict(vid=device.vid,pid=device.pid,serial=device.serial_number,location=device.location)
+        argv=['helper',json.dumps(expected),'10' if mode=='timeout' else '3',str(config),m.AUDIO_SAFE_SOURCE,'on' if mode=='dtr-on' else 'off']
+        out=io.StringIO();failure=None
+        with patch.dict(sys.modules,{'serial':serial,'serial.tools':tools,'serial.tools.list_ports':ports,'time':fake_time}), \
+             patch.object(sys,'argv',argv),contextlib.redirect_stdout(out):
+            try:exec(compile(m.AUDIO_CAPTURE_SOURCE,'audio-capture','exec'),{})
+            except SystemExit as error:failure=error.code
+        return requests,opens,out.getvalue(),failure
+
+    def test_audio_capture_uses_only_authenticated_debug_status_and_never_saves_secrets(self):
+        requests,opens,output,failure=self.run_audio_capture()
+        self.assertIsNone(failure);self.assertEqual(opens,['verified-port']);self.assertTrue(requests)
+        self.assertTrue(all(r['op']=='/debug/status' and r['args']=={} for r in requests))
+        self.assertNotIn('SECRET',output);self.assertIn('event=tts-start',output)
+        self.assertIn('[audio-status]',output)
+
+    def test_audio_capture_refuses_other_device_and_bounds_unresponsive_vm(self):
+        requests,opens,output,failure=self.run_audio_capture('mismatch')
+        self.assertFalse(requests);self.assertFalse(opens);self.assertIsNotNone(failure)
+        requests,opens,output,failure=self.run_audio_capture('timeout')
+        self.assertEqual(len(requests),1);self.assertEqual(failure,1);self.assertIn('timed out',output)
+        requests,opens,output,failure=self.run_audio_capture('reject')
+        self.assertIsNotNone(failure);self.assertNotIn('SECRET',str(failure)+output)
+
+    def test_audio_io_errors_are_not_mislabeled_disconnect_or_reopened(self):
+        for stage,number in (('open',71),('write',110),('read',5)):
+            with self.subTest(stage=stage):
+                requests,opens,output,failure=self.run_audio_capture(stage+'-error')
+                self.assertIsNotNone(failure);self.assertIn('remains enumerated',str(failure))
+                kind='TimeoutError' if number==110 else 'OSError'
+                self.assertIn('stage='+stage+' type='+kind+' errno='+str(number),output)
+                self.assertNotIn('USB disconnected',output);self.assertNotIn('SECRET',output+str(failure))
+                self.assertLessEqual(len(opens),1);self.assertLessEqual(len(requests),1)
+
+    def test_audio_write_timeout_is_reported_without_replay_or_private_message(self):
+        requests,opens,output,failure=self.run_audio_capture('write-timeout')
+        self.assertIsNotNone(failure);self.assertEqual(len(opens),1);self.assertFalse(requests)
+        self.assertIn('stage=write type=SerialTimeoutException errno=0',output)
+        self.assertNotIn('SECRET',output+str(failure))
+
+    def test_explicit_hub_dtr_profile_is_set_before_open_without_rts_pulse(self):
+        requests,opens,output,failure=self.run_audio_capture('dtr-on')
+        self.assertIsNone(failure);self.assertEqual(opens,['verified-port'])
+        self.assertIn('dtr=on rts=off',output)
+        self.assertTrue(all(r['op']=='/debug/status' for r in requests))
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):m.main(['--dtr','on'])
+
+    def test_audio_logs_mode_preserves_identity_and_service_ownership(self):
+        self.args.audio=True;calls=[]
+        self.r.cmd=lambda name,*a,**k:calls.append(name)
+        self.r.confirm=lambda *a:None
+        self.r.identity=lambda:(calls.append('identity') or {'port':'verified'})
+        @contextlib.contextmanager
+        def own():
+            calls.append('own');yield;calls.append('restore')
+        self.r.own_usb=own;self.r.unoccupied=lambda _:calls.append('unoccupied')
+        self.r.capture_audio=lambda _:calls.append('audio');self.r.capture=lambda _:calls.append('boot')
+        self.r.logs()
+        self.assertEqual(calls,['kernel-usb','identity','own','unoccupied','audio','restore'])
+
+    def test_audio_flag_cannot_trigger_write_or_usb_recovery(self):
+        for args in (['--audio'],['--audio','--logs','--write'],['--audio','--logs','--all'],
+                     ['--audio','--logs','--recover-usb','--usb-path','1-1']):
+            with self.subTest(args=args),contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):m.main(args)
 
     def layout(self):
         self.r.bin.mkdir(parents=True)
