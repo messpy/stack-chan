@@ -100,3 +100,9 @@ See [Building and Writing Programs](docs/flashing-firmware.md) for target-specif
 - [Mini apps (experimental, Japanese)](docs/mini-apps_ja.md)
 - [v1.1.0 release notes](../docs/release-notes/v1.1.0.md)
 - [v1.0.0 release notes](../docs/release-notes/v1.0.0.md)
+
+For controlled CoreS3 archive camera diagnostics, see
+[the USB/camera investigation and durable one-shot procedure](docs/camera-usb-investigation-2026-11-08.md).
+The probe now runs under a transient user service, preserves logs across SSH loss,
+and never retries a photo after USB reconnection. Hardware tests require verified
+backups and explicit approval.

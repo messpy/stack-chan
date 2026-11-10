@@ -1,5 +1,8 @@
 #include "xsmc.h"
 #include "esp_system.h"
+#include "esp_timer.h"
+#include "esp_attr.h"
+#include "esp_heap_caps.h"
 #include "xsHost.h"
 #include "driver/usb_serial_jtag.h"
 #include "freertos/FreeRTOS.h"
@@ -8,9 +11,18 @@
 #include "archive-vault-crypto.h"
 
 #define ARCHIVE_USB_PACKET_LIMIT 20000
-static char line[ARCHIVE_USB_PACKET_LIMIT + 5];
+// The full 20 KiB authenticated USB RPC frame formerly occupied internal BSS
+// even with no USB host attached. Keep this long-lived receive buffer in PSRAM;
+// DMA-capable driver RX/TX rings remain in the memory chosen by ESP-IDF.
+#define ARCHIVE_USB_LINE_BYTES (ARCHIVE_USB_PACKET_LIMIT + 5)
+static char *line;
 static size_t used;
 static int dropping;
+static void ensureUSBReceiveBuffer(xsMachine *the) {
+    if (line) return;
+    line = heap_caps_malloc(ARCHIVE_USB_LINE_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!line) xsUnknownError("USB receive PSRAM unavailable");
+}
 static void ensureUSB(xsMachine *the) {
     if (!usb_serial_jtag_is_driver_installed()) {
         usb_serial_jtag_driver_config_t config = {.rx_buffer_size=4096,.tx_buffer_size=4096};
@@ -19,6 +31,7 @@ static void ensureUSB(xsMachine *the) {
 }
 void xs_archive_usb_read(xsMachine *the) {
     ensureUSB(the);
+    ensureUSBReceiveBuffer(the);
     unsigned char c;
     while (usb_serial_jtag_read_bytes(&c,1,0)==1) {
         if (c=='\n') {
@@ -26,7 +39,7 @@ void xs_archive_usb_read(xsMachine *the) {
             line[used]=0;used=0;
             if (strncmp(line,"@SC ",4)==0) {xsmcSetString(xsResult,line+4);return;}
         } else if(c!='\r' && !dropping) {
-            if (used<sizeof(line)-1) line[used++]=c;
+            if (used<ARCHIVE_USB_LINE_BYTES-1) line[used++]=c;
             else {dropping=1;used=0;}
         }
     }
@@ -46,6 +59,70 @@ void xs_archive_usb_write(xsMachine *the) {
 }
 
 void xs_archive_usb_reboot(xsMachine *the) { usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(200)); esp_restart(); }
+
+// Independent of the XS event loop: recover from a stuck synchronous camera/JPEG/SD call.
+// Only the active still-photo path may arm this guard. 60s is well above normal capture time.
+#define SC_PHOTO_WATCHDOG_US 60000000LL
+#define SC_PHOTO_RECOVERY_MAGIC 0x53435048U
+static RTC_NOINIT_ATTR uint32_t sc_photo_recovery_cookie;
+/* Numeric phase survives a photo watchdog software restart without retaining
+ * conversation text, credentials, or other private data in RTC memory. */
+#define SC_PHOTO_STAGE_MAGIC 0x53435053U
+static RTC_NOINIT_ATTR uint32_t sc_photo_stage_magic;
+static RTC_NOINIT_ATTR uint32_t sc_photo_stage;
+void xs_archive_photo_checkpoint(xsMachine *the) {
+    int stage = xsmcToInteger(xsArg(0));
+    if (stage < 0 || stage > 255)
+        xsRangeError("Invalid photo checkpoint");
+    sc_photo_stage_magic = SC_PHOTO_STAGE_MAGIC;
+    sc_photo_stage = (uint32_t)stage;
+}
+void xs_archive_photo_last_checkpoint(xsMachine *the) {
+    int stage = -1;
+    if (sc_photo_recovery_cookie == SC_PHOTO_RECOVERY_MAGIC &&
+        esp_reset_reason() == ESP_RST_SW &&
+        sc_photo_stage_magic == SC_PHOTO_STAGE_MAGIC &&
+        sc_photo_stage <= 255)
+        stage = (int)sc_photo_stage;
+    xsmcSetInteger(xsResult, stage);
+}
+
+static esp_timer_handle_t sc_photo_watchdog_timer;
+static void sc_photo_watchdog_fire(void *arg) {
+    (void)arg;
+    sc_photo_recovery_cookie = SC_PHOTO_RECOVERY_MAGIC;
+    esp_restart();
+}
+void xs_archive_photo_watchdog(xsMachine *the) {
+    const bool enable = xsmcToBoolean(xsArg(0));
+    if (!enable) {
+        if (sc_photo_watchdog_timer)
+            (void)esp_timer_stop(sc_photo_watchdog_timer);
+        return;
+    }
+    // New photo attempt clears the previous guard-firing marker.
+    sc_photo_recovery_cookie = 0;
+    sc_photo_stage_magic = SC_PHOTO_STAGE_MAGIC;
+    sc_photo_stage = 0;
+    if (!sc_photo_watchdog_timer) {
+        const esp_timer_create_args_t args = {
+            .callback = sc_photo_watchdog_fire,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "sc_photo_guard"
+        };
+        esp_err_t error = esp_timer_create(&args, &sc_photo_watchdog_timer);
+        if (error != ESP_OK) xsUnknownError("Camera recovery watchdog unavailable");
+    }
+    // Stopping a not-yet-running timer returns ESP_ERR_INVALID_STATE, which is safe.
+    (void)esp_timer_stop(sc_photo_watchdog_timer);
+    if (esp_timer_start_once(sc_photo_watchdog_timer, SC_PHOTO_WATCHDOG_US) != ESP_OK)
+        xsUnknownError("Camera recovery watchdog start failed");
+}
+void xs_archive_photo_watchdog_triggered(xsMachine *the) {
+    xsmcSetBoolean(xsResult, sc_photo_recovery_cookie == SC_PHOTO_RECOVERY_MAGIC &&
+                             esp_reset_reason() == ESP_RST_SW);
+}
+
 
 void xs_archive_rgb24(xsMachine *the) {
     void *data; xsUnsignedValue length;
@@ -156,7 +233,6 @@ void xs_archive_usb_connected(xsMachine *the) {
     xsmcSetBoolean(xsResult, usb_serial_jtag_is_connected());
 }
 
-#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include <stdarg.h>
 #include <stdio.h>
@@ -233,6 +309,7 @@ void xs_archive_heap_status(xsMachine *the) {
     SC_HEAP_FIELD("psramMinimum",heap_caps_get_minimum_free_size(external));
     SC_HEAP_FIELD("psramLargest",heap_caps_get_largest_free_block(external));
     SC_HEAP_FIELD("psramTotal",heap_caps_get_total_size(external));
+    SC_HEAP_FIELD("usbRxPSRAMBytes",line ? ARCHIVE_USB_LINE_BYTES : 0);
 #undef SC_HEAP_FIELD
 }
 

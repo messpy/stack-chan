@@ -37,6 +37,37 @@ test('prepares both managed components without duplicating them', () => {
   }
 })
 
+test('preseeds full release archive dependencies without parallel YAML writer races', () => {
+  const outputDirectory = mkdtempSync(path.join(tmpdir(), 'stackchan-idf-archive-'))
+  try {
+    const options = {
+      outputDirectory,
+      platformName: 'm5stack_cores3',
+      applicationName: 'stack-chan-host',
+      mode: 'release',
+      archive: true,
+    }
+    const output = prepareCoreS3IdfDependencies(options)
+    const first = readFileSync(output, 'utf8')
+    for (const [name, version] of [
+      ['esp32-camera', '^2.0.10'],
+      ['esp_jpeg', '^1.3.1'],
+      ['esp_audio_codec', '~2.5.0'],
+    ]) {
+      assert.equal(count(first, `espressif/${name}:`), 1)
+      assert.ok(first.includes(`espressif/${name}: ${version}`))
+    }
+    prepareCoreS3IdfDependencies(options)
+    assert.equal(readFileSync(output, 'utf8'), first, 'preseeding must be idempotent')
+    const wrapper = readFileSync(new URL('../run-mcconfig.mjs', import.meta.url), 'utf8')
+    assert.match(wrapper, /targetsArchiveCoreS3\(args\)/)
+    assert.match(wrapper, /archive: true/)
+    assert.match(wrapper, /prepareCoreS3IdfDependencies\(\{/)
+  } finally {
+    rmSync(outputDirectory, { recursive: true, force: true })
+  }
+})
+
 test('prepares the built-in CoreS3 camera dependency', () => {
   const outputDirectory = mkdtempSync(path.join(tmpdir(), 'stackchan-idf-dependencies-'))
 

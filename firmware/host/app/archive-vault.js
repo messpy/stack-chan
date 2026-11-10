@@ -27,6 +27,8 @@ export function loadSettings(){
   return data;
 }
 export function getSettings(){return loadSettings();}
+// Diagnostic callers must never trigger a first SD mount/read.
+export function peekSettings(){return loaded?data:undefined;}
 export function changeSettings(change){
   loadSettings();
   const next=JSON.parse(JSON.stringify(data));change(next);next.generation=data.generation+1;

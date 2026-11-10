@@ -60,6 +60,7 @@ set -u
 /usr/bin/python3 scripts/patch-audio-input-ring.py
 /usr/bin/python3 scripts/patch-worker-task-start.py
 /usr/bin/python3 scripts/patch-audioout-callback-lifetime.py
+/usr/bin/python3 scripts/patch-core-s3-camera.py
 [[ -f host/app/manifest_archive_private.json ]] || { echo 'Run npm run init:archive first.' >&2; exit 1; }
 if [[ $mode != --flash-only ]]; then
   phase building 'ビルド中（詳細はログに保存）'

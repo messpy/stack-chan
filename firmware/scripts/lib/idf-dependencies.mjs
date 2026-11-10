@@ -32,12 +32,22 @@ export function prepareCoreS3IdfDependencies({
   platformName,
   applicationName,
   mode,
+  archive = false,
   realtime = false,
   solutionDirectory,
 }) {
   if (!outputDirectory) throw new Error('Build output directory is required')
-  const dependencies = dependenciesByPlatform[platformName]
-  if (!dependencies) throw new Error(`Unsupported CoreS3 platform: ${platformName}`)
+  const baseDependencies = dependenciesByPlatform[platformName]
+  if (!baseDependencies) throw new Error(`Unsupported CoreS3 platform: ${platformName}`)
+  if (archive && platformName !== 'm5stack_cores3')
+    throw new Error('Archive IDF dependency seeding requires m5stack_cores3')
+  // Moddable's POSIX makefile can run multiple idf.py add-dependency
+  // commands concurrently against the same generated YAML. Seed every
+  // archive-managed dependency beforehand so the makefile's grep guards
+  // skip those writes and CMake never reads a half-written manifest.
+  const dependencies = archive
+    ? [...baseDependencies, ['espressif/esp_jpeg', '^1.3.1'], ['espressif/esp_audio_codec', '~2.5.0']]
+    : baseDependencies
   if (!applicationName) throw new Error('Application name is required')
   if (!['debug', 'instrument', 'release'].includes(mode)) throw new Error(`Unsupported build mode: ${mode}`)
 
