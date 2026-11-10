@@ -5,7 +5,7 @@ import { test } from 'node:test'
 
 const source=fs.readFileSync(new URL('../../host/app/archive-direct-chat.js',import.meta.url),'utf8')
 const start=source.indexOf('    async function executeTool(name, args) {')
-const end=source.indexOf('    async function recognitionTurn(text)',start)
+const end=source.indexOf('    async function recognitionTurn(',start)
 assert.ok(start>=0&&end>start,'executeTool is present')
 const implementation=source.slice(start,end)
 
@@ -14,6 +14,8 @@ function harness() {
   const context={
     instance:{},chat:null,recognitionTurnCurrent:()=>false,
     visualAllowed:false,headHandled:undefined,photoHandler:async()=>undefined,
+    cameraHandoff:{active:false,async run(args){return context.photoHandler(args)}},
+    currentSpeaker:()=>({id:'person'}),cameraContextVersion:1,cameraRequestContext:0,cameraRequestSpeaker:null,cameraRequest:'',
     memoryTools:[],callDeviceTool:(name,args)=>{calls.push({name,args});return {commanded:true,direction:args.direction}},
     trace:()=>{}
   }
