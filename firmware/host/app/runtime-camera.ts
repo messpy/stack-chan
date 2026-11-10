@@ -137,10 +137,16 @@ export class StackchanRuntimeCamera implements RobotCamera {
     try {
       traceMessage('[runtime-camera] capture begin\n')
       const frame = await this.#camera.capture(options)
+      // Implicit capture starts native camera DMA even without explicit start().
+      // Keep touch/I2C suspended until stop() releases the camera.
+      this.#cameraActive = true
       traceMessage(`[runtime-camera] capture done frame=${frame ? 'yes' : 'no'}\n`)
       return frame
-    } finally {
+    } catch (error) {
+      // Failed captures must not leave touch disabled if the caller aborts.
+      this.#cameraActive = false
       if (!wasActive) this.#resumeTouchPanel()
+      throw error
     }
   }
 
