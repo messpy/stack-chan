@@ -124,7 +124,7 @@ export default class ChatAudioIO extends ChatAudioIOBase {
     // Six <=4096-byte DMA descriptors in the ESP32 driver: conservatively
     // retain the output for all of them after the final native completion.
     const drainBytes=6*4096
-    const playback={rate,drainUntil:0,maxWritable:drainBytes,lastLevel:-1,health:{underruns:0,bufferedMs:0,queuedMs:0,prebuffering:true,mode:'native-async',maximumPumpGapMs:0}}
+    const playback={rate,drainUntil:0,maxWritable:drainBytes,lastLevel:-1,health:{underruns:0,bufferedMs:0,queuedMs:0,prebuffering:true,mode:'native-async',maximumPumpGapMs:0,rebufferThresholdMs:0,lastUnderrunAt:0,lastUnderrunBufferedMs:0,lastUnderrunQueuedMs:0}}
     const output=new AudioOut.Async({sampleRate:rate,channels:1,onWritable:size=>{
       playback.maxWritable=Math.max(playback.maxWritable,size&~1)
       if(playback.queue)playback.queue.drainMs=Math.ceil(playback.maxWritable*1000/(rate*2))+80
@@ -150,7 +150,13 @@ export default class ChatAudioIO extends ChatAudioIOBase {
       const health=playback.health,now=Date.now()
       if(playback.lastPumpAt!==undefined)health.maximumPumpGapMs=Math.max(health.maximumPumpGapMs,now-playback.lastPumpAt)
       playback.lastPumpAt=now
-      if(health.underruns!==plan.underruns)trace('[playback] native queue starvation count='+plan.underruns+'\n')
+      if(health.underruns!==plan.underruns){
+        health.lastUnderrunAt=now
+        health.lastUnderrunBufferedMs=Math.round(plan.available*1000/(playback.rate*2))
+        health.lastUnderrunQueuedMs=Math.round(plan.queuedBytes*1000/(playback.rate*2))
+        trace('[playback] starvation count='+plan.underruns+' bufferedMs='+health.lastUnderrunBufferedMs+' queuedMs='+health.lastUnderrunQueuedMs+'\n')
+      }
+      health.rebufferThresholdMs=Math.round(playback.queue.planner.threshold*1000/(playback.rate*2))
       health.underruns=plan.underruns;health.bufferedMs=Math.round(plan.available*1000/(playback.rate*2));
       health.queuedMs=Math.round(plan.queuedBytes*1000/(playback.rate*2));health.prebuffering=plan.prebuffering
       if(playback.lastLevel!==playback.queue.lastLevel){playback.lastLevel=playback.queue.lastLevel;this.onOutputLevelChanged?.(playback.lastLevel)}
