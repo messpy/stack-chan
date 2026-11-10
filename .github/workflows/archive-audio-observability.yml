@@ -6,6 +6,7 @@ on:
       - 'firmware/host/app/archive-chat-audioio.js'
       - 'firmware/host/modules/conversation/chat-audioio/**'
       - 'firmware/scripts/lib/archive-audio-log-collector*'
+      - 'firmware/scripts/lib/archive-xiaozhi-recognition.test.mjs'
       - 'firmware/scripts/lib/archive-xiaozhi-playback-lifecycle.test.mjs'
       - '.github/workflows/archive-audio-observability.yml'
   workflow_dispatch:
@@ -30,4 +31,4 @@ jobs:
       - name: Verify lossless collector and incomplete-vs-zero
         run: node --test firmware/scripts/lib/archive-audio-log-collector.test.mjs
       - name: Verify XiaoZhi playback and heartbeat (platform I/O mocked)
-        run: node --experimental-vm-modules --test firmware/scripts/lib/archive-xiaozhi-playback-lifecycle.test.mjs
+        run: node --experimental-vm-modules --test firmware/scripts/lib/archive-xiaozhi-playback-lifecycle.test.mjs firmware/scripts/lib/archive-xiaozhi-recognition.test.mjs
