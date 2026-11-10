@@ -1,0 +1,40 @@
+name: Category merge preflight (read only)
+on:
+  push:
+    branches:
+      - integration/stackchan-categories-20261110
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  conflict-inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Inspect five category merge conflicts without editing refs
+        shell: bash
+        run: |
+          git fetch --no-tags origin             refs/heads/category/voice-ai:refs/remotes/origin/category/voice-ai             refs/heads/category/camera:refs/remotes/origin/category/camera             refs/heads/category/web:refs/remotes/origin/category/web             refs/heads/category/ui:refs/remotes/origin/category/ui             refs/heads/category/system:refs/remotes/origin/category/system
+          failed=0
+          for name in voice-ai camera web ui system; do
+            echo "===== CATEGORY $name ====="
+            log="$(mktemp)"
+            git merge-tree --write-tree --name-only HEAD "origin/category/$name" > "$log" 2>&1
+            rc=$?
+            if [ "$rc" -eq 0 ]; then
+              echo "MERGE_TREE=clean"
+              head -12 "$log"
+            else
+              echo "MERGE_TREE=conflicted EXIT=$rc"
+              grep -E '^(CONFLICT|Auto-merging|[[:space:]]*firmware/|[[:space:]]*\.github/|[[:space:]]*docs/)' "$log" | head -100 || true
+              failed=$((failed+1))
+            fi
+            rm -f "$log"
+          done
+          echo "CONFLICTED_CATEGORIES=$failed"
+          # This job only diagnoses conflicts. It never pushes or merges.
+          exit 0
