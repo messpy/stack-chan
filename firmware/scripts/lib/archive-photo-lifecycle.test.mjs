@@ -28,7 +28,7 @@ for(const failure of ['none','start','jpeg','sd','stop'])test('photo lifecycle '
  const run=()=>vm.runInContext('photo(robot,{},true,captureContext)',h.context)
  if(failure==='none')await run();else await assert.rejects(run,new RegExp(failure==='sd'?'SD':failure))
  assert.equal(vm.runInContext('busy',h.context),false)
- assert.ok(h.events.indexOf('stop')>=0);assert.equal(h.events.at(-1)==='close'||h.events.includes('analysis'),true)
+ assert.ok(h.events.indexOf('stop')>=0);assert.equal(h.events.includes('close'),true,'native close must run even when SD save fails')
  assert.ok(h.events.indexOf('close')>h.events.indexOf('stop'))
  if(failure!=='start')assert.ok(h.events.indexOf('frame')<h.events.indexOf('stop'))
  if(failure==='none'){
