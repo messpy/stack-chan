@@ -25,7 +25,9 @@ export function writeAliasPackage(
   const targetSpecifier = relative(packageRoot, target).replaceAll('\\', '/')
   const importSpecifier = targetSpecifier.startsWith('.') ? targetSpecifier : `./${targetSpecifier}`
   mkdirSync(packageRoot, { recursive: true })
-  atomicWriteFileSync(`${packageRoot}/package.json`, JSON.stringify({ type: 'module', exports: './index.js' }))
+  // Another test worker may import this alias as soon as package.json exists.
+  // Publish its entry point first so resolution never observes a package with
+  // a missing index.js. Each file is itself published with an atomic rename.
   atomicWriteFileSync(
     `${packageRoot}/index.js`,
     [
@@ -34,6 +36,7 @@ export function writeAliasPackage(
       '',
     ].join('\n'),
   )
+  atomicWriteFileSync(`${packageRoot}/package.json`, JSON.stringify({ type: 'module', exports: './index.js' }))
 }
 
 export function writeAliasPackageSubpath(
@@ -58,14 +61,7 @@ export function writeAliasPackageSubpath(
 
   mkdirSync(dirname(entryPath), { recursive: true })
   exports[`./${subpath}`] = `./${subpath}.js`
-  atomicWriteFileSync(
-    packagePath,
-    JSON.stringify({
-      ...packageConfig,
-      type: 'module',
-      exports,
-    }),
-  )
+  // Publish the new subpath target before exposing its export in package.json.
   atomicWriteFileSync(
     entryPath,
     [
@@ -73,5 +69,13 @@ export function writeAliasPackageSubpath(
       options.hasDefaultExport ? `export { default } from ${JSON.stringify(importSpecifier)};` : '',
       '',
     ].join('\n'),
+  )
+  atomicWriteFileSync(
+    packagePath,
+    JSON.stringify({
+      ...packageConfig,
+      type: 'module',
+      exports,
+    }),
   )
 }
