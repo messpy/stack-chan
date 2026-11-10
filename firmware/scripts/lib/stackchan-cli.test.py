@@ -671,9 +671,9 @@ class CLITest(unittest.TestCase):
         app.mkdir(parents=True, exist_ok=True)
         old = {'modules': {'archive-camera-handoff': {'obsolete': True},
                            'private-only': {'enabled': True}},
-               'platforms': {'esp32/m5stackchan_cores3': {'private': True}}}
+               'platforms': {'esp32/m5stackchan_cores3': {'private': True}, 'esp32': {'custom': True}}}
         example = {'modules': {'archive-live': {'url': 'live.js'}},
-                   'platforms': {'esp32/m5stack_cores3': {'public': True}}}
+                   'platforms': {'esp32/m5stack_cores3': {'public': True}, 'esp32': {'public': True}}}
         private = self.root / 'private-input.json'
         private.write_text(json.dumps(old))
         (app / 'manifest_archive.example.json').write_text(json.dumps(example))
@@ -694,6 +694,7 @@ class CLITest(unittest.TestCase):
         self.assertIn('archive-live', actual['modules'])
         self.assertTrue(actual['platforms']['esp32/m5stackchan_cores3']['private'])
         self.assertTrue(actual['platforms']['esp32/m5stack_cores3']['public'])
+        self.assertEqual(actual['platforms']['esp32'], {'custom': True})
         self.r.cleanup()
         self.assertEqual(previous.read_text(), 'previous-private-output')
 
