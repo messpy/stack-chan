@@ -199,7 +199,7 @@ let forwarded;
 class AdapterWorker{postMessage(message){forwarded=message}terminate(){}}
 const resumeTimers=[];
 const adapterContext=vm.createContext({Timer:{set:fn=>{resumeTimers.push(fn);return resumeTimers.length}},ChatAudioIOBase:AdapterBase,Worker:AdapterWorker,SharedArrayBuffer,trace(){},writePcmRing(){},globalThis:{}});
-vm.runInContext(fs.readFileSync(root+'archive-chat-audioio.js','utf8').replace(/^import .*$/gm,'').replace('export default class ChatAudioIO','class ChatAudioIO').replace(/^export class /gm,'class '),adapterContext);
+vm.runInContext(fs.readFileSync(root+'archive-chat-audioio.js','utf8').replace(/^import .*$/gm,'').replace('export default class ChatAudioIO','class ChatAudioIO').replace(/^export (?:class|function) /gm,(_,kind)=>kind+' '),adapterContext);
 for(const channels of [1,2]){
  adapterContext.channelCount=channels;
  vm.runInContext("var adapter=new ChatAudioIO();adapter.input={channels:channelCount};adapter.createWorker('archiveGeminiLive');adapter.worker.postMessage({id:'sendAudio',offset:0,size:960})",adapterContext);
