@@ -395,6 +395,15 @@ export default class ChatAudioIO extends ChatAudioIOBase {
     this.worker?.postMessage({ id: 'sendMcpMessage', payload })
   }
 
+  audioDiagnostics(message) {
+    // Worker data is untrusted: only bounded, single-line numeric diagnostics
+    // may enter the release USB ring, never transcript or credentials.
+    const line = message?.line
+    if (typeof line !== 'string' || line.length > 640 ||
+        !line.startsWith('[audio-path]') || /[\r\n]/.test(line)) return
+    trace(line + '\n')
+  }
+
   receiveEmotion(message) {
     this.onEmotionChanged(message.emotion ?? '', message.text)
   }
