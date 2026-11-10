@@ -10,8 +10,8 @@ const modelPath = new URL('../../host/modules/conversation/chat-audioio/xiaozhi-
 
 async function harness() {
   let now = 1000
-  const deferred = [], writes = [], completions = [], events = [], messages = [], subtitles = []
-  const timer = { repeat: () => 1, clear() {}, set(fn) { deferred.push(fn); return deferred.length } }
+  const deferred = [], repeats = [], writes = [], completions = [], events = [], messages = [], subtitles = [], traceLines = []
+  const timer = { repeat(fn) { repeats.push(fn); return repeats.length }, clear() {}, set(fn) { deferred.push(fn); return deferred.length } }
   class Input { start() { events.push('mic-open') } close() { events.push('mic-close') } }
   class Output {
     static Async = class {
@@ -28,7 +28,7 @@ async function harness() {
     receiveOutputText(m) { this.onOutputTranscript(m.text, m.more) }
   }
   const context = vm.createContext({ SharedArrayBuffer, Uint8Array, Int16Array, Int32Array, Atomics,
-    Date: { now: () => now }, trace() {}, URL })
+    Date: { now: () => now }, trace(...parts) { traceLines.push(parts.join('')) }, URL })
   const dependencies = { timer: { default: timer }, worker: { default: class {} },
     'embedded:io/audio/in': { default: Input }, 'embedded:io/audio/out': { default: Output },
     archivePcmRingWriter: { writePcmRing() {} }, stackchanPcmRingWriter: { writePcmRing() {} } }
@@ -58,6 +58,7 @@ async function harness() {
     onOutputLevelChanged() {}, onInputTranscript() {}, onOutputTranscript(text) { if (text) subtitles.push(text) },
     worker: { postMessage(message) { messages.push(message) } } })
   class WorkerBase {
+    connect() {}
     post(id) { this.postMessage({ id }) }
     postMessage(message) {
       events.push(message.id)
@@ -94,8 +95,8 @@ async function harness() {
   function tick(ms = 2000) { now += ms; pump() }
   function runDeferred() { while (deferred.length) deferred.shift()() }
   function pcm(value = 7) { model.read(Uint8Array.of(value), { binary: true }) }
-  return { io, model, events, messages, subtitles, writes, deferred, start, stop, pcm, pump,
-    completeWrites, tick, runDeferred }
+  return { io, model, events, messages, subtitles, writes, deferred, traceLines, start, stop, pcm, pump,
+    completeWrites, tick, runDeferred, tickRepeats() { for (const fn of [...repeats]) fn() } }
 }
 
 test('subtitles and new PCM continue during previous drain without early microphone restart', async () => {
@@ -222,4 +223,27 @@ test('a queued completion from a closed session cannot reopen its microphone', a
   h.io.close(); h.runDeferred()
   assert.equal(h.messages.length, messages)
   assert.equal(h.events.filter(x => x === 'mic-open').length, 0)
+})
+
+test('heartbeat reports microphone upload and decode absence before any TTS starts', async () => {
+  const h = await harness()
+  h.model.encoder.capturedPcmBytes = 3840
+  h.model.encoder.droppedPcmBytes = 0
+  h.model.connect({})
+  h.tickRepeats()
+  const output = h.traceLines.join('')
+  assert.match(output, /stage=upload event=heartbeat/)
+  assert.match(output, /capturedPcmBytes=3840/)
+  assert.match(output, /encodedPackets=0/)
+  assert.match(output, /stage=decode/)
+  assert.ok(h.events.includes('audioDiagnostics'), 'worker snapshots must be delivered to main VM')
+})
+
+test('worker transport events and ASR metadata cross main VM without transcript bodies', async () => {
+  const h = await harness()
+  h.model.postAudioDiagnostic('[audio-path] stage=transport event=close_frame ms=10 closeCode=1006\\n')
+  h.model.stt({ text: 'private recognition text' })
+  assert.match(h.traceLines.join(''), /closeCode=1006/)
+  assert.match(h.traceLines.join(''), /stage=asr event=final/)
+  assert.doesNotMatch(h.traceLines.join(''), /private recognition text/)
 })
