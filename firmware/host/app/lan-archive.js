@@ -16,7 +16,8 @@ import {OfflinePolicy} from 'archive-offline-policy';
 import {getSettings,changeSettings,randomHex} from 'archive-vault';
 import {startLocalClock,setLocalTime,localClockStatus} from 'archive-local-clock';
 import {startOffline,openOffline,closeOffline,offlineAction,offlineStatus} from 'archive-offline';
-import {checkOllama} from 'archive-ollama';
+import {checkOllama,ollamaChat,geminiTextChat} from 'archive-ollama';
+import {createWebPromptController} from 'archive-web-prompt';
 import {startAISettings} from 'archive-ai-settings';
 import Timer from 'timer';
 import {checkGemini} from 'archive-gemini-check';
@@ -27,7 +28,7 @@ import {analyzeJPEG,visionStatus} from 'archive-vision';
 import {startAlarmSettings,openAlarmSettings,showRingingAlarm,hideRingingAlarm} from 'archive-alarm-ui';
 import {alarmSoundCommand,playAlarmSound} from 'archive-alarm-sound';
 import {startWeb,openControl,controlStatus} from 'archive-web';
-import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat} from 'archive-direct-chat';
+import {microphoneIndicator,startDirectChat,directChatStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat,conversationInstructions} from 'archive-direct-chat';
 import {recordMemory,history,deviceHistory,currentSpeaker,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
 import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
 import {acceptAudioChunk} from 'archive-audio-upload';
@@ -216,7 +217,38 @@ export function startArchive(robot) {
       }finally{unlock?.();}
     }
   });
+  const webPrompt=createWebPromptController({
+    provider:()=>directChatStatus().provider,
+    online:()=>getSettingsStatus().connected,
+    configured:provider=>!!getSettings().api?.[provider==='gemini'?'gemini':'ollama']?.trim(),
+    reserve(){
+      const chat=directChatStatus();
+      if(busy||monitor.active||offlineStatus().playing||reminderStatus().ringing)
+        throw new Error('本体で別の処理を実行中です');
+      if(chat.enabled||chat.recognitionMode||chat.busy)
+        throw new Error('音声会話・文字起こしをOFFにしてから送信してください');
+      busy=true;
+    },
+    current:provider=>{
+      const chat=directChatStatus();
+      return chat.provider===provider&&!chat.enabled&&!chat.recognitionMode&&!chat.busy
+        &&!monitor.active&&!offlineStatus().playing&&!reminderStatus().ringing;
+    },
+    ask:(text,provider,current)=>(provider==='gemini'?geminiTextChat:ollamaChat)(
+      [{role:'system',content:conversationInstructions()+'\nブラウザからの文字入力です。端末操作ツールは使用しません。'},
+       {role:'user',content:text}],[],undefined,current),
+    save(text,answer,requestId){
+      const speakerId=directChatStatus().speaker?.id??null;
+      const input=archiveTranscript('input',text,'web-'+requestId+'-user',undefined,speakerId);
+      const output=archiveTranscript('output',answer,'web-'+requestId+'-assistant',undefined,speakerId);
+      return !!input&&!!output;
+    },
+    show(answer){robot.showBalloon(answer,{bottom:40,height:24,paddingY:4,holdMs:60000});return true;},
+    release(){busy=false;}
+  });
   async function execute(request){
+    if(webPrompt.active()&&['/chat/start','/chat/provider','/chat/configure','/speaker/select','/speaker/register','/recognition/mode','/chat/test'].includes(request.op))
+      throw new Error('ブラウザからのAI回答を待っています。完了後に操作してください');
     if(monitor.active&&!request.op.startsWith('/monitor/')&&!['/status','/volume','/chat/status','/files','/files/page','/network/status','/speaker/list','/settings/status','/reminders','/debug/status','/motor-status','/media/trash'].includes(request.op))throw new Error('動作確認を終了してから操作してください');
     const capture=['/face/save','/face/restore','/alarm-sound/preview','/motor/test','/motor/recover','/image/finish','/photo','/record','/audio','/chat-record'].includes(request.op);
     const paused=capture?pauseDirectChat():false;
@@ -263,6 +295,8 @@ export function startArchive(robot) {
       else if(request.op==='/speaker/list')result=speakerList();
       else if(request.op==='/speaker/select')result=selectSpeaker(request.args||{});
       else if(request.op==='/speaker/register')result=selectSpeaker(request.args||{},true);
+      else if(request.op==='/chat/send-text')result=webPrompt.send(request.args);
+      else if(request.op==='/chat/text-result')result=webPrompt.result(request.args);
       else if(request.op==='/chat/provider')result=configureChatProvider(request.args);
       else if(request.op==='/chat/status')result=directChatStatus();
       else if(request.op==='/chat/configure')result=configureDirectChat(request.args);
