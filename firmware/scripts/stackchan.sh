@@ -92,23 +92,29 @@ class Runner:
                                           env=env or self.env, **isolation)
             try:
                 rc = self.child.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                self.stop_child()
+                self.report_command_failure(name, path, 'TIMEOUT=' + str(timeout), shown)
+                raise
             except BaseException:
                 self.stop_child()
                 raise
             finally:
                 self.child = None
         if rc:
-            self.failed_command = name
-            if name in ('flash-id', 'backup', 'flash', 'boot-stages'):
-                self.flash_failure_diagnosis(name, path)
-            self.log('ERROR', 'STEP=' + name + ' EXIT=' + str(rc) + ' CMD=' + shown + ' LOG=' + str(path))
-            for line in path.read_text(errors='replace').splitlines()[-40:]:
-                # Full tool output is private on disk; sanitize terminal error snippets.
-                self.log('ERROR', self.redact(line)[:600])
+            self.report_command_failure(name, path, 'EXIT=' + str(rc), shown)
             raise RuntimeError('command failed: ' + name)
         self.completed.append(name)
         self.log('INFO', 'PASS STEP=' + name + ' LOG=' + str(path))
         return path
+
+    def report_command_failure(self, name, path, reason, shown):
+        self.failed_command = name
+        if name in ('flash-id', 'backup', 'flash', 'boot-stages'):
+            self.flash_failure_diagnosis(name, path)
+        self.log('ERROR', 'STEP=' + name + ' ' + reason + ' CMD=' + shown + ' LOG=' + str(path))
+        for line in path.read_text(errors='replace').splitlines()[-40:]:
+            self.log('ERROR', self.redact(line)[:600])
 
     def redact(self, line):
         # Tool failure logs stay private; also remove configured secrets from terminal tails.
@@ -308,16 +314,22 @@ class Runner:
         return None
 
     def usb_snapshot(self, stage, expected=None):
-        """Read-only USB snapshot; never opens a serial port or toggles DTR/RTS."""
+        """Read-only USB snapshot using the same Python environment as identity()."""
         snapshot = {'stage': stage, 'expected_serial': SERIAL, 'devices': [], 'category': 'unknown'}
         try:
-            from serial.tools import list_ports
-            for p in list_ports.comports():
-                if p.vid != 0x303a or p.pid != 0x1001:
-                    continue
-                item = {'port': p.device, 'vid': p.vid, 'pid': p.pid,
-                        'serial_match': p.serial_number == SERIAL,
-                        'location': p.location or 'unknown'}
+            helper = ('import json\\nfrom serial.tools import list_ports\\n'
+                      'print(json.dumps([dict(port=p.device,vid=p.vid,pid=p.pid,serial=p.serial_number,location=p.location) '
+                      'for p in list_ports.comports() if p.vid==0x303a and p.pid==0x1001]))\\n')
+            result = subprocess.run([str(DEVICE_PYTHON), '-c', helper],
+                                    capture_output=True, text=True, timeout=8)
+            if result.returncode: raise RuntimeError('USB enumeration helper failed')
+            devices = json.loads(result.stdout)
+            if not isinstance(devices, list): raise ValueError('USB helper returned invalid JSON')
+            for device in devices:
+                if not isinstance(device, dict): raise ValueError('USB helper returned invalid entry')
+                item = {'port': device['port'], 'vid': device['vid'], 'pid': device['pid'],
+                        'serial_match': device['serial'] == SERIAL,
+                        'location': device['location'] or 'unknown'}
                 snapshot['devices'].append(item)
             matches = [p for p in snapshot['devices'] if p['serial_match']]
             if not matches:
@@ -337,16 +349,24 @@ class Runner:
                             else 'port-busy' if busy.returncode == 0 else 'occupancy-unknown')
                     except (OSError, subprocess.TimeoutExpired):
                         snapshot['category'] = 'occupancy-unknown'
-        except (ImportError, OSError) as error:
+        except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError, RuntimeError) as error:
             snapshot['category'] = 'diagnostic-unavailable'
             snapshot['error_type'] = type(error).__name__
         target = self.run / ('usb-' + stage + '.json')
-        target.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + '\n')
+        target.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + '\\n')
         self.log('CHECK', 'STEP=USB-DIAG STAGE=' + stage + ' CATEGORY=' +
                  snapshot['category'] + ' LOG=' + str(target))
         return snapshot
 
     def flash_failure_diagnosis(self, stage, path):
+        """Best-effort classification that cannot hide the original failure."""
+        try:
+            self._flash_failure_diagnosis(stage, path)
+        except Exception as error:
+            self.log('WARN', 'STEP=FLASH-DIAG STAGE=' + stage +
+                     ' diagnosis-unavailable=' + type(error).__name__)
+
+    def _flash_failure_diagnosis(self, stage, path):
         """Classify evidence without treating a suspected cause as proven."""
         try:
             output = path.read_text(errors='replace')[-160000:]
@@ -415,7 +435,7 @@ class Runner:
                 'private': sha(PRIVATE)}
 
     def test(self):
-        self.cmd('cli', ['python3', DEFAULT_REPO / 'firmware/scripts/lib/stackchan-cli.test.py'], self.fw)
+        self.cmd('cli', ['python3', self.fw / 'scripts/lib/stackchan-cli.test.py'], self.fw)
         self.cmd('unit', ['npm', 'run', 'test:unit'], self.fw)
         self.cmd('archive', ['bash', '-c', 'node --experimental-vm-modules --test --test-concurrency=1 scripts/lib/archive-*.test.mjs'], self.fw)
 
