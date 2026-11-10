@@ -23,12 +23,11 @@ jobs:
           for name in voice-ai camera web ui system; do
             echo "===== CATEGORY $name ====="
             log="$(mktemp)"
-            git merge-tree --write-tree --name-only HEAD "origin/category/$name" > "$log" 2>&1
-            rc=$?
-            if [ "$rc" -eq 0 ]; then
+            if git merge-tree --write-tree --name-only HEAD "origin/category/$name" > "$log" 2>&1; then
               echo "MERGE_TREE=clean"
               head -12 "$log"
             else
+              rc=$?
               echo "MERGE_TREE=conflicted EXIT=$rc"
               grep -E '^(CONFLICT|Auto-merging|[[:space:]]*firmware/|[[:space:]]*\.github/|[[:space:]]*docs/)' "$log" | head -100 || true
               failed=$((failed+1))
