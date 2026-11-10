@@ -431,6 +431,7 @@ for(const action of ['long-analysis','off','speaker-change','capture-failure']){
  data.conversationProvider='xiaozhi';data.speechRecognition='xiaozhi';
  vm.runInContext('setChatMode(true);photoHandler=()=>new Promise((resolve,reject)=>{finishPhoto=resolve;globalThis.failPhoto=reject})',c);
  await vm.runInContext('connect()',c);const original=connections.at(-1);
+ original.callbacks.onInputTranscript('写真を撮って',false);await tick();
  original.callbacks.onFunctionCall('camera-call','camera_describe',{question:'"\\'.repeat(80)});await tick();
  assert.equal(vm.runInContext('cameraHandoff.active',c),true);
  if(action==='off')vm.runInContext('setChatMode(false)',c);
