@@ -39,6 +39,26 @@ test('turning ON persists before changing audio ownership',()=>{
   assert.equal(h.settings.chatMode,true)
   assert.deepEqual(h.events.slice(0,3),['write','mode:true','begin'])
 })
+test('failed audio handoff rolls back persisted ON preference',()=>{
+  const settings={chatMode:false,transcriptionMode:false,directChat:{cloudConsent:true}}
+  const events=[]
+  const context={
+    getSettings:()=>settings,chatProvider:()=> 'xiaozhi',cloudConfig:()=>settings.directChat,
+    enabled:()=>settings.chatMode===true,recognitionMode:()=>false,
+    modeChanged:()=>{events.push('mode');throw Error('local speech busy')},
+    changeSettings:change=>{events.push('write');change(settings)},
+    chatSaveFailedOff:false,recognitionSaveFailedOff:false,
+    closeChat:()=>{},collectMemory:()=>{},beginConversation:()=>{},
+    resetTranscripts:()=>{},enrollment:{reset:()=>{}},robot:{drawer:{setDrawerButtonState:()=>{}},ui:{removeEffect:()=>{}}},
+    modeLabel:null,speakerStrip:null,refreshAITalk:null,refreshRecognition:null,
+    directChatStatus:()=>({enabled:settings.chatMode}),trace:()=>{},state:'off'
+  }
+  const setChatMode=vm.runInNewContext(implementation+'\nsetChatMode',context)
+  assert.throws(()=>setChatMode(true),/local speech busy/)
+  assert.equal(settings.chatMode,false)
+  assert.deepEqual(events,['write','mode','write'])
+})
+
 test('failed ON persistence does not switch audio ownership',()=>{
   const h=harness(false,true)
   assert.throws(()=>h.setChatMode(true),/SD unavailable/)

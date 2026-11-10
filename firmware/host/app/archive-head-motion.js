@@ -25,14 +25,16 @@ export function headDirectionFromText(text) {
 export async function moveHead(robot, args = {}) {
   const direction = args.direction
   if (!Object.hasOwn(HEAD_ROTATIONS, direction)) throw new Error('首の向きは上下・左右・正面から選んでください')
+  trace('[head-motion] start direction='+direction+'\n')
   robot.lookAway()
   await robot.setTorque(true)
   try {
     await robot.setPose({ ...robot.pose.body, rotation: { ...HEAD_ROTATIONS[direction] } }, .5)
     await new Promise(resolve => Timer.set(resolve, 650))
-    trace('[head-motion] commanded direction=' + direction + '\n')
+    trace('[head-motion] commanded direction=' + direction + ' verified=false\n')
     return { commanded: true, direction }
   } catch (error) {
+    trace('[head-motion] failed direction=' + direction + ' reason=' + String(error).slice(0,120) + '\n')
     await robot.setTorque(false)
     throw error
   }
