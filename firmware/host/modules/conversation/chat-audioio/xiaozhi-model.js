@@ -38,6 +38,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
     this.encoderTimer = undefined
     this.sessionID = ''
     this.uploading = false
+    this.audioPath = { fragments: 0, skipped: 0, decoded: 0, failures: 0, pcmBytes: 0 }
     this.listeningMode = 'auto'
     this.features = {}
     this.helloExtension = {}
@@ -49,6 +50,8 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
     this.pcmRingState = undefined
     this.resetDecodeStats()
     this.resetEncodeStats()
+    this.audioDiagnosticTimer = undefined
+    this.nextEncodePathAt = 0
   }
 
   configure(message) {
@@ -119,16 +122,34 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
       this.postMessage({ id: 'failed', string: this.configurationError })
       return
     }
-    super.connect(message)
+    this.postAudioDiagnostic('[audio-path] stage=worker event=connect ms=' + Date.now() + '\n')
+    if (this.audioDiagnosticTimer === undefined) {
+      this.audioDiagnosticTimer = Timer.repeat(() => {
+        this.reportEncodePath('heartbeat')
+        this.reportAudioPath(true)
+      }, 2000)
+    }
+    try { super.connect(message) } catch (error) {
+      this.reportEncodePath('connect_failed', true)
+      if (this.audioDiagnosticTimer !== undefined) Timer.clear(this.audioDiagnosticTimer)
+      this.audioDiagnosticTimer = undefined
+      throw error
+    }
   }
 
   disconnect() {
+    this.reportEncodePath('disconnect', true)
+    this.reportAudioPath(true)
     this.uploading = false
     this.encoder?.clear()
     super.disconnect()
   }
 
   close() {
+    this.reportEncodePath('close', true)
+    this.reportAudioPath(true)
+    if (this.audioDiagnosticTimer !== undefined) Timer.clear(this.audioDiagnosticTimer)
+    this.audioDiagnosticTimer = undefined
     try {
       super.close()
     } finally {
@@ -155,6 +176,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
   }
 
   onOpen() {
+    this.postAudioDiagnostic('[audio-path] stage=transport event=hello_request ms=' + Date.now() + '\n')
     const features = {}
     if (this.features.mcp) features.mcp = true
     if (this.features.aec) features.aec = true
@@ -239,6 +261,8 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
       this.resetEncodeStats()
       this.resetDecodeStats()
       this.uploading = true
+      this.postAudioDiagnostic('[audio-path] stage=transport event=hello_ok ms=' + Date.now() + ' sampleRate=' + sampleRate + '\n')
+      this.reportEncodePath('hello', true)
       this.postMessage({
         id: 'configureAudio',
         inputSampleRate: INPUT_SAMPLE_RATE,
@@ -268,9 +292,11 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
     this.resetEncodeStats()
     this.uploading = true
     this.sendProtocolEvent(this.withSession({ type: 'listen', state: 'start', mode }))
+    this.reportEncodePath('listen_start', true)
   }
 
   stopListening() {
+    this.reportEncodePath('listen_stop', true)
     this.uploading = false
     this.encoder?.clear()
     this.sendProtocolEvent(this.withSession({ type: 'listen', state: 'stop' }))
@@ -288,6 +314,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
   }
 
   abort(message = {}) {
+    this.reportEncodePath('abort', true)
     this.uploading = false
     this.encoder?.clear()
     this.decoderPacket = undefined
@@ -299,7 +326,10 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
     )
   }
 
-  listened() {
+  listened(message = {}) {
+    // Main and Worker event queues can cross: a new cloud TTS may already have
+    // started before the previous turn's completion reaches this Worker.
+    if (this.replyActive || (message.turn !== undefined && message.turn !== this.playbackTurn)) return
     this.startListening({ mode: this.listeningMode })
   }
 
@@ -319,19 +349,21 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
         if (this.encodeMaxUs < this.encoder.encodeUs) this.encodeMaxUs = this.encoder.encodeUs
       }
     } catch (error) {
+      this.reportEncodePath('encoder_failure', true)
       this.fail(String(error?.message ?? error))
     }
   }
 
   read(data, options) {
     if (!options.binary) return super.read(data, options)
+    this.audioPath.fragments++
     if (this.recognitionOnly) return
     if (!this.decoder) {
       this.fail('received Opus audio before XiaoZhi hello')
       return
     }
     // Protocol v1 devices do not play downlink audio while their microphone turn is active.
-    if (this.uploading) return
+    if (this.uploading) { this.audioPath.skipped++; this.reportAudioPath(); return }
 
     let packet = new Uint8Array(data)
     if (this.decoderPacket || options.more) {
@@ -354,15 +386,62 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
 
     try {
       const pcmBytes = this.decoder.decode(packet, this.decoderPCM)
+      this.audioPath.decoded++
+      this.audioPath.pcmBytes += pcmBytes
       this.parser.copy(new Uint8Array(this.decoderPCM, 0, pcmBytes))
       this.decodePackets += 1
       this.decodeCompressedBytes += packet.byteLength
       this.decodePCMBytes += pcmBytes
       this.decodeUs += this.decoder.decodeUs
       if (this.decodeMaxUs < this.decoder.decodeUs) this.decodeMaxUs = this.decoder.decodeUs
+      this.reportAudioPath()
     } catch (error) {
+      this.audioPath.failures++
+      this.reportAudioPath(true)
       this.fail(String(error?.message ?? error))
     }
+  }
+
+  postAudioDiagnostic(line) {
+    // Cross the Worker boundary explicitly. Worker trace alone is not guaranteed
+    // to reach the USB debug-ring installed in the main VM.
+    const safe = String(line).slice(0, 640).replace(/\n+$/, '')
+    try { this.postMessage({ id: 'audioDiagnostics', line: safe }) } catch (_) {}
+    try { trace(safe + '\n') } catch (_) {}
+  }
+
+  reportEncodePath(event = 'snapshot', force = false) {
+    const now = Date.now()
+    if (!force && now < this.nextEncodePathAt) return
+    this.nextEncodePathAt = now + 2000
+    // Null means unavailable; encoding/sending attempts do not prove delivery.
+    const captured = this.encoder && this.encodeCapturedStart !== undefined
+      ? this.encoder.capturedPcmBytes - this.encodeCapturedStart : null
+    const dropped = this.encoder && this.encodeDroppedStart !== undefined
+      ? this.encoder.droppedPcmBytes - this.encodeDroppedStart : null
+    const transport = this.transportStatus?.()
+    try { this.postAudioDiagnostic('[audio-path] stage=upload event=' + event + ' ms=' + now +
+      ' turn=' + (this.playbackTurn ?? 'null') +
+      ' uploading=' + Number(this.uploading) + ' encoderReady=' + Number(!!this.encoder) +
+      ' wsPresent=' + Number(!!this.ws) +
+      ' capturedPcmBytes=' + (Number.isFinite(captured) ? captured : 'null') +
+      ' droppedPcmBytes=' + (Number.isFinite(dropped) ? dropped : 'null') +
+      ' encodedPackets=' + this.encodePackets + ' encodedPcmBytes=' + this.encodePCMBytes +
+      ' attemptedSendBytes=' + this.encodeCompressedBytes +
+      ' socketState=' + (transport?.connectionState ?? 'null') +
+      ' socketQueueBytes=' + (transport?.queuedBytes ?? 'null') +
+      ' submittedSocketBytes=' + (transport?.submittedSocketBytes ?? 'null') +
+      ' droppedNoSocketBytes=' + (transport?.droppedNoSocketBytes ?? 'null') +
+      ' backpressureFailures=' + (transport?.backpressureFailures ?? 'null') + '\n') } catch (_) {}
+  }
+
+  reportAudioPath(force = false) {
+    const now = Date.now()
+    if (!force && now < (this.nextAudioPathAt ?? 0)) return
+    this.nextAudioPathAt = now + 2000
+    // Counters only; this does not log speech, packet contents or credentials.
+    try { this.postAudioDiagnostic('[audio-path] stage=decode ms=' + now + ' turn=' + (this.playbackTurn ?? 0) +
+      Object.entries(this.audioPath).map(([key, value]) => ' ' + key + '=' + value).join('') + '\n') } catch (_) {}
   }
 
   resetDecodeStats() {
@@ -384,6 +463,8 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
   }
 
   stt(message) {
+    this.postAudioDiagnostic('[audio-path] stage=asr event=final ms=' + Date.now() +
+      ' textChars=' + (typeof message.text === 'string' ? message.text.length : 'null') + '\n')
     if (typeof message.text === 'string' && message.text.trim()) { this.replyRequested = true; this.replyDeadline = Date.now() + 30000 }
     if(this.recognitionOnly){this.abort({reason:'recognition_only'});this.postPresentation({id:'receiveInputText',text:message.text});return}
     if (message.glyph_push) {
@@ -429,6 +510,9 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
     if (this.suppressReply) return
     switch (message.state) {
       case 'start':
+        this.reportEncodePath('tts_start', true)
+        this.playbackTurn = (this.playbackTurn ?? 0) + 1
+        this.postAudioDiagnostic('[audio-path] stage=tts event=start ms=' + Date.now() + ' turn=' + this.playbackTurn + '\n')
         const average = this.encodePackets ? Math.round(this.encodeUs / this.encodePackets) : 0
         const load = this.encodePackets ? (100 * this.encodeUs) / (this.encodePackets * INPUT_FRAME_DURATION * 1000) : 0
         const captured = (this.encoder?.capturedPcmBytes ?? 0) - this.encodeCapturedStart
@@ -442,9 +526,12 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
         this.decoderPacket = undefined
         this.resetDecodeStats()
         this.postPresentation({ id: 'receiveOutputText', text: '', more: true })
-        this.post('listen')
+        this.postMessage({ id: 'listen', turn: this.playbackTurn })
         break
       case 'sentence_start':
+        this.postAudioDiagnostic('[audio-path] stage=tts event=sentence_start ms=' + Date.now() +
+          ' turn=' + (this.playbackTurn ?? 'null') +
+          ' textChars=' + (typeof message.text === 'string' ? message.text.length : 'null') + '\n')
         if (message.glyph_push) {
           this.postPresentation({
             id: 'receiveGlyphPush',
@@ -456,6 +543,9 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
         this.postPresentation({ id: 'receiveOutputText', text: message.text, more: true })
         break
       case 'stop':
+        this.postAudioDiagnostic('[audio-path] stage=tts event=stop ms=' + Date.now() +
+          ' turn=' + (this.playbackTurn ?? 'null') + '\n')
+        this.reportAudioPath(true)
         if (!this.decoder) {
           this.fail('received XiaoZhi tts stop before hello')
           break
@@ -471,7 +561,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
         this.parser.copy(this.silence)
         this.parser.done()
         this.postPresentation({ id: 'receiveOutputText', text: '' })
-        this.post('speak')
+        this.postMessage({ id: 'speak', turn: this.playbackTurn })
         this.replyActive = false
         break
     }
@@ -650,6 +740,10 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
   }
 
   fail(message) {
+    this.postAudioDiagnostic('[audio-path] stage=worker event=failed ms=' + Date.now() +
+      ' reasonLength=' + String(message ?? '').length + '\n')
+    this.reportEncodePath('failed', true)
+    this.reportAudioPath(true)
     this.postMessage({ id: 'failed', string: message })
     this.close()
   }

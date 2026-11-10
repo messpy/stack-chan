@@ -1,0 +1,46 @@
+name: Archive Voice Command Tests
+
+on:
+  pull_request:
+    branches:
+      - stackchan-super
+    paths:
+      - 'firmware/host/app/archive-voice-*.js'
+      - 'firmware/scripts/lib/archive-voice-*.test.mjs'
+      - 'firmware/scripts/koeact-preflight.mjs'
+      - 'firmware/scripts/lib/koeact-preflight.test.mjs'
+      - '.github/workflows/archive-voice-command.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  voice-command-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Parse all affected source and manifests before running tests
+        working-directory: firmware
+        run: |
+          node --check host/app/archive-voice-control.js
+          node --check host/app/archive-voice-command-policy.js
+          node --check host/app/archive-direct-chat.js
+          node --check host/app/lan-archive.js
+          node --check scripts/lib/archive-speaker-selection.test.mjs
+          node --check scripts/koeact-preflight.mjs
+          node --input-type=module -e "import fs from 'node:fs'; for (const p of ['host/app/manifest.json','host/app/manifest_archive.example.json']) JSON.parse(fs.readFileSync(p,'utf8'));"
+      - name: Test KoeAct adapter and STT fallback
+        working-directory: firmware
+        run: node --test scripts/lib/archive-voice-command-policy.test.mjs scripts/lib/archive-voice-control.test.mjs
+      - name: Check KoeAct model and flash preflight
+        working-directory: firmware
+        run: node --test scripts/lib/koeact-preflight.test.mjs
+      - name: Run complete archive UI regression tests
+        working-directory: firmware
+        run: npm run test:archive-ui

@@ -1,0 +1,34 @@
+name: Archive audio observability
+
+on:
+  pull_request:
+    paths:
+      - 'firmware/host/app/archive-chat-audioio.js'
+      - 'firmware/host/modules/conversation/chat-audioio/**'
+      - 'firmware/scripts/lib/archive-audio-log-collector*'
+      - 'firmware/scripts/lib/archive-xiaozhi-recognition.test.mjs'
+      - 'firmware/scripts/lib/archive-xiaozhi-playback-lifecycle.test.mjs'
+      - '.github/workflows/archive-audio-observability.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate modified firmware JavaScript syntax
+        run: |
+          node --check firmware/host/app/archive-chat-audioio.js
+          node --check firmware/host/modules/conversation/chat-audioio/xiaozhi-model.js
+          node --check firmware/host/modules/conversation/chat-audioio/server-chat-websocket-worker.js
+      - name: Verify lossless collector and incomplete-vs-zero
+        run: node --test firmware/scripts/lib/archive-audio-log-collector.test.mjs
+      - name: Verify XiaoZhi playback and heartbeat (platform I/O mocked)
+        run: node --experimental-vm-modules --test firmware/scripts/lib/archive-xiaozhi-playback-lifecycle.test.mjs firmware/scripts/lib/archive-xiaozhi-recognition.test.mjs

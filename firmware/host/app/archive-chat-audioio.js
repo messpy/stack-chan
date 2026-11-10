@@ -45,22 +45,88 @@ export default class ChatAudioIO extends ChatAudioIOBase {
     this.output = null
     const input = new AudioIn({
       sampleRate: this.inputSampleRate,
-      onReadable: () => this.captureInput(input),
+      onReadable: () => {
+        try { this.captureInput(input) } catch (error) {
+          if (this.inputDiagnostics) this.inputDiagnostics.readFailures++
+          this.reportInputPath('callback_failed', true)
+          this.failed({ string: 'Audio input callback failed: ' + String(error?.message ?? error) })
+        }
+      },
     })
     this.input = input
+    this.inputDiagnostics = { callbacks: 0, capturedBytes: 0, forwardedBytes: 0, ignoredBytes: 0,
+      oversizeBytes: 0, emptyReads: 0, readFailures: 0 }
+    this.nextInputReportAt = 0
+    this.reportInputPath('start', true)
     input.start()
   }
 
+  listen(message = {}) {
+    if (this.closed || this.playback?.terminal) return
+    if (![ChatAudioIO.SPEAKING, ChatAudioIO.LISTENING, ChatAudioIO.WAITING].includes(this.state)) return
+    this.playbackTurn = message.turn
+    this.cancelPlaybackDrain(this.playback)
+    if (this.state === ChatAudioIO.SPEAKING) super.listen()
+    else {
+      // A tool continuation may start while the previous PCM is still draining.
+      // Keep that PCM/output, but stop treating the stream as finished.
+      this.state = ChatAudioIO.LISTENING
+      this.ensureOutput()
+      this.onStateChanged(this.state)
+    }
+  }
+
+  speak(message = {}) {
+    if (this.closed || this.playback?.terminal) return
+    if (message.turn !== undefined && message.turn !== this.playbackTurn) return
+    super.speak()
+  }
+
+  cancelPlaybackDrain(playback) {
+    if (!playback) return
+    playback.drainGeneration = (playback.drainGeneration ?? 0) + 1
+    playback.drainUntil = 0
+    playback.resuming = false
+  }
+
+  reportInputPath(event = 'snapshot', force = false) {
+    const now = Date.now()
+    if (!force && now < (this.nextInputReportAt ?? 0)) return
+    this.nextInputReportAt = now + 2000
+    const d = this.inputDiagnostics
+    try { trace('[audio-path] stage=mic event=' + event + ' ms=' + now +
+      ' turn=' + (this.playbackTurn ?? 'null') + ' state=' + this.state +
+      ' inputReady=' + Number(!!this.input) +
+      ' callbacks=' + (d?.callbacks ?? 'null') +
+      ' capturedBytes=' + (d?.capturedBytes ?? 'null') +
+      ' forwardedBytes=' + (d?.forwardedBytes ?? 'null') +
+      ' ignoredBytes=' + (d?.ignoredBytes ?? 'null') +
+      ' oversizeBytes=' + (d?.oversizeBytes ?? 'null') +
+      ' emptyReads=' + (d?.emptyReads ?? 'null') +
+      ' readFailures=' + (d?.readFailures ?? 'null') + '\n') } catch (_) {}
+  }
+
   captureInput(input) {
-    if (this.input !== input || !this.microphone) return
+    if (this.input !== input) return
+    if (this.inputDiagnostics) this.inputDiagnostics.callbacks++
+    if (!this.microphone) { this.reportInputPath('microphone_disabled'); return }
     // Queued notifications may contain stale sizes; read current availability.
     const data = input.read()
-    if (!data?.byteLength) return
+    if (!data?.byteLength) {
+      if (this.inputDiagnostics) this.inputDiagnostics.emptyReads++
+      this.reportInputPath()
+      return
+    }
+    if (this.inputDiagnostics) this.inputDiagnostics.capturedBytes += data.byteLength
     if (!this.ready) {
       this.ready = true
       if (this.state !== ChatAudioIO.DISCONNECTED) this.onStateChanged(this.state)
     }
-    if (data.byteLength > this.inputBufferSize) return
+    if (data.byteLength > this.inputBufferSize) {
+      if (this.inputDiagnostics) this.inputDiagnostics.oversizeBytes += data.byteLength
+      this.reportInputPath('oversize', true)
+      return
+    }
     if (this.inputBufferOffset + data.byteLength > this.inputBufferSize) this.inputBufferOffset = 0
     new Uint8Array(this.inputBuffer, this.inputBufferOffset, data.byteLength).set(new Uint8Array(data))
     // Metering is only for UI; scan sparsely across both stereo channels.
@@ -74,8 +140,10 @@ export default class ChatAudioIO extends ChatAudioIOBase {
         channels: input.channels,
         capturedAt: Date.now(),
       })
-    }
+      if (this.inputDiagnostics) this.inputDiagnostics.forwardedBytes += data.byteLength
+    } else if (this.inputDiagnostics) this.inputDiagnostics.ignoredBytes += data.byteLength
     this.inputBufferOffset += data.byteLength
+    this.reportInputPath()
   }
 
   deferTerminalPlayback(state,error=''){
@@ -86,10 +154,13 @@ export default class ChatAudioIO extends ChatAudioIOBase {
   }
 
   disconnected(){
+    this.reportInputPath('disconnected', true)
+    trace('[audio-path] stage=adapter event=disconnected ms=' + Date.now() + '\n')
     if(this.closed||this.deferTerminalPlayback(ChatAudioIO.DISCONNECTED))return
     this.releaseAudio();this.state=ChatAudioIO.DISCONNECTED;this.onStateChanged(this.state)
   }
   releaseAudio(){
+    this.reportInputPath('release', true)
     this.closePlayback()
     const input=this.input,output=this.output;this.input=null;this.output=null;this.ready=false
     try{input?.close()}finally{output?.close()}
@@ -97,6 +168,9 @@ export default class ChatAudioIO extends ChatAudioIOBase {
 
   failed(message){
     const reason=String(message?.string||'')
+    this.reportInputPath('failed', true)
+    trace('[audio-path] stage=adapter event=failed ms=' + Date.now() +
+      ' reasonLength=' + reason.length + '\n')
     if(/network|connection.*clos|socket|disconnect/i.test(reason)&&this.deferTerminalPlayback(ChatAudioIO.FAILED,reason))return
     if(this.closed)return
     this.releaseAudio();this.error=reason;this.state=ChatAudioIO.FAILED;this.onStateChanged(this.state)
@@ -104,6 +178,7 @@ export default class ChatAudioIO extends ChatAudioIOBase {
 
   closePlayback(){
     const playback=this.playback;this.playback=undefined;
+    if(playback)this.reportPlaybackPath(playback,playback.health.drained?1:0);
     if(playback){Timer.clear(playback.timer);playback.queue.close();}
   }
 
@@ -117,6 +192,9 @@ export default class ChatAudioIO extends ChatAudioIOBase {
 
   ensureOutput() {
     if (this.output) return
+    this.reportInputPath('output_handoff', true)
+    trace('[audio-path] stage=output event=start ms=' + Date.now() +
+      ' turn=' + (this.playbackTurn ?? 'null') + '\n')
     this.input?.close();this.input=null;this.ready=false
     const rate=this.outputSampleRate||24000
     // Async inherits the SDK base class, bypassing CoreS3's synchronous wrapper.
@@ -153,14 +231,24 @@ export default class ChatAudioIO extends ChatAudioIOBase {
       if(health.underruns!==plan.underruns)trace('[playback] native queue starvation count='+plan.underruns+'\n')
       health.underruns=plan.underruns;health.bufferedMs=Math.round(plan.available*1000/(playback.rate*2));
       health.queuedMs=Math.round(plan.queuedBytes*1000/(playback.rate*2));health.prebuffering=plan.prebuffering
+      if(now>=(playback.nextPathAt??0)){
+        playback.nextPathAt=now+2000
+        this.reportPlaybackPath(playback,0)
+      }
       if(playback.lastLevel!==playback.queue.lastLevel){playback.lastLevel=playback.queue.lastLevel;this.onOutputLevelChanged?.(playback.lastLevel)}
       this.finishPlayback(playback,plan.complete)
-    }catch(error){this.closePlayback();this.failed({string:'Audio playback failed: '+String(error?.message||error)})}
+    }catch(error){
+      trace('[audio-path] stage=output event=pump_failed ms=' + Date.now() +
+        ' reasonLength=' + String(error?.message ?? error).length + '\n')
+      this.reportPlaybackPath(playback,0)
+      this.closePlayback()
+      this.failed({string:'Audio playback failed: '+String(error?.message||error)})
+    }
   }
 
   finishPlayback(playback, complete) {
     if (!complete) {
-      playback.drainUntil = 0
+      this.cancelPlaybackDrain(playback)
       return
     }
     // Native writes queue audio; keep output alive until the final samples drain.
@@ -168,20 +256,38 @@ export default class ChatAudioIO extends ChatAudioIOBase {
       playback.drainUntil = Date.now() + Math.ceil((playback.maxWritable * 1000) / (playback.rate * 2)) + 80
     if (Date.now() >= playback.drainUntil && !playback.resuming) {
       playback.resuming=true
+      const generation = playback.drainGeneration ?? 0
+      const turn = this.playbackTurn
       // Leave the AudioOut native callback before closing I2S, constructing
       // AudioIn and running state/UI callbacks on the native C stack.
       Timer.set(()=>{
-        if(this.output!==playback.output||this.state!==ChatAudioIO.WAITING||!this.worker)return
+        if(this.closed||this.output!==playback.output||this.playback!==playback||generation!==(playback.drainGeneration??0)||this.state!==ChatAudioIO.WAITING||!this.worker)return
+        // PCM or a new stop can arrive after this callback was queued.
+        if(playback.queue.pending||this.outputBufferHead!==this.outputBufferTail||Date.now()<playback.queue.hardwareUntil){
+          this.cancelPlaybackDrain(playback)
+          return
+        }
         playback.health.drained=true
+        this.reportPlaybackPath(playback,1)
         if(playback.terminal){
           const terminal=playback.terminal;this.closePlayback();this.output?.close();this.output=null;
           this.state=terminal.state;this.error=terminal.error;this.onStateChanged(this.state);return
         }
-        this.worker.postMessage({id:'listened'})
+        this.worker.postMessage({id:'listened', ...(turn === undefined ? {} : {turn})})
         this.state=ChatAudioIO.SPEAKING
         this.ensureInput()
       },0)
     }
+  }
+
+  reportPlaybackPath(playback, completed) {
+    const q=playback.queue
+    // Native completion means submitted to I2S, not independently measured
+    // speaker output. completed=1 additionally passed the conservative DMA wait.
+    try { trace('[audio-path] stage=output ms='+Date.now()+' turn='+(this.playbackTurn??0)+
+      ' submittedBytes='+q.submittedBytes+' completedBytes='+q.completedBytes+
+      ' completedChunks='+q.completedChunks+' failures='+q.failures+' pending='+q.pending+
+      ' completed='+completed+' volume='+Math.round(this.volume*1000)+'\n') } catch (_) {}
   }
 
   createWorker(specifier, instructions, functions, voiceID, providerID, modelID, apiKey, recognitionOnly=false) {
@@ -287,6 +393,15 @@ export default class ChatAudioIO extends ChatAudioIOBase {
 
   sendMcpMessage(payload) {
     this.worker?.postMessage({ id: 'sendMcpMessage', payload })
+  }
+
+  audioDiagnostics(message) {
+    // Worker data is untrusted: only bounded, single-line numeric diagnostics
+    // may enter the release USB ring, never transcript or credentials.
+    const line = message?.line
+    if (typeof line !== 'string' || line.length > 640 ||
+        !line.startsWith('[audio-path]') || /[\r\n]/.test(line)) return
+    trace(line + '\n')
   }
 
   receiveEmotion(message) {
