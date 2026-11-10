@@ -1,0 +1,50 @@
+name: Archive Idle Sleep Tests
+
+on:
+  pull_request:
+    branches:
+      - stackchan-super
+    paths:
+      - 'firmware/host/app/archive-idle-*.js'
+      - 'firmware/host/app/lan-archive.js'
+      - 'firmware/host/app/archive-custom-face.js'
+      - 'firmware/host/app/archive-direct-chat.js'
+      - 'firmware/host/app/archive-offline.js'
+      - 'firmware/host/app/manifest.json'
+      - 'firmware/host/app/manifest_archive.example.json'
+      - 'firmware/scripts/lib/archive-offline.test.mjs'
+      - 'firmware/scripts/lib/archive-idle-sleep.test.mjs'
+      - '.github/workflows/archive-idle-sleep.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  idle-sleep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Parse archive UI sources before running tests
+        working-directory: firmware
+        run: |
+          node --check host/app/archive-idle-face.js
+          node --check host/app/archive-idle-policy.js
+          node --check host/app/lan-archive.js
+          node --check host/app/archive-custom-face.js
+          node --check host/app/archive-direct-chat.js
+          node --check host/app/archive-offline.js
+          node --check scripts/lib/archive-offline.test.mjs
+          node --check scripts/lib/archive-idle-sleep.test.mjs
+          node --input-type=module -e "import fs from 'node:fs'; for (const p of ['host/app/manifest.json','host/app/manifest_archive.example.json']) JSON.parse(fs.readFileSync(p,'utf8'));"
+      - name: Run two-stage sleep policy/render regression
+        working-directory: firmware
+        run: node --test scripts/lib/archive-idle-sleep.test.mjs
+      - name: Run complete archive UI regression suite
+        working-directory: firmware
+        run: npm run test:archive-ui

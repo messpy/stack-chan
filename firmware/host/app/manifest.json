@@ -58,6 +58,8 @@
     "app-behavior": "./app-behavior",
     "app-default-behavior": "./default-behavior/behavior",
     "app-default-behavior/on-context-created": "./default-behavior/on-context-created",
+    "archive-idle-face": "./archive-idle-face",
+    "archive-idle-policy": "./archive-idle-policy",
     "app-default-behavior/on-launch": "./default-behavior/on-launch",
     "app-default-behavior/m5-head-pet": "./default-behavior/m5-head-pet",
     "app-default-behavior/m5-pet-effect": "./default-behavior/m5-pet-effect",
