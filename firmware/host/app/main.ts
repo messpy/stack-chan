@@ -4,6 +4,7 @@ import { runContextCreatedBehaviors, type StackchanAppBehavior } from 'app-behav
 import { resolveAppBehaviors } from 'app-behavior-resolver'
 import defaultBehavior from 'app-default-behavior'
 import { installLaunchShortcut, type LaunchShortcutButton, prepareAppLaunch } from 'app-launch'
+import { makeStartupFailureRecord } from 'startup-diagnostics'
 import { type BootWiFiStatus, startHostBootServices } from 'boot-services'
 import type { StackchanContext } from 'capabilities'
 import { createStackchanContext, getHostDeviceEnvironment } from 'compose'
@@ -100,6 +101,33 @@ function waitForBootWiFiRecoveryChoice(status: BootWiFiStatus & { reason: string
   })
 }
 
+// Only fixed identifiers and scalar measurements may cross the unauthenticated
+// startup USB channel. The original exception is retained only by the normal
+// private diagnostic path; never serialize its message or stack.
+function emitStartupDiagnostic(phase: StartupPhase, checkpoint: string, error: unknown): void {
+  const errorClass = startupErrorClass(error)
+  trace(`[startup-diag] checkpoint=${checkpoint} phase=${phase} error=${errorClass}\n`)
+  try {
+    if (!Modules.has('archive-usb')) return
+    const usb = Modules.importNow('archive-usb') as {
+      writeDebugUSB(packet: string): boolean
+      resetReason(): number
+      heapStatus(): { internalFree?: number; internalLargest?: number; psramFree?: number }
+    }
+    let resetReason = 0
+    let heap: { internalFree?: number; internalLargest?: number; psramFree?: number } = {}
+    try { resetReason = usb.resetReason() } catch { /* Unknown; report zero. */ }
+    try { heap = usb.heapStatus() } catch { /* Unknown; report zeros. */ }
+    const record = makeStartupFailureRecord({ phase, checkpoint, errorClass, resetReason, heap })
+    if (!usb.writeDebugUSB(JSON.stringify(record))) {
+      trace('[startup-diag] usb=unavailable\n')
+    }
+  } catch {
+    // The observer must never replace the original startup error or modify settings.
+    trace('[startup-diag] usb=unavailable\n')
+  }
+}
+
 async function main() {
   try {
     if (Modules.has('archive-debug')) (Modules.importNow('archive-debug') as { installDebugLog: () => void }).installDebugLog()
@@ -111,19 +139,28 @@ async function main() {
   let dockRuntime: StackchanDockRuntime | undefined
   let context: StackchanContext | undefined
   let phase: StartupPhase = 'initialization'
+  let checkpoint = 'dock-start'
   try {
     dockRuntime = startStackchanDock(Modules, loadModConfig())
     if (dockRuntime) trace('[main] Stackchan Dock started\n')
+    checkpoint = 'platform-input'
     installPlatformInputBridge()
+    checkpoint = 'localization'
     initializeLocalization(loadPreferences(DOMAIN.ui).language)
+    checkpoint = 'timezone'
     applyTimezone(loadPreferences(DOMAIN.time).timezone)
 
+    checkpoint = 'behavior-resolve'
     trace('[main] loading app behaviors\n')
     const appBehaviors = loadAppBehaviors()
     // Launch behaviors run before startHostBootServices so the splash screen is
     // visible while network setup blocks.
     phase = 'launch'
-    const launch = await prepareAppLaunch(appBehaviors, prepareExperimentalMiniApps)
+    checkpoint = 'on-launch'
+    const launch = await prepareAppLaunch(appBehaviors, () => {
+      checkpoint = 'miniapp-prepare'
+      return prepareExperimentalMiniApps()
+    })
     trace(`[main] onLaunch shouldCreateContext=${launch.shouldCreateContext}\n`)
     if (!launch.shouldCreateContext) {
       installModManagerShortcut()
@@ -135,34 +172,48 @@ async function main() {
     const experimentalMiniApps = launch.prepared
 
     phase = 'network'
+    checkpoint = 'network-start'
     const bootServices = startHostBootServices({
       wifi: {
         onStatusChanged: showWiFiConnectionStatus,
         promptRecoveryChoice: waitForBootWiFiRecoveryChoice,
       },
     })
+    checkpoint = 'network-ready'
     const networkReady = await bootServices.connectivity.network.ready
     trace(`[main] network ready: ${networkReady.status}\n`)
     phase = 'context'
+    checkpoint = 'preferences'
     const preferences = loadPreferenceConfig()
     const ownedDock = dockRuntime
+    checkpoint = 'context-create'
     context = createStackchanContext(preferences, {
       connectivity: bootServices.connectivity,
       remoteConversationSession: ownedDock?.remoteConversationSession,
       closeHandlers: ownedDock ? [() => ownedDock.close()] : undefined,
     })
     phase = 'behavior'
+    checkpoint = 'dock-context'
     ownedDock?.onContextCreated(context)
+    checkpoint = 'miniapp-register'
     registerExperimentalMiniApps(experimentalMiniApps, context.ui.miniApps)
     trace('[main] app context created\n')
+    checkpoint = 'context-behaviors'
     await runContextCreatedBehaviors(appBehaviors, context, {
       device: getHostDeviceEnvironment(),
       config: preferences,
     })
-    if (Modules.has('lan-archive')) (Modules.importNow('lan-archive') as { startArchive: (context: StackchanContext) => void }).startArchive(context)
-    trace('[main] app behaviors ready\n')
+    checkpoint = 'archive-import'
+    if (Modules.has('lan-archive')) {
+      const archive = Modules.importNow('lan-archive') as { startArchive: (context: StackchanContext) => void }
+      checkpoint = 'archive-start'
+      archive.startArchive(context)
+    }
+    checkpoint = 'finalize'
     installModManagerShortcut()
+    trace('[main] app behaviors ready\n')
   } catch (error) {
+    emitStartupDiagnostic(phase, checkpoint, error)
     // A newer/disposed view during async cleanup owns its screen. Do not
     // replace it with an older startup attempt's failure.
     const failedApplication = globalEnv.application
