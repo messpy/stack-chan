@@ -317,9 +317,9 @@ class Runner:
         """Read-only USB snapshot using the same Python environment as identity()."""
         snapshot = {'stage': stage, 'expected_serial': SERIAL, 'devices': [], 'category': 'unknown'}
         try:
-            helper = ('import json\\nfrom serial.tools import list_ports\\n'
+            helper = ('import json\nfrom serial.tools import list_ports\n'
                       'print(json.dumps([dict(port=p.device,vid=p.vid,pid=p.pid,serial=p.serial_number,location=p.location) '
-                      'for p in list_ports.comports() if p.vid==0x303a and p.pid==0x1001]))\\n')
+                      'for p in list_ports.comports() if p.vid==0x303a and p.pid==0x1001]))\n')
             result = subprocess.run([str(DEVICE_PYTHON), '-c', helper],
                                     capture_output=True, text=True, timeout=8)
             if result.returncode: raise RuntimeError('USB enumeration helper failed')
@@ -353,7 +353,7 @@ class Runner:
             snapshot['category'] = 'diagnostic-unavailable'
             snapshot['error_type'] = type(error).__name__
         target = self.run / ('usb-' + stage + '.json')
-        target.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + '\\n')
+        target.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + '\n')
         self.log('CHECK', 'STEP=USB-DIAG STAGE=' + stage + ' CATEGORY=' +
                  snapshot['category'] + ' LOG=' + str(target))
         return snapshot
