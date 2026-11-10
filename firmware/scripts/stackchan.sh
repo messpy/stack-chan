@@ -756,8 +756,8 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
         ]
         for label, state in states.items():
             if label == 'テスト' and counts['tests']:
-                state += ' (' + str(counts['pass']) + '/' + str(counts['tests']) +
-                         ' 成功、' + str(counts['fail']) + '件失敗)'
+                state += (' (' + str(counts['pass']) + '/' + str(counts['tests']) +
+                          ' 成功、' + str(counts['fail']) + '件失敗)')
             lines.append(label + '    ' + state)
         if fw_hash: lines.append('ビルドSHA256  ' + short(fw_hash))
         if rc:
