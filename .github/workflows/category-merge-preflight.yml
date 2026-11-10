@@ -50,6 +50,8 @@ jobs:
             else
               echo "MERGE=conflicted"
               git diff --name-only --diff-filter=U | head -100
+              echo 'UNMERGED_BLOB_SHA:'
+              git ls-files --unmerged | head -80
               sed -n '1,25p' /tmp/category-merge.log
               git merge --abort
             fi
