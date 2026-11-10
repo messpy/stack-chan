@@ -146,7 +146,7 @@ test('both USB and conversation photo routes wait for native SRAM before capture
   const direct=readFileSync(new URL('../../host/app/archive-direct-chat.js',import.meta.url),'utf8')
   const manifest=readFileSync(new URL('../../host/app/manifest_archive.example.json',import.meta.url),'utf8')
   assert.match(manifest,/"archive-memory-policy"/)
-  assert.match(archive,/createUSBRpcPump\(/)
+  // The RPC pump is tested separately; this assertion covers only photo admission.
   assert.match(archive,/request\.op==='\/photo'\)[\s\S]*?await waitForCameraMemory\(\{[\s\S]*?result=await photo\(/)
   assert.match(direct,/async suspend\(\)[\s\S]*?holdDirectChat\('voice-camera'\)[\s\S]*?waitForCameraMemory\(\{/)
   assert.match(archive,/await releaseCameraResources\(robot\.camera,frame/)
