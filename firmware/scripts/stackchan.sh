@@ -580,233 +580,98 @@ if not seen: raise SystemExit('USB never became available during bounded log cap
         if self.a.logs and not self.a.write: self.logs()
 
     def final_summary(self, rc, failed_step):
-        # A local host record is not a live readback from the device.
-        def short(value, width=12):
-            return str(value)[:width] if value else 'unknown'
-        def safe_git(args):
+        def git(*args):
             try:
-                return subprocess.check_output(['git', '-C', str(self.repo)] + args,
+                return subprocess.check_output(['git', '-C', str(self.repo), *args],
                     stderr=subprocess.DEVNULL, text=True, timeout=5).strip()
             except Exception:
                 return ''
-        source_sha = getattr(self, 'head', None) or safe_git(['rev-parse', 'HEAD'])
-        branch = safe_git(['branch', '--show-current']) or '(detached)'
-        info = getattr(self, 'pr_info', None)
-        if info:
-            branch = 'PR #' + str(info['number']) + ' (base ' + info['baseRef'] + ')'
-        steps = {
-            '状態確認': ['diff-check', 'host-uptime'],
-            'テスト': ['cli', 'unit', 'archive'],
-            'ビルド': ['build'],
-            '書き込み': ['flash'],
-            '起動確認': ['boot-check'],
-        }
-        selected = {
-            '状態確認': True,
-            'テスト': self.a.test,
-            'ビルド': self.a.build,
-            '書き込み': self.a.write,
-            '起動確認': self.a.write or self.a.logs,
-        }
+        commit = getattr(self, 'head', None) or git('rev-parse', 'HEAD')
+        branch = git('branch', '--show-current') or '(detached)'
+        selected = {'状態確認': True, 'テスト': self.a.test,
+                    'ビルド': self.a.build, '書き込み': self.a.write,
+                    '起動確認': self.a.write or self.a.logs}
+        required = {'状態確認': ('diff-check', 'host-uptime'),
+                    'テスト': ('cli', 'unit', 'archive'),
+                    'ビルド': ('build',), '書き込み': ('flash',),
+                    '起動確認': ('boot-check',)}
         completed = set(self.completed)
-        statuses = {}
-        for label, required in steps.items():
-            if not selected[label]:
-                statuses[label] = '対象外'
-            elif all(x in completed for x in required):
-                statuses[label] = '成功'
-            elif any(x == self.failed_command or x == failed_step for x in required):
-                statuses[label] = '失敗'
-            else:
-                statuses[label] = '未実行'
-        # The startup check is performed without invoking cmd().
+        states = {}
+        for label, names in required.items():
+            if not selected[label]: states[label] = '対象外'
+            elif all(n in completed for n in names): states[label] = '成功'
+            elif rc and (failed_step in names or self.failed_command in names):
+                states[label] = '失敗'
+            else: states[label] = '未実行'
         if self.a.write and 'flash' in completed:
-            statuses['起動確認'] = '成功' if rc == 0 or failed_step != 'boot-check' and 'boot-check' in completed else '未確認'
-        if self.a.write and failed_step == 'boot-check' and rc:
-            statuses['起動確認'] = '失敗'
-        if self.a.logs and not self.a.write and 'boot-check' not in completed:
-            statuses['起動確認'] = '未確認'
-        if rc and statuses['状態確認'] == '未実行' and failed_step in ('preflight', 'pr-metadata', 'pr-fetch', 'pr-merge-tree', 'approval'):
-            statuses['状態確認'] = '失敗'
+            states['起動確認'] = ('失敗' if rc and failed_step == 'boot-check'
+                                   else '成功' if rc == 0 else '未実行')
+        if rc and states['状態確認'] == '未実行':
+            states['状態確認'] = '失敗' if not completed else '未実行'
+        counts = {'tests': 0, 'pass': 0, 'fail': 0}
         failures = []
-        test_count = {}
-        for name in ('cli', 'unit', 'archive'):
+        for name in ('unit', 'archive'):
             path = self.run / (name + '.log')
-            if not path.is_file():
-                continue
-            raw = path.read_text(errors='replace')
-            if name in ('unit', 'archive'):
-                for key in ('tests', 'pass', 'fail'):
-                    values = re.findall(r'^# ' + key + r'\s+(\d+)\s*        self.stop_child()
-        dst = self.fw / 'host/app/manifest_archive_private.json'
-        if self.manifest_changed:
-            if self.manifest_before is None: dst.unlink(missing_ok=True)
-            else: dst.write_bytes(self.manifest_before); dst.chmod(0o600)
-        self.restore_hub()
-
-USB_RECOVERY_SOURCE = "import pathlib,sys,time,signal\nbus,port,serial=sys.argv[1:]\nif not bus.isdecimal() or not port.isdecimal(): raise SystemExit('Invalid USB path')\nroot=pathlib.Path('/sys/bus/usb/devices');target=root/('usb'+bus)/(bus+'-0:1.0')/('usb'+bus+'-port'+port)\nif (target/'connect_type').read_text().strip()!='hotplug' or (target/'disable').read_text().strip()!='0': raise SystemExit('Unsafe USB port state')\ndevice=root/(bus+'-'+port)\nif device.exists():\n if ((device/'idVendor').read_text().strip(),(device/'idProduct').read_text().strip(),(device/'serial').read_text().strip())!=('303a','1001',serial): raise SystemExit('Another USB device occupies this port')\nfor sig in (signal.SIGINT,signal.SIGTERM,signal.SIGHUP): signal.signal(sig,lambda signum,frame:sys.exit(128+signum))\ntry:\n (target/'disable').write_text('1\\n');time.sleep(2)\nfinally:\n (target/'disable').write_text('0\\n')\nprint('Selected external port re-enabled')\n"
-
-def main(argv=None):
-    p = argparse.ArgumentParser(prog='stackchan.sh', description='StackChan統一操作。指定した処理だけ実行。無指定は--check。書き込みはyes/no確認。')
-    for mode in ('check', 'test', 'build', 'write', 'logs', 'all'): p.add_argument('--'+mode, action='store_true')
-    p.add_argument('--dtr', choices=('off','on'), default='off', help='音声採取時のDTR状態。onは既存Hubと同じ通常接続設定。RTSは常にoff、パルスなし')
-    p.add_argument('--audio', action='store_true', help='--logsと併用。debug/statusで音声の数値ログのみ収集。RST・AI切替・会話本文記録なし')
-    p.add_argument('--recover-usb', action='store_true', help='明示した外部USBポートだけを再初期化。root権限が必要。全controllerはリセットしない')
-    p.add_argument('--usb-path', help='復旧対象のroot-hub接続経路（例1-1）。内部USBや別機器は拒否')
-    p.add_argument('--reset', choices=('manual','usb'), default='manual', help='ROM接続方法。usbは最初の接続確認だけUSB用リセットを実行。失敗時は停止し再送しない')
-    p.add_argument('--yes', action='store_true', help='この実行のバックアップ・書き込み・hub一時停止・ログ取得を事前承認。確認入力を省略')
-    p.add_argument('--PR', '--pr', dest='pr', type=int, help='PR番号。最新baseとHEADを専用worktreeでローカル統合。GitHubマージはしない')
-    p.add_argument('--repo', default=str(DEFAULT_REPO), help='対象worktree（既定はWi-Fi修正を含むPR90）')
-    p.add_argument('--sha', help='要求する40桁HEAD。--PR指定時はPRのHEADを照合')
-    p.add_argument('--port', help='任意のUSBパス。指定時も本体シリアルと物理ポートを照合')
-    p.add_argument('--seconds', type=int, default=90, help='起動ログ取得秒数（1〜300）')
-    p.add_argument('--log-root', default=str(HOME / 'work/stackchan-runs'))
-    a = p.parse_args(argv)
-    if a.recover_usb and not a.usb_path: p.error('--recover-usb requires --usb-path')
-    if a.usb_path and not a.recover_usb: p.error('--usb-path requires --recover-usb')
-    if a.pr is not None and a.pr <= 0: p.error('--PR must be positive')
-    if not 1 <= a.seconds <= 300: p.error('--seconds must be 1..300')
-    if a.sha and not re.fullmatch('[0-9a-f]{40}', a.sha): p.error('--sha must be a full lowercase Git SHA')
-    if a.all: a.check = a.test = a.build = a.write = True
-    if a.dtr != 'off' and not (a.audio and a.logs): p.error('--dtr on requires --logs --audio')
-    if a.audio and (not a.logs or a.write or a.recover_usb): p.error('--audio requires --logs and cannot be used with --write/--all/--recover-usb')
-    if not any((a.check,a.test,a.build,a.write,a.logs,a.recover_usb)): a.check=True
-    os.umask(0o077)
-    runner = Runner(a)
-    for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-        signal.signal(s, lambda signum, frame: (_ for _ in ()).throw(SystemExit(128+signum)))
-    rc=0
-    try: runner.execute()
-    except (Exception, SystemExit) as e:
-        rc = e.code if isinstance(e, SystemExit) and isinstance(e.code,int) else 1
-        runner.log('ERROR', 'STEP='+runner.step+' '+str(e))
-    finally:
-        failed_step=runner.step
-        try: runner.cleanup()
-        except Exception as e:
-            rc=1;runner.log('ERROR','cleanup/service restore failed: '+str(e))
-        try: runner.final_summary(rc, failed_step)
-        except Exception as e:
-            rc=1;runner.log('ERROR','final summary failed: '+str(e))
-        runner.log('INFO','EXIT='+str(rc)+' STEP='+failed_step+' LOG='+str(runner.run/'console.log'))
-        runner.console.close()
-    return rc
-
-if __name__ == '__main__': sys.exit(main())
-PY
-, raw, re.M)
-                    if values: test_count[key] = test_count.get(key, 0) + int(values[-1])
-                for match in re.finditer(r'^not ok\s+\d+\s+-\s+(.+)        self.stop_child()
-        dst = self.fw / 'host/app/manifest_archive_private.json'
-        if self.manifest_changed:
-            if self.manifest_before is None: dst.unlink(missing_ok=True)
-            else: dst.write_bytes(self.manifest_before); dst.chmod(0o600)
-        self.restore_hub()
-
-USB_RECOVERY_SOURCE = "import pathlib,sys,time,signal\nbus,port,serial=sys.argv[1:]\nif not bus.isdecimal() or not port.isdecimal(): raise SystemExit('Invalid USB path')\nroot=pathlib.Path('/sys/bus/usb/devices');target=root/('usb'+bus)/(bus+'-0:1.0')/('usb'+bus+'-port'+port)\nif (target/'connect_type').read_text().strip()!='hotplug' or (target/'disable').read_text().strip()!='0': raise SystemExit('Unsafe USB port state')\ndevice=root/(bus+'-'+port)\nif device.exists():\n if ((device/'idVendor').read_text().strip(),(device/'idProduct').read_text().strip(),(device/'serial').read_text().strip())!=('303a','1001',serial): raise SystemExit('Another USB device occupies this port')\nfor sig in (signal.SIGINT,signal.SIGTERM,signal.SIGHUP): signal.signal(sig,lambda signum,frame:sys.exit(128+signum))\ntry:\n (target/'disable').write_text('1\\n');time.sleep(2)\nfinally:\n (target/'disable').write_text('0\\n')\nprint('Selected external port re-enabled')\n"
-
-def main(argv=None):
-    p = argparse.ArgumentParser(prog='stackchan.sh', description='StackChan統一操作。指定した処理だけ実行。無指定は--check。書き込みはyes/no確認。')
-    for mode in ('check', 'test', 'build', 'write', 'logs', 'all'): p.add_argument('--'+mode, action='store_true')
-    p.add_argument('--dtr', choices=('off','on'), default='off', help='音声採取時のDTR状態。onは既存Hubと同じ通常接続設定。RTSは常にoff、パルスなし')
-    p.add_argument('--audio', action='store_true', help='--logsと併用。debug/statusで音声の数値ログのみ収集。RST・AI切替・会話本文記録なし')
-    p.add_argument('--recover-usb', action='store_true', help='明示した外部USBポートだけを再初期化。root権限が必要。全controllerはリセットしない')
-    p.add_argument('--usb-path', help='復旧対象のroot-hub接続経路（例1-1）。内部USBや別機器は拒否')
-    p.add_argument('--reset', choices=('manual','usb'), default='manual', help='ROM接続方法。usbは最初の接続確認だけUSB用リセットを実行。失敗時は停止し再送しない')
-    p.add_argument('--yes', action='store_true', help='この実行のバックアップ・書き込み・hub一時停止・ログ取得を事前承認。確認入力を省略')
-    p.add_argument('--PR', '--pr', dest='pr', type=int, help='PR番号。最新baseとHEADを専用worktreeでローカル統合。GitHubマージはしない')
-    p.add_argument('--repo', default=str(DEFAULT_REPO), help='対象worktree（既定はWi-Fi修正を含むPR90）')
-    p.add_argument('--sha', help='要求する40桁HEAD。--PR指定時はPRのHEADを照合')
-    p.add_argument('--port', help='任意のUSBパス。指定時も本体シリアルと物理ポートを照合')
-    p.add_argument('--seconds', type=int, default=90, help='起動ログ取得秒数（1〜300）')
-    p.add_argument('--log-root', default=str(HOME / 'work/stackchan-runs'))
-    a = p.parse_args(argv)
-    if a.recover_usb and not a.usb_path: p.error('--recover-usb requires --usb-path')
-    if a.usb_path and not a.recover_usb: p.error('--usb-path requires --recover-usb')
-    if a.pr is not None and a.pr <= 0: p.error('--PR must be positive')
-    if not 1 <= a.seconds <= 300: p.error('--seconds must be 1..300')
-    if a.sha and not re.fullmatch('[0-9a-f]{40}', a.sha): p.error('--sha must be a full lowercase Git SHA')
-    if a.all: a.check = a.test = a.build = a.write = True
-    if a.dtr != 'off' and not (a.audio and a.logs): p.error('--dtr on requires --logs --audio')
-    if a.audio and (not a.logs or a.write or a.recover_usb): p.error('--audio requires --logs and cannot be used with --write/--all/--recover-usb')
-    if not any((a.check,a.test,a.build,a.write,a.logs,a.recover_usb)): a.check=True
-    os.umask(0o077)
-    runner = Runner(a)
-    for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-        signal.signal(s, lambda signum, frame: (_ for _ in ()).throw(SystemExit(128+signum)))
-    rc=0
-    try: runner.execute()
-    except (Exception, SystemExit) as e:
-        rc = e.code if isinstance(e, SystemExit) and isinstance(e.code,int) else 1
-        runner.log('ERROR', 'STEP='+runner.step+' '+str(e))
-    finally:
-        failed_step=runner.step
-        try: runner.cleanup()
-        except Exception as e:
-            rc=1;runner.log('ERROR','cleanup/service restore failed: '+str(e))
-        runner.log('INFO','EXIT='+str(rc)+' STEP='+failed_step+' LOG='+str(runner.run/'console.log'))
-        runner.console.close()
-    return rc
-
-if __name__ == '__main__': sys.exit(main())
-PY
-, raw, re.M):
-                    failures.append({'step': name, 'test': match.group(1)[:180]})
-            if name == 'cli' and self.failed_command == 'cli':
-                failures.append({'step': name, 'test': 'CLI回帰テスト失敗。cli.logを参照'})
-        firmware_hash = ''
-        if self.receipt.is_file():
-            try:
-                receipt = json.loads(self.receipt.read_text())
-                if receipt.get('sha') == source_sha:
-                    firmware_hash = receipt.get('artifacts', {}).get('xs_esp32.bin', '')
-            except (OSError, ValueError, TypeError):
-                pass
+            if not path.exists(): continue
+            output = path.read_text(errors='replace')
+            for key in counts:
+                values = re.findall(r'^# ' + key + r'\s+(\d+)\s*$', output, re.M)
+                if values: counts[key] += int(values[-1])
+            failures.extend({'step': name, 'test': m.group(1)[:160]}
+                for m in re.finditer(r'^not ok\s+\d+\s+-\s+(.+)$', output, re.M))
+        if self.failed_command == 'cli':
+            failures.append({'step': 'cli', 'test': 'CLI回帰テスト失敗'})
+        fw_hash = None
+        try:
+            receipt = json.loads(self.receipt.read_text())
+            if receipt.get('sha') == commit:
+                fw_hash = receipt.get('artifacts', {}).get('xs_esp32.bin')
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
         last_flash = None
-        for path in sorted(pathlib.Path(self.a.log_root).expanduser().glob('run-*/flash-record.json'),
+        root = pathlib.Path(self.a.log_root).expanduser()
+        for path in sorted(root.glob('run-*/flash-record.json'),
                            key=lambda p: p.stat().st_mtime, reverse=True):
             try:
                 last_flash = json.loads(path.read_text())
                 break
             except (OSError, ValueError, TypeError):
                 continue
-        lines = [
-            '========== StackChan 最終結果 ==========',
-            '対象        ' + (('PR #' + str(self.a.pr)) if self.a.pr else branch),
-            'ブランチ    ' + branch,
-            'コミット    ' + short(source_sha),
-            '結果        ' + ('成功' if rc == 0 else '失敗 (' + failed_step + ')'),
-        ]
-        for label in steps:
-            detail = statuses[label]
-            if label == 'テスト' and test_count:
-                detail += ' (' + str(test_count.get('pass', '?')) + '/' + str(test_count.get('tests', '?')) + ' 成功'
-                if test_count.get('fail'): detail += '、' + str(test_count['fail']) + '件失敗'
-                detail += ')'
-            lines.append(label.ljust(6) + '    ' + detail)
-        if firmware_hash: lines.append('ビルドSHA256 ' + short(firmware_hash))
+        def short(value):
+            return str(value)[:12] if value else 'unknown'
+        lines = ['========== StackChan 最終結果 ==========',
+                 '対象        ' + ('PR #' + str(self.a.pr) if self.a.pr else branch),
+                 'ブランチ    ' + branch,
+                 'コミット    ' + short(commit),
+                 '結果        ' + ('成功' if rc == 0 else '失敗 (' + failed_step + ')')]
+        for label, state in states.items():
+            if label == 'テスト' and counts['tests']:
+                state += ' (' + str(counts['pass']) + '/' + str(counts['tests']) +
+                         ' 成功、' + str(counts['fail']) + '件失敗)'
+            lines.append(label + '    ' + state)
+        if fw_hash: lines.append('ビルドSHA256  ' + short(fw_hash))
         if rc:
             lines.append('失敗STEP    ' + failed_step)
-            for failure in failures[:5]:
-                lines.append('失敗テスト  ' + self.redact(failure['test']))
+            for item in failures[:5]:
+                lines.append('失敗テスト  ' + self.redact(item['test']))
             if len(failures) > 5:
-                lines.append('その他      ' + str(len(failures) - 5) + '件（詳細ログ参照）')
+                lines.append('その他      ' + str(len(failures)-5) + '件（詳細ログ参照）')
         if last_flash:
-            lines.append('最終書込    ' + short(last_flash.get('sha')))
-            lines.append('実機FW SHA  ' + short(last_flash.get('firmware_sha256')))
-            lines.append('前回起動    ' + str(last_flash.get('boot', 'unknown')) + '（ホスト記録）')
+            lines.extend(['最終書込    ' + short(last_flash.get('sha')),
+                          '実機FW SHA  ' + short(last_flash.get('firmware_sha256')),
+                          '前回起動    ' + str(last_flash.get('boot', 'unknown')) + '（ホスト記録）'])
         lines.append('ログ        ' + str(self.run / 'console.log'))
         lines.append('=======================================')
-        summary = dict(result='success' if rc == 0 else 'failed', exit_code=rc,
-                       pr=self.a.pr, branch=branch, commit=source_sha, steps=statuses,
-                       test_counts=test_count, failed_tests=failures,
-                       failed_step=failed_step if rc else None,
-                       firmware_sha256=firmware_hash or None, last_flash=last_flash,
-                       log=str(self.run / 'console.log'))
+        summary = {'result': 'success' if rc == 0 else 'failed', 'exit_code': rc,
+                   'pr': self.a.pr, 'branch': branch, 'commit': commit,
+                   'steps': states, 'test_counts': counts, 'failed_tests': failures,
+                   'failed_step': failed_step if rc else None,
+                   'firmware_sha256': fw_hash, 'last_flash': last_flash,
+                   'log': str(self.run / 'console.log')}
         target = self.run / 'summary.json'
-        tmp = self.run / 'summary.json.tmp'
-        tmp.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
-        tmp.replace(target)
+        temporary = self.run / 'summary.json.tmp'
+        temporary.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
+        temporary.replace(target)
         for line in lines: self.log('INFO', line)
 
     def cleanup(self):
@@ -858,6 +723,9 @@ def main(argv=None):
         try: runner.cleanup()
         except Exception as e:
             rc=1;runner.log('ERROR','cleanup/service restore failed: '+str(e))
+        try: runner.final_summary(rc, failed_step)
+        except Exception as e:
+            rc=1;runner.log('ERROR','final summary failed: '+str(e))
         runner.log('INFO','EXIT='+str(rc)+' STEP='+failed_step+' LOG='+str(runner.run/'console.log'))
         runner.console.close()
     return rc
