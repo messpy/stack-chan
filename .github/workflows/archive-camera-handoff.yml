@@ -6,6 +6,10 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+# Keep only the latest validation for an actively edited pull request.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   regression:
     runs-on: ubuntu-24.04
@@ -29,6 +33,7 @@ jobs:
         env:
           MODDABLE: ${{ github.workspace }}/.ci-moddable
   cores3-build:
+    needs: regression
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     steps:
