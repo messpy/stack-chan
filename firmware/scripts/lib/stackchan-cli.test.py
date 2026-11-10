@@ -638,7 +638,7 @@ class CLITest(unittest.TestCase):
         self.assertEqual(calls[0][0], str(m.DEVICE_PYTHON))
         self.assertEqual(calls[0][1], '-c')
         self.assertIn('from serial.tools import list_ports', calls[0][2])
-        self.assertIn('\\n', calls[0][2])
+        self.assertIn('\n', calls[0][2])
         self.assertEqual(calls[1], ['fuser', '/dev/ttyACM0'])
 
     def test_usb_snapshot_reports_failed_helper_without_masking(self):
