@@ -18,6 +18,7 @@ import {startLocalClock,setLocalTime,localClockStatus} from 'archive-local-clock
 import {startOffline,openOffline,closeOffline,offlineAction,offlineStatus} from 'archive-offline';
 import {checkOllama} from 'archive-ollama';
 import {startAISettings} from 'archive-ai-settings';
+import {startAISchedule} from 'archive-chat-schedule';
 import Timer from 'timer';
 import {checkGemini} from 'archive-gemini-check';
 import {reconnectSavedWiFi} from 'archive-settings';
@@ -381,6 +382,7 @@ export function startArchive(robot) {
     if(offlineStatus().playing)return;
     closeOffline();
   }},async()=>{if(bootSpeechEnabled(getSettings())){trace('[boot] speaking name\n');await offlineAction('boot');robot.hideBalloon();}});}catch(_){trace('[direct-chat] initialization unavailable\n');}
+  try{startAISchedule(robot,{status:directChatStatus,mode:setChatMode});}catch(_){trace('[ai-schedule] initialization unavailable\n');}
   startChecks(robot,{
     prepare(){if((busy&&!directChatStatus().busy)||offlineStatus().playing||reminderStatus().ringing)throw new Error('busy');if(directChatStatus().enabled)setChatMode(false);closeOffline();},
     async test(kind,report,stopped){

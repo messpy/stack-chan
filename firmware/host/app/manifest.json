@@ -40,6 +40,8 @@
       "./experimental-mini-app-loader",
       "./experimental-mini-app-piu",
       "./experimental-mini-app-registration",
+      "./archive-chat-schedule",
+      "./archive-chat-schedule-policy",
       "./setup-mode",
       "./settings-status",
       "./volume-preview",
