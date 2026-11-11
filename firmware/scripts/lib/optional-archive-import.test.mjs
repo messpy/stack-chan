@@ -42,6 +42,27 @@ test('ReferenceError during import is reported and does not abort core boot', ()
   assert.equal(observed, failure);
 });
 
+test('ReferenceError during Archive availability lookup is reported without aborting core boot', () => {
+  const failure = new ReferenceError('Archive registry lookup failed');
+  let observed;
+  let imported = false;
+  const result = importOptionalArchive(
+    { has: () => { throw failure; }, importNow: () => { imported = true; } },
+    (error) => { observed = error; },
+  );
+  assert.equal(result, undefined);
+  assert.equal(observed, failure);
+  assert.equal(imported, false);
+});
+
+test('diagnostic reporter failure during availability lookup is non-fatal', () => {
+  const result = importOptionalArchive(
+    { has: () => { throw new ReferenceError('Archive unavailable'); } },
+    () => { throw new Error('USB diagnostics unavailable'); },
+  );
+  assert.equal(result, undefined);
+});
+
 test('reporter failure cannot replace a failed import', () => {
   const result = importOptionalArchive(
     { has: () => true, importNow: () => { throw new ReferenceError('archive'); } },
