@@ -112,7 +112,9 @@ async function main() {
   let context: StackchanContext | undefined
   let phase: StartupPhase = 'initialization'
   try {
+    trace('[startup-checkpoint] step=dock state=begin\n')
     dockRuntime = startStackchanDock(Modules, loadModConfig())
+    trace('[startup-checkpoint] step=dock state=done\n')
     if (dockRuntime) trace('[main] Stackchan Dock started\n')
     installPlatformInputBridge()
     initializeLocalization(loadPreferences(DOMAIN.ui).language)
@@ -123,7 +125,9 @@ async function main() {
     // Launch behaviors run before startHostBootServices so the splash screen is
     // visible while network setup blocks.
     phase = 'launch'
+    trace('[startup-checkpoint] step=launch state=begin\n')
     const launch = await prepareAppLaunch(appBehaviors, prepareExperimentalMiniApps)
+    trace('[startup-checkpoint] step=launch state=done\n')
     trace(`[main] onLaunch shouldCreateContext=${launch.shouldCreateContext}\n`)
     if (!launch.shouldCreateContext) {
       installModManagerShortcut()
@@ -135,6 +139,7 @@ async function main() {
     const experimentalMiniApps = launch.prepared
 
     phase = 'network'
+    trace('[startup-checkpoint] step=network state=begin\n')
     const bootServices = startHostBootServices({
       wifi: {
         onStatusChanged: showWiFiConnectionStatus,
@@ -143,14 +148,17 @@ async function main() {
     })
     const networkReady = await bootServices.connectivity.network.ready
     trace(`[main] network ready: ${networkReady.status}\n`)
+    trace('[startup-checkpoint] step=network state=done\n')
     phase = 'context'
     const preferences = loadPreferenceConfig()
     const ownedDock = dockRuntime
+    trace('[startup-checkpoint] step=context state=begin\n')
     context = createStackchanContext(preferences, {
       connectivity: bootServices.connectivity,
       remoteConversationSession: ownedDock?.remoteConversationSession,
       closeHandlers: ownedDock ? [() => ownedDock.close()] : undefined,
     })
+    trace('[startup-checkpoint] step=context state=done\n')
     phase = 'behavior'
     trace('[startup-checkpoint] step=dock-context state=begin\n')
     ownedDock?.onContextCreated(context)
@@ -204,4 +212,9 @@ async function main() {
   }
 }
 
-void main().catch(() => undefined)
+trace('[startup-checkpoint] step=main-entry state=begin\n')
+void main().catch((error) => {
+  // The main startup handler has already logged the phase and stack. Keep
+  // this final guard visible in case an error escapes before that handler.
+  trace(`[startup-fatal] unhandled-main-rejection type=${startupErrorClass(error)}\n`)
+})
