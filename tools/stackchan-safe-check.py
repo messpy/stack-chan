@@ -70,7 +70,7 @@ def main(argv=None) -> int:
     # shell=False, fixed flags. No checkout resets, dependency installs, builds or flashing.
     try:
         check = subprocess.run(
-            ["bash", str(args.engine), "--repo", str(chosen), "--check"],
+            ["bash", str(args.engine), "--repo", str(chosen), "--log-root", str(args.projects / "runs"), "--check"],
             stdin=subprocess.DEVNULL, check=False,
         )
     except OSError:
