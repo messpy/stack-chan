@@ -46,8 +46,9 @@ def main():
         return fatal("PORT", "REASON=cannot_check_occupancy")
     if occupied.returncode != 1:
         return fatal("PORT", "REASON=busy_or_occupancy_unknown")
-    if not sys.stdin.isatty():
-        return fatal("TTY", "REASON=interactive_terminal_required_for_manual_RST")
+    # The script is intentionally executed as `git show ... | python -`.
+    # stdin is a pipe in that workflow; the user presses physical RST,
+    # so no terminal input is needed. Keep diagnostics read-only.
     try:
         RUNS.mkdir(parents=True, exist_ok=True, mode=0o700)
         filename = RUNS / ("boot-raw-local-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".log")
