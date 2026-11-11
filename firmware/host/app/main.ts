@@ -5,6 +5,7 @@ import { resolveAppBehaviors } from 'app-behavior-resolver'
 import defaultBehavior from 'app-default-behavior'
 import { installLaunchShortcut, type LaunchShortcutButton, prepareAppLaunch } from 'app-launch'
 import { makeStartupFailureRecord, makeStartupProgressRecord } from 'startup-diagnostics'
+import { importOptionalArchive } from 'optional-archive-import'
 import { type BootWiFiStatus, startHostBootServices } from 'boot-services'
 import type { StackchanContext } from 'capabilities'
 import { createStackchanContext, getHostDeviceEnvironment } from 'compose'
@@ -222,9 +223,16 @@ async function main() {
       config: preferences,
     })
     checkpoint = 'archive-import'
-    if (Modules.has('lan-archive')) {
-      const archive = Modules.importNow('lan-archive') as { startArchive: (context: StackchanContext) => void }
+    // Archive is optional: a broken module import must not replace the official
+    // face with a fatal startup screen. Keep its error in fixed-schema USB logs.
+    const archive = importOptionalArchive(Modules, (error: unknown) => {
+      emitStartupDiagnostic(phase, 'archive-import', error)
+      trace('[main] archive import failed; continuing core startup\n')
+    }) as { startArchive: (context: StackchanContext) => void } | undefined
+    if (archive) {
       checkpoint = 'archive-start'
+      // Errors after import may leave partially initialized resources behind,
+      // so they are deliberately handled by the existing fatal startup path.
       archive.startArchive(context)
     }
     checkpoint = 'finalize'
