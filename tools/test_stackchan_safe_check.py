@@ -45,7 +45,7 @@ class SafeCheckTests(unittest.TestCase):
         repo = self.repo("stackchan-pr102-integration-clean")
         check = self.run_check()
         self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
-        self.assertIn(f"--repo {repo} --check", check.stdout)
+        self.assertIn(f"--repo {repo} --log-root {self.root / 'runs'} --check", check.stdout)
 
     def test_dirty_main_checkout_does_not_block_clean_integration(self):
         main = self.root / "repository"
