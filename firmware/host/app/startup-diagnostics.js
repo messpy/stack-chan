@@ -1,6 +1,8 @@
 // Fixed-schema startup failure event for the existing kmac boot-stages filter.
 // No exception messages, stack traces, settings, transcript or arbitrary names.
 const CHECKPOINTS = Object.freeze({
+  'debug-init': [118, 'runtime'],
+  'screen-init': [119, 'runtime-ui'],
   'dock-start': [101, 'dock-context'],
   'platform-input': [102, 'runtime-input'],
   'localization': [103, 'runtime-ui'],
@@ -49,4 +51,16 @@ export function makeStartupFailureRecord({phase, checkpoint, errorClass, resetRe
     internalLargest: nonnegativeInteger(heap?.internalLargest),
     psramFree: nonnegativeInteger(heap?.psramFree),
   };
+}
+
+// Explicitly observable early startup states even when archive-debug has
+// redirected trace() to its private ring buffer and Archive never starts.
+// Only fixed, allowlisted fields are emitted on the unauthenticated USB port.
+export function makeStartupProgressRecord({phase, checkpoint, state} = {}) {
+  if (state !== 'begin' && state !== 'done') return undefined;
+  if (typeof checkpoint !== 'string' || !Object.prototype.hasOwnProperty.call(CHECKPOINTS, checkpoint)) {
+    return undefined;
+  }
+  const record = makeStartupFailureRecord({phase, checkpoint});
+  return {...record, componentState: state, error: 'none', reason: 'none'};
 }
