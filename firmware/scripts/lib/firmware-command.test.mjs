@@ -171,6 +171,19 @@ test('firmware wrapper cleans manifest switches before every CoreS3 command and 
   }
 })
 
+test('CoreS3 firmware wrapper activates the xsl argument-file workaround on the SDK once', () => {
+  const fixture = createFirmwareWrapperFixture()
+  try {
+    runFixture(fixture, 'build', fixture.normalManifest)
+    const templatePath = path.join(fixture.fakeModdable, 'tools', 'mcconfig', 'make.esp32.mk')
+    assert.match(readFileSync(templatePath, 'utf8'), /xsl args\.txt/)
+    runFixture(fixture, 'build', fixture.normalManifest)
+    assert.equal((readFileSync(templatePath, 'utf8').match(/xsl args\.txt/g) ?? []).length, 1)
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true })
+  }
+})
+
 test('RT release restores both camera dependencies after clean and manifest switches', () => {
   const fixture = createFirmwareWrapperFixture('stackchan_rt', 'release')
   try {
@@ -231,6 +244,16 @@ function createFirmwareWrapperFixture(deviceName = 'm5stackchan_cores3', mode = 
   const fakeModdable = path.join(root, 'moddable')
   mkdirSync(path.join(fakeModdable, 'tools'), { recursive: true })
   writeFileSync(path.join(fakeModdable, 'tools', 'VERSION'), '8.3.1\n')
+  mkdirSync(path.join(fakeModdable, 'tools', 'mcconfig'), { recursive: true })
+  mkdirSync(path.join(fakeModdable, 'xs', 'tools'), { recursive: true })
+  writeFileSync(
+    path.join(fakeModdable, 'tools', 'mcconfig', 'make.esp32.mk'),
+    '\txsl -b $(MODULES_DIR) -o $(TMP_DIR) $(PRELOADS) $(STRIPS) $(CREATION) $(MODULES)\n',
+  )
+  writeFileSync(
+    path.join(fakeModdable, 'xs', 'tools', 'xsl.c'),
+    'if ((argc == 2) && (c_strcmp(argv[1], "args.txt") == 0)) {}\n',
+  )
   const partitionDirectory = path.join(
     fakeModdable,
     'build',
