@@ -1,4 +1,6 @@
-import { mkdirSync, rmSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readlinkSync, rmSync, symlinkSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -44,5 +46,30 @@ export function assertNoCustomBuildOutput(args) {
  * @returns {string[]}
  */
 export function moddableOutputArguments() {
-  return ['-o', buildOutputDirectory]
+  // Keep artifacts in firmware/dist, but shorten the output path passed to
+  // Moddable: generated Makefile recipes repeat the path for every module.
+  if (process.platform !== 'linux' || buildOutputDirectory.length < 80) {
+    return ['-o', buildOutputDirectory]
+  }
+
+  ensureBuildOutputDirectory()
+  const id = createHash('sha256').update(buildOutputDirectory).digest('hex').slice(0, 12)
+  const alias = join(tmpdir(), `sc-build-${id}`)
+  if (existsSync(alias) || isExistingSymlink(alias)) {
+    if (!lstatSync(alias).isSymbolicLink() || readlinkSync(alias) !== buildOutputDirectory) {
+      throw new Error(`short build output alias already exists and points elsewhere: ${alias}`)
+    }
+  } else {
+    symlinkSync(buildOutputDirectory, alias, 'dir')
+  }
+  return ['-o', alias]
+}
+
+function isExistingSymlink(path) {
+  try {
+    return lstatSync(path).isSymbolicLink()
+  } catch (error) {
+    if (error.code === 'ENOENT') return false
+    throw error
+  }
 }
