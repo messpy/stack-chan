@@ -42,3 +42,19 @@ The preflight is running against an obsolete, dirty worktree due to the CLI defa
 4. No repair PR, merge, local rewrite, or flash until causality is supported by evidence.
 
 No private configuration, tokens, local full logs, or hardware serials are included in this report.
+
+## kmac follow-up audit — confirmed 2026-11-11
+
+The GitHub-authored `preflight_audit.py` was fetched and executed read-only on kmac. The user supplied its output:
+
+- Installed `~/stackchan.sh`: SHA256 `3d7a6327c6e648e0759717a03c49d24337aa0481dc5563f692399be6f7b7a61c`, 69,625 bytes.
+- Parser: `DEFAULT_REPO_LINE=10`, `DEFAULT_REPO=not_statically_resolvable`; `--repo` override exists; tracked-changes guard at local line 247.
+- Main: `/home/kmac/Stackchan_Projects/repository`, branch `test/pr-integration-20261104`, HEAD `da8dbb48ca67aed6f8159ba01bea821e7538a7f5`, 10 tracked changes, `fcb159f7a05f` not present.
+- Legacy candidate `/home/kmac/work/stackchan-context-recovery-20261109` resolves to `/home/kmac/Stackchan_Projects/work/stackchan-context-recovery-20261109`; branch `feat/audio-diagnostics-20261110`, HEAD `fcb159f7a05f4db0f08a76db7601bffdbcd8d0f4`, 1 tracked change, the commit exists locally there.
+- Main enumerates 21 worktrees.
+
+**Host-side conclusion:** The previous `--check` failure and branch/commit output match the legacy candidate, not the main repository. Stale/default repo selection is the leading cause of this *preflight* block; exact local `DEFAULT_REPO` expression was not statically resolved. It is now established that `fcb159f7a05f` exists in a different local Git object database, so the earlier 'not a valid object' result in the main repo did not mean that the commit was lost.
+
+**Next action prepared on this same diagnosis branch:** `firmware/scripts/diagnostics/run_clean_preflight.py` searches for an already-clean same-SHA `stackchan-super` worktree, otherwise requests explicit interactive approval to create one reusable detached baseline. It runs only `bash ~/stackchan.sh --check --repo <verified worktree>`. It does not flash, build, reset, stash, clean, checkout existing worktrees, push, merge, or overwrite any source edits. It records and bounds failure logs.
+
+Do not confuse successful host preflight with successful CoreS3 startup. USB checks can still fail, and device boot remains unverified.
