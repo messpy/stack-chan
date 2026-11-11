@@ -4,7 +4,7 @@ import { runContextCreatedBehaviors, type StackchanAppBehavior } from 'app-behav
 import { resolveAppBehaviors } from 'app-behavior-resolver'
 import defaultBehavior from 'app-default-behavior'
 import { installLaunchShortcut, type LaunchShortcutButton, prepareAppLaunch } from 'app-launch'
-import { makeStartupFailureRecord } from 'startup-diagnostics'
+import { makeStartupFailureRecord, makeStartupProgressRecord } from 'startup-diagnostics'
 import { type BootWiFiStatus, startHostBootServices } from 'boot-services'
 import type { StackchanContext } from 'capabilities'
 import { createStackchanContext, getHostDeviceEnvironment } from 'compose'
@@ -128,13 +128,31 @@ function emitStartupDiagnostic(phase: StartupPhase, checkpoint: string, error: u
   }
 }
 
+// A small, fixed-schema status packet bypasses archive-debug's private trace
+// ring. That ring is not drained until an authenticated Archive USB request;
+// an early crash would otherwise appear to stop at main-entry.
+function emitStartupProgress(phase: StartupPhase, checkpoint: string, state: 'begin' | 'done'): void {
+  try {
+    const record = makeStartupProgressRecord({ phase, checkpoint, state })
+    if (!record || !Modules.has('archive-usb')) return
+    const usb = Modules.importNow('archive-usb') as { writeDebugUSB(packet: string): boolean }
+    usb.writeDebugUSB(JSON.stringify(record))
+  } catch {
+    // Best effort only: never prevent the official face or offline boot.
+  }
+}
+
 async function main() {
+  emitStartupProgress('initialization', 'debug-init', 'begin')
   try {
     if (Modules.has('archive-debug')) (Modules.importNow('archive-debug') as { installDebugLog: () => void }).installDebugLog()
   } catch { trace('[debug] log initialization unavailable\n') }
+  emitStartupProgress('initialization', 'debug-init', 'done')
+  emitStartupProgress('initialization', 'screen-init', 'begin')
   try {
     if (Modules.has('archive-screen')) (Modules.importNow('archive-screen') as { installScreenCapture: () => void }).installScreenCapture()
   } catch { trace('[screen] capture initialization unavailable\n') }
+  emitStartupProgress('initialization', 'screen-init', 'done')
   trace('[main] start\n')
   let dockRuntime: StackchanDockRuntime | undefined
   let context: StackchanContext | undefined
