@@ -1,0 +1,58 @@
+name: CoreS3 Rebuild - Host Checks
+
+on:
+  pull_request:
+    branches:
+      - stackchan-super
+    paths:
+      - 'firmware/**'
+      - 'docs/architecture/cores3-rebuild.md'
+      - '.github/workflows/cores3-rebuild.yml'
+  push:
+    branches:
+      - 'rebuild/cores3-*'
+    paths:
+      - 'firmware/**'
+      - 'docs/architecture/cores3-rebuild.md'
+      - '.github/workflows/cores3-rebuild.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cores3-rebuild-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-checks:
+    name: TypeScript and host-only tests (no device flash)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: firmware
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: firmware/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      - name: Verify TypeScript and unit tests
+        run: npm run test:unit
+      - name: Verify architecture boundaries
+        run: npm run check:architecture
+      - name: Verify legacy names
+        run: npm run check:legacy-names
+      - name: Verify no local files changed
+        working-directory: .
+        run: |
+          git diff --exit-code
+          git status --short
