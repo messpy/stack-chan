@@ -64,3 +64,17 @@ jobs:
           test -s dist/bin/esp32/m5stack_cores3/release/stack-chan-host/xs_esp32.bin
           grep -q '"archive-debug"' host/app/manifest_archive_private.json
           echo '[CHECK] CoreS3 Archive clean build with existing manifest succeeded'
+      - name: Build actual StackChan CoreS3 target (m5stackchan_cores3; no flash)
+        working-directory: ./firmware
+        shell: bash
+        run: |
+          source "$HOME/.local/share/xs-dev-export.sh"
+          npm run prebuild:archive:m5stackchan_cores3
+          npm run build:archive:m5stackchan_cores3
+      - name: Validate StackChan CoreS3 target binary
+        working-directory: ./firmware
+        shell: bash
+        run: |
+          test -s dist/bin/esp32/m5stackchan_cores3/release/stack-chan-host/xs_esp32.bin
+          grep -q '"archive-debug"' host/app/manifest_archive_private.json
+          echo '[CHECK] StackChan CoreS3-specific target built successfully; not flashed'
