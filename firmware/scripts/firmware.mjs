@@ -30,6 +30,7 @@ import { aliases, devices, resolveDevice } from './lib/devices.mjs'
 import { validateFirmwareBundleTarget } from './lib/firmware-bundle.mjs'
 import { prepareCoreS3IdfDependencies } from './lib/idf-dependencies.mjs'
 import { installModArchive, resolveModArchivePath } from './lib/mod-flash.mjs'
+import { moddableMakeEnvironment } from './lib/moddable-make.mjs'
 import { prepareCoreS3VersionSdkconfig, prepareVersionSdkconfig, readModdableVersion } from './lib/moddable-version.mjs'
 
 const command = process.argv[2]
@@ -300,7 +301,8 @@ function run(bin, binArgs, cwd = process.cwd()) {
   }
 
   ensureBuildOutputDirectory()
-  const result = spawnSync(bin, binArgs, { cwd, env: subprocessEnvironment, stdio: 'inherit' })
+  const env = bin === 'mcconfig' ? moddableMakeEnvironment(subprocessEnvironment) : subprocessEnvironment
+  const result = spawnSync(bin, binArgs, { cwd, env, stdio: 'inherit' })
   if (result.error) {
     console.error(`[stack-chan] ${bin}を実行できませんでした: ${result.error.message}`)
     console.error('[stack-chan] npm run setup と npm run doctor を確認してください。')

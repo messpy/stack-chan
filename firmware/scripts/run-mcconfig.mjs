@@ -2,6 +2,7 @@
 
 import { spawnSync } from 'node:child_process'
 import { assertNoCustomBuildOutput, ensureBuildOutputDirectory, moddableOutputArguments } from './lib/build-output.mjs'
+import { moddableMakeEnvironment } from './lib/moddable-make.mjs'
 import { prepareCoreS3VersionSdkconfig } from './lib/moddable-version.mjs'
 
 const args = process.argv.slice(2)
@@ -25,7 +26,7 @@ if (targetsM5StackChanCoreS3(args)) {
   }
 }
 const result = spawnSync('mcconfig', [...moddableOutputArguments(), ...args], {
-  env: subprocessEnvironment,
+  env: moddableMakeEnvironment(subprocessEnvironment),
   stdio: 'inherit',
 })
 

@@ -1,0 +1,40 @@
+#!/usr/bin/env node
+
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { basename, delimiter, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const wrapperDirectory = dirname(fileURLToPath(import.meta.url))
+const env = { ...process.env, PATH: process.env.PATH.split(delimiter).filter((entry) => entry !== wrapperDirectory).join(delimiter) }
+const args = process.argv.slice(2)
+const generatedMakefile = args[0] === '-f' && basename(args[1] ?? '') === 'makefile' ? args[1] : undefined
+const xslRecipe = /^\txsl (-b \$\(MODULES_DIR\) -o \$\(TMP_DIR\) \$\(PRELOADS\) \$\(STRIPS\) \$\(CREATION\) \$\(MODULES\))[ \t]*$/m
+
+let temporaryDirectory
+try {
+  if (generatedMakefile) {
+    const source = readFileSync(generatedMakefile, 'utf8')
+    if (/^PLATFORM = esp32[ \t]*$/m.test(source) && xslRecipe.test(source)) {
+      // GNU Make writes the response file itself, before starting a shell.
+      // xsl requires the literal name args.txt and resolves it from its cwd.
+      const updated = source.replace(
+        xslRecipe,
+        (_, operands) => `\t$(file >$(TMP_DIR)/args.txt,$(strip ${operands}))\n\tcd "$(TMP_DIR)" && xsl args.txt`,
+      )
+      temporaryDirectory = mkdtempSync(join(tmpdir(), 'stackchan-make-'))
+      args[1] = join(temporaryDirectory, 'makefile')
+      writeFileSync(args[1], updated)
+    }
+  }
+
+  const result = spawnSync('make', args, { env, stdio: 'inherit' })
+  if (result.error) throw result.error
+  process.exitCode = result.status ?? 1
+} catch (error) {
+  console.error(`[stack-chan] make: ${error.message}`)
+  process.exitCode = 1
+} finally {
+  if (temporaryDirectory) rmSync(temporaryDirectory, { recursive: true, force: true })
+}
