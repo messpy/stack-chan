@@ -33,6 +33,7 @@
       "./app-behavior-resolver",
       "./app-launch",
     "./startup-diagnostics",
+    "./optional-archive-import",
       "./boot-network-recovery",
       "./boot-services",
       "./compose",
