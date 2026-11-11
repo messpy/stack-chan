@@ -176,6 +176,10 @@ async function main() {
     }
     trace(`[main] startup failed phase=${phase} error=${startupErrorClass(error)}\n`)
     trace(`[main] startup detail: ${error instanceof Error ? error.message : 'unknown'}\n`)
+    if (error instanceof Error && typeof error.stack === 'string') {
+      // Keep stack information bounded; it identifies the failing source location.
+      trace(`[main] startup stack: ${error.stack.slice(0, 1200)}\n`)
+    }
     if (
       globalEnv.application === failedApplication &&
       (!failedApplication ||
