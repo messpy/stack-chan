@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { makeStartupFailureRecord } from '../../host/app/startup-diagnostics.js'
+import { makeStartupFailureRecord, makeStartupProgressRecord } from '../../host/app/startup-diagnostics.js'
 
 test('behavior failure identifies archive import and retains only fixed, safe fields', () => {
   const record = makeStartupFailureRecord({
@@ -27,7 +27,7 @@ test('behavior failure identifies archive import and retains only fixed, safe fi
 
 test('all startup checkpoints are distinct and compatible with the USB safe-line filter', () => {
   const checkpoints = [
-    'dock-start', 'platform-input', 'localization', 'timezone', 'behavior-resolve',
+    'debug-init', 'screen-init', 'dock-start', 'platform-input', 'localization', 'timezone', 'behavior-resolve',
     'on-launch', 'miniapp-prepare', 'network-start', 'network-ready',
     'preferences', 'context-create', 'dock-context', 'miniapp-register',
     'context-behaviors', 'archive-import', 'archive-start', 'finalize',
@@ -45,7 +45,7 @@ test('all startup checkpoints are distinct and compatible with the USB safe-line
     assert.ok(!seen.has(record.stage))
     seen.add(record.stage)
   }
-  assert.equal(seen.size, 17)
+  assert.equal(seen.size, 19)
 })
 
 test('unknown input and scalar anomalies fail closed without copying private values', () => {
@@ -63,4 +63,28 @@ test('unknown input and scalar anomalies fail closed without copying private val
   assert.equal(r.resetReason, 0)
   assert.ok(!JSON.stringify(r).includes('SECRET'))
   assert.equal(makeStartupFailureRecord().phase, 'unknown')
+})
+
+test('early startup diagnostics bypass private trace ring without exposing secrets', () => {
+  for (const [checkpoint, stage] of [['debug-init', 118], ['screen-init', 119]]) {
+    for (const state of ['begin', 'done']) {
+      const record = makeStartupProgressRecord({
+        phase: 'initialization', checkpoint, state,
+        token: 'SECRET_TOKEN', ssid: 'SECRET_SSID', message: 'SECRET_MESSAGE',
+      })
+      assert.equal(record.event, 'startup')
+      assert.equal(record.componentState, state)
+      assert.equal(record.stage, stage)
+      assert.equal(record.error, 'none')
+      assert.equal(record.reason, 'none')
+      assert.equal(record.phase, 'initialization')
+      assert.equal(record.site, 'host-main')
+      assert.equal(Object.keys(record).length, 17)
+      assert.equal(JSON.stringify(record).includes('SECRET'), false)
+      assert.ok(JSON.stringify(record).length < 400)
+    }
+  }
+  assert.equal(makeStartupProgressRecord({checkpoint: 'debug-init', state: 'failed'}), undefined)
+  assert.equal(makeStartupProgressRecord({checkpoint: 'SECRET', state: 'begin'}), undefined)
+  assert.equal(makeStartupProgressRecord(), undefined)
 })
