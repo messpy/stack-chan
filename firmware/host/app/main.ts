@@ -152,14 +152,22 @@ async function main() {
       closeHandlers: ownedDock ? [() => ownedDock.close()] : undefined,
     })
     phase = 'behavior'
+    trace('[startup-checkpoint] step=dock-context state=begin\n')
     ownedDock?.onContextCreated(context)
+    trace('[startup-checkpoint] step=dock-context state=done\n')
+    trace('[startup-checkpoint] step=experimental-miniapps state=begin\n')
     registerExperimentalMiniApps(experimentalMiniApps, context.ui.miniApps)
+    trace('[startup-checkpoint] step=experimental-miniapps state=done\n')
     trace('[main] app context created\n')
+    trace('[startup-checkpoint] step=context-behaviors state=begin\n')
     await runContextCreatedBehaviors(appBehaviors, context, {
       device: getHostDeviceEnvironment(),
       config: preferences,
     })
+    trace('[startup-checkpoint] step=context-behaviors state=done\n')
+    trace('[startup-checkpoint] step=archive-start state=begin\n')
     if (Modules.has('lan-archive')) (Modules.importNow('lan-archive') as { startArchive: (context: StackchanContext) => void }).startArchive(context)
+    trace('[startup-checkpoint] step=archive-start state=done\n')
     trace('[main] app behaviors ready\n')
     installModManagerShortcut()
   } catch (error) {
