@@ -42,22 +42,46 @@ test('ReferenceError during import is reported and does not abort core boot', ()
   assert.equal(observed, failure);
 });
 
-test('ReferenceError during Archive availability lookup is reported without aborting core boot', () => {
-  const failure = new ReferenceError('Archive registry lookup failed');
-  let observed;
-  let imported = false;
+test('ReferenceError during availability lookup retries direct Archive import', () => {
+  const module = { startArchive() {} };
+  let imports = 0;
+  let reports = 0;
   const result = importOptionalArchive(
-    { has: () => { throw failure; }, importNow: () => { imported = true; } },
+    {
+      has: () => { throw new ReferenceError('registry lookup failed'); },
+      importNow: (name) => {
+        assert.equal(name, 'lan-archive');
+        imports += 1;
+        return module;
+      },
+    },
+    () => { reports += 1; },
+  );
+  assert.equal(result, module);
+  assert.equal(imports, 1);
+  assert.equal(reports, 0);
+});
+
+test('failed direct import after registry ReferenceError is reported without aborting', () => {
+  const failure = new ReferenceError('Archive module evaluation failed');
+  let observed;
+  const result = importOptionalArchive(
+    {
+      has: () => { throw new ReferenceError('registry lookup failed'); },
+      importNow: () => { throw failure; },
+    },
     (error) => { observed = error; },
   );
   assert.equal(result, undefined);
   assert.equal(observed, failure);
-  assert.equal(imported, false);
 });
 
-test('diagnostic reporter failure during availability lookup is non-fatal', () => {
+test('diagnostic reporter failure during fallback import is non-fatal', () => {
   const result = importOptionalArchive(
-    { has: () => { throw new ReferenceError('Archive unavailable'); } },
+    {
+      has: () => { throw new ReferenceError('registry unavailable'); },
+      importNow: () => { throw new ReferenceError('Archive module unavailable'); },
+    },
     () => { throw new Error('USB diagnostics unavailable'); },
   );
   assert.equal(result, undefined);
