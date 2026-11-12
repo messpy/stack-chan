@@ -236,8 +236,12 @@ async function main() {
       archive.startArchive(context)
     }
     checkpoint = 'finalize'
+    emitStartupProgress(phase, 'finalize', 'begin')
     installModManagerShortcut()
     trace('[main] app behaviors ready\n')
+    // A fixed-schema USB completion survives Archive's private trace ring.
+    // boot-check may use it even when optional Archive was skipped.
+    emitStartupProgress(phase, 'finalize', 'done')
   } catch (error) {
     emitStartupDiagnostic(phase, checkpoint, error)
     // A newer/disposed view during async cleanup owns its screen. Do not
