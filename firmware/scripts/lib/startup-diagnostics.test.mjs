@@ -105,3 +105,23 @@ test('finalize USB progress marks core boot completion independently of optional
     assert.equal(JSON.stringify(record).includes('SECRET'), false)
   }
 })
+
+test('Archive import and start have separate USB completion checkpoints', async () => {
+  const { readFileSync } = await import('node:fs')
+  const main = readFileSync(new URL('../../host/app/main.ts', import.meta.url), 'utf8')
+  const start = main.indexOf("checkpoint = 'archive-import'")
+  const end = main.indexOf("checkpoint = 'finalize'", start)
+  assert.ok(start >= 0 && end > start)
+  const segment = main.slice(start, end)
+  assert.match(segment, /emitStartupProgress\(phase, checkpoint, 'begin'\)/)
+  assert.match(segment, /emitStartupProgress\(phase, 'archive-import', 'done'\)/)
+  assert.match(segment, /emitStartupProgress\(phase, checkpoint, 'done'\)/)
+  for (const [checkpoint, stage] of [['archive-import', 115], ['archive-start', 116]]) {
+    const done = makeStartupProgressRecord({ phase: 'behavior', checkpoint, state: 'done' })
+    assert.equal(done.event, 'startup')
+    assert.equal(done.stage, stage)
+    assert.equal(done.component, checkpoint)
+    assert.equal(done.componentState, 'done')
+    assert.equal(done.error, 'none')
+  }
+})
