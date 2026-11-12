@@ -88,3 +88,20 @@ test('early startup diagnostics bypass private trace ring without exposing secre
   assert.equal(makeStartupProgressRecord({checkpoint: 'SECRET', state: 'begin'}), undefined)
   assert.equal(makeStartupProgressRecord(), undefined)
 })
+
+test('finalize USB progress marks core boot completion independently of optional Archive', () => {
+  for (const state of ['begin', 'done']) {
+    const record = makeStartupProgressRecord({
+      phase: 'behavior', checkpoint: 'finalize', state,
+      ssid: 'SECRET_NETWORK', token: 'SECRET_TOKEN',
+    })
+    assert.equal(record.event, 'startup')
+    assert.equal(record.component, 'runtime')
+    assert.equal(record.stage, 117)
+    assert.equal(record.componentState, state)
+    assert.equal(record.error, 'none')
+    assert.equal(record.reason, 'none')
+    assert.equal(record.phase, 'behavior')
+    assert.equal(JSON.stringify(record).includes('SECRET'), false)
+  }
+})
