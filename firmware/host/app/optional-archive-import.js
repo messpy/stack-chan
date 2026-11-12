@@ -15,11 +15,11 @@ export function importOptionalArchive(modules, onImportError) {
   try {
     available = modules.has('lan-archive');
   } catch (error) {
-    // A broken optional-Archive lookup can raise ReferenceError before importNow.
-    // Preserve core boot and report it; keep unrelated registry failures visible.
+    // A registry lookup may fail even when the compiled module is available.
+    // A bounded direct import gives Archive/settings one chance to start.
+    // Non-ReferenceError registry failures still go to the fatal handler.
     if (!(error instanceof ReferenceError)) throw error;
-    reportArchiveImportError(onImportError, error);
-    return undefined;
+    available = true;
   }
   if (!available) return undefined;
   try {
