@@ -223,6 +223,10 @@ async function main() {
       config: preferences,
     })
     checkpoint = 'archive-import'
+    // A completed core boot is not proof that Archive features were loaded.
+    // Record import and start separately so settings/mini-app regressions
+    // remain visible on the safe, fixed-schema USB channel.
+    emitStartupProgress(phase, checkpoint, 'begin')
     // Archive is optional: a broken module import must not replace the official
     // face with a fatal startup screen. Keep its error in fixed-schema USB logs.
     const archive = importOptionalArchive(Modules, (error: unknown) => {
@@ -230,10 +234,13 @@ async function main() {
       trace('[main] archive import failed; continuing core startup\n')
     }) as { startArchive: (context: StackchanContext) => void } | undefined
     if (archive) {
+      emitStartupProgress(phase, 'archive-import', 'done')
       checkpoint = 'archive-start'
+      emitStartupProgress(phase, checkpoint, 'begin')
       // Errors after import may leave partially initialized resources behind,
       // so they are deliberately handled by the existing fatal startup path.
       archive.startArchive(context)
+      emitStartupProgress(phase, checkpoint, 'done')
     }
     checkpoint = 'finalize'
     emitStartupProgress(phase, 'finalize', 'begin')
