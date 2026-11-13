@@ -27,6 +27,14 @@ settings.reminders=[];wall=0;ticks=0xffffff00;tools.callDeviceTool('timer_create
 settings.reminders=[{id:'old-clockless',kind:'timer',clockPending:true,status:'scheduled',due:30000}];poll();assert.equal(settings.reminders[0].status,'cancelled');
 wall=Date.parse('2026-10-31T03:00:00Z');let stoppedCloud=0,claimed=false,faceShown=0;const overlays=[],launched=[];let onlineStarts=0,aiSettings=0;
 const offlineModule=await load('archive-offline');await offlineModule.evaluate();const offline=offlineModule.namespace;
+assert.equal(offline.offlineCommandFromText('こんにちは'), 'hello');
+assert.equal(offline.offlineCommandFromText('今何時？'), 'time');
+assert.equal(offline.offlineCommandFromText('アラームを止めて'), 'stop');
+assert.equal(offline.offlineCommandFromText('写真を撮って'), null);
+assert.equal(offline.offlineCommandFromText('AIを起動'), null);
+assert.equal(offline.offlineCommandFromText('x'.repeat(121)), null);
+assert.equal((await offline.offlineTextCommand('写真を撮って')).handled, false);
+console.log('PASS: offline text commands are local-only, allowlisted, and reject unsupported requests');
 offline.startOffline({showBalloon(){},drawer:{addDrawerButton(){}},ui:{showFace(){faceShown++;},addEffect(effect){overlays.push(effect);},removeEffect(effect){overlays.splice(overlays.indexOf(effect),1);},miniApps:{register(){}},application:{behavior:{launchMiniApp(id){launched.push(id);}}}},audio:{volume:.1,acquireExclusive:()=>()=>released++}},{stopCloud:()=>stoppedCloud++,claim:()=>{if(claimed)return false;claimed=true;return true;},release:()=>{claimed=false;},tool:tools.callDeviceTool,startCloud:()=>onlineStarts++,openAI:()=>aiSettings++});
 assert.equal((await offline.offlineAction('hello')).spoken,true);assert.ok(spoken.some(p=>p.text.includes('こんにちは')));assert.equal(released,1);assert.equal(claimed,false);assert.equal(stoppedCloud,1);await offline.offlineAction('time');assert.ok(spoken.some(p=>p.text==='じゅうにじ。'));assert.equal(spoken.at(-1).text,'ちょうどです。');assert.equal(offline.offlineStatus().recognition,false);
 console.log('PASS: RTC UTC/BCD and cold-boot restore, invalid dates/low voltage rejected, clockless timer, forward/backward wall jumps, tick wrap, restart policy, local Japanese TTS, audio release, no network dependencies');
