@@ -134,15 +134,23 @@ async function main() {
     }
     const experimentalMiniApps = launch.prepared
 
+    // UI initialization must not wait for Wi-Fi. Network failure is a
+    // capability state, not a reason to withhold the face or mini-app drawer.
     phase = 'network'
     const bootServices = startHostBootServices({
       wifi: {
-        onStatusChanged: showWiFiConnectionStatus,
-        promptRecoveryChoice: waitForBootWiFiRecoveryChoice,
+        onStatusChanged: (status) => {
+          // Splash updates are only safe before the application owns its UI.
+          if (!context) showWiFiConnectionStatus(status)
+        },
+        // Do not block startup waiting for a physical recovery choice.
+        // Retry can be requested later from the Wi-Fi settings mini-app.
       },
     })
-    const networkReady = await bootServices.connectivity.network.ready
-    trace(`[main] network ready: ${networkReady.status}\n`)
+    void bootServices.connectivity.network.ready.then(
+      (result) => trace(`[main] network settled: ${result.status}\n`),
+      (error) => trace(`[main] network failed: ${startupErrorClass(error)}\n`),
+    )
     phase = 'context'
     const preferences = loadPreferenceConfig()
     const ownedDock = dockRuntime
