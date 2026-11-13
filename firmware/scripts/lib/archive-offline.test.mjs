@@ -36,6 +36,11 @@ assert.equal(offline.offlineCommandFromText('x'.repeat(121)), null);
 assert.equal((await offline.offlineTextCommand('写真を撮って')).handled, false);
 console.log('PASS: offline text commands are local-only, allowlisted, and reject unsupported requests');
 offline.startOffline({showBalloon(){},drawer:{addDrawerButton(){}},ui:{showFace(){faceShown++;},addEffect(effect){overlays.push(effect);},removeEffect(effect){overlays.splice(overlays.indexOf(effect),1);},miniApps:{register(){}},application:{behavior:{launchMiniApp(id){launched.push(id);}}}},audio:{volume:.1,acquireExclusive:()=>()=>released++}},{stopCloud:()=>stoppedCloud++,claim:()=>{if(claimed)return false;claimed=true;return true;},release:()=>{claimed=false;},tool:tools.callDeviceTool,startCloud:()=>onlineStarts++,openAI:()=>aiSettings++});
+const routed = await offline.offlineTextCommand('こんにちは！');
+assert.equal(routed.handled, true);
+assert.equal(routed.spoken, true);
+assert.equal(routed.text, 'こんにちは。スタックちゃんです。ネットがなくても、ここにいるよ。');
+assert.equal(offline.offlineStatus().playing, false);
 assert.equal((await offline.offlineAction('hello')).spoken,true);assert.ok(spoken.some(p=>p.text.includes('こんにちは')));assert.equal(released,1);assert.equal(claimed,false);assert.equal(stoppedCloud,1);await offline.offlineAction('time');assert.ok(spoken.some(p=>p.text==='じゅうにじ。'));assert.equal(spoken.at(-1).text,'ちょうどです。');assert.equal(offline.offlineStatus().recognition,false);
 console.log('PASS: RTC UTC/BCD and cold-boot restore, invalid dates/low voltage rejected, clockless timer, forward/backward wall jumps, tick wrap, restart policy, local Japanese TTS, audio release, no network dependencies');
 
