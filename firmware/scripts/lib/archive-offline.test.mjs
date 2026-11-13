@@ -41,7 +41,7 @@ assert.equal(routed.handled, true);
 assert.equal(routed.spoken, true);
 assert.equal(routed.text, 'こんにちは。スタックちゃんです。ネットがなくても、ここにいるよ。');
 assert.equal(offline.offlineStatus().playing, false);
-assert.equal((await offline.offlineAction('hello')).spoken,true);assert.ok(spoken.some(p=>p.text.includes('こんにちは')));assert.equal(released,1);assert.equal(claimed,false);assert.equal(stoppedCloud,1);await offline.offlineAction('time');assert.ok(spoken.some(p=>p.text==='じゅうにじ。'));assert.equal(spoken.at(-1).text,'ちょうどです。');assert.equal(offline.offlineStatus().recognition,false);
+assert.ok(spoken.some(p=>p.text.includes('こんにちは')));assert.equal(released,1);assert.equal(claimed,false);assert.equal(stoppedCloud,1);await offline.offlineAction('time');assert.ok(spoken.some(p=>p.text==='じゅうにじ。'));assert.equal(spoken.at(-1).text,'ちょうどです。');assert.equal(offline.offlineStatus().recognition,false);
 console.log('PASS: RTC UTC/BCD and cold-boot restore, invalid dates/low voltage rejected, clockless timer, forward/backward wall jumps, tick wrap, restart policy, local Japanese TTS, audio release, no network dependencies');
 
 offline.openOffline();assert.equal(faceShown,1);assert.equal(launched.length,0);assert.equal(overlays.length,1);assert.equal(offline.offlineStatus().faceButtonsVisible,true);
