@@ -25,6 +25,7 @@ export type RegisteredMiniApp = Readonly<Pick<MiniAppDefinition, 'id' | 'title' 
 
 export type MiniAppRegistryCapability = Readonly<{
   register(definition: MiniAppDefinition): () => void
+  setAvailability?(id: string, available: boolean, reason?: string): boolean
 }>
 
 type RegistryListener = () => void
