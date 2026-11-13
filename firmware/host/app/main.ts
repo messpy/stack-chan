@@ -163,11 +163,20 @@ async function main() {
     ownedDock?.onContextCreated(context)
     registerExperimentalMiniApps(experimentalMiniApps, context.ui.miniApps)
     trace('[main] app context created\n')
-    await runContextCreatedBehaviors(appBehaviors, context, {
-      device: getHostDeviceEnvironment(),
-      config: preferences,
-    })
-    if (Modules.has('lan-archive')) (Modules.importNow('lan-archive') as { startArchive: (context: StackchanContext) => void }).startArchive(context)
+    // Optional behavior failure must not prevent local mini-app registration.
+    try {
+      await runContextCreatedBehaviors(appBehaviors, context, {
+        device: getHostDeviceEnvironment(),
+        config: preferences,
+      })
+    } catch (error) {
+      trace(`[main] app behavior unavailable: ${startupErrorClass(error)}\n`)
+    }
+    try {
+      if (Modules.has('lan-archive')) (Modules.importNow('lan-archive') as { startArchive: (context: StackchanContext) => void }).startArchive(context)
+    } catch (error) {
+      trace(`[main] archive UI unavailable: ${startupErrorClass(error)}\n`)
+    }
     trace('[main] app behaviors ready\n')
     installModManagerShortcut()
   } catch (error) {
