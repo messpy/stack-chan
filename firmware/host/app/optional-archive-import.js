@@ -17,8 +17,8 @@ export function importOptionalArchive(modules, onImportError) {
   } catch (error) {
     // A registry lookup may fail even when the compiled module is available.
     // A bounded direct import gives Archive/settings one chance to start.
-    // Non-ReferenceError registry failures still go to the fatal handler.
-    if (!(error instanceof ReferenceError)) throw error;
+    // Archive is optional: any registry failure must not abort core boot.
+    // Attempt one direct import; its failure is reported below.
     available = true;
   }
   if (!available) return undefined;
