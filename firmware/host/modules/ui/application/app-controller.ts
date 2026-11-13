@@ -152,6 +152,10 @@ export class AppController extends Behavior {
     const definition = this.#miniAppRegistry.get(id)
     const app = this.#application
     if (!definition || !app || !this.#viewBehavior) return false
+    if (this.#miniAppRegistry.unavailableReason(id)) {
+      trace(`[MiniApp] unavailable id=${id} reason=${this.#miniAppRegistry.unavailableReason(id)}\n`)
+      return false
+    }
 
     if (this.#activeMiniApp) {
       const previous = this.#activeMiniApp.definition.id
