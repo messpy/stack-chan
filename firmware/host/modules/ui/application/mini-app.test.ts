@@ -68,3 +68,28 @@ test('availability changes keep entries visible and notify listeners only on cha
   assert.equal(notifications, 3)
   assert.equal(registry.setAvailability('missing', false), false)
 })
+
+test('dynamic availability changes and recovers without removing the mini app', () => {
+  const registry = new MiniAppRegistry()
+  let connected = false
+  registry.register({
+    id: 'cloud',
+    title: 'Cloud',
+    availability: () => connected ? undefined : 'Wi-Fi未接続',
+    create: () => content,
+  })
+  registry.refreshAvailability()
+  assert.equal(registry.list()[0].unavailableReason, 'Wi-Fi未接続')
+  connected = true
+  registry.refreshAvailability()
+  assert.equal(registry.list()[0].unavailableReason, undefined)
+})
+
+test('availability predicate failure disables only the affected mini app', () => {
+  const registry = new MiniAppRegistry()
+  registry.register({ id: 'broken', title: 'Broken', availability: () => { throw new Error('offline') }, create: () => content })
+  registry.register({ id: 'timer', title: 'Timer', create: () => content })
+  registry.refreshAvailability()
+  assert.equal(registry.unavailableReason('broken'), '機能の状態を確認できません')
+  assert.equal(registry.unavailableReason('timer'), undefined)
+})
