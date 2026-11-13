@@ -52,3 +52,19 @@ test('registry snapshots metadata without exposing the create callback', () => {
   assert.equal(Object.isFrozen(listed), true)
   assert.equal('create' in listed, false)
 })
+
+
+test('availability changes keep entries visible and notify listeners only on change', () => {
+  const registry = new MiniAppRegistry()
+  let notifications = 0
+  registry.subscribe(() => { notifications++ })
+  registry.register({ id: 'camera', title: 'Camera', create: () => content })
+  assert.equal(registry.setAvailability('camera', false, 'カメラを使用できません'), true)
+  assert.equal(registry.list()[0].unavailableReason, 'カメラを使用できません')
+  assert.equal(registry.setAvailability('camera', false, 'カメラを使用できません'), true)
+  assert.equal(notifications, 2)
+  assert.equal(registry.setAvailability('camera', true), true)
+  assert.equal(registry.list()[0].unavailableReason, undefined)
+  assert.equal(notifications, 3)
+  assert.equal(registry.setAvailability('missing', false), false)
+})
