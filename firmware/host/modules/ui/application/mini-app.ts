@@ -18,6 +18,7 @@ export type MiniAppDefinition = Readonly<{
   title: string
   icon?: 'play'
   hidden?: boolean
+  availability?: () => string | undefined
   create(context: MiniAppContext): PiuContainer | MiniAppInstance
 }>
 
@@ -26,6 +27,7 @@ export type RegisteredMiniApp = Readonly<Pick<MiniAppDefinition, 'id' | 'title' 
 export type MiniAppRegistryCapability = Readonly<{
   register(definition: MiniAppDefinition): () => void
   setAvailability?(id: string, available: boolean, reason?: string): boolean
+  refreshAvailability?(): void
 }>
 
 type RegistryListener = () => void
@@ -54,6 +56,7 @@ function validateDefinition(definition: MiniAppDefinition): MiniAppDefinition {
     title,
     ...(definition.icon ? { icon: definition.icon } : {}),
     ...(definition.hidden ? { hidden: true } : {}),
+    ...(definition.availability ? { availability: definition.availability } : {}),
     create: definition.create,
   })
 }
@@ -86,6 +89,19 @@ export class MiniAppRegistry implements MiniAppRegistryCapability {
     else this.#unavailable.set(id, reason.trim() || '現在利用できません')
     if (previous !== this.#unavailable.get(id)) this.#notify()
     return true
+  }
+
+  refreshAvailability(): void {
+    for (const definition of this.#definitions.values()) {
+      if (!definition.availability) continue
+      try {
+        const reason = definition.availability()
+        this.setAvailability(definition.id, !reason, reason)
+      } catch (error) {
+        trace(`[MiniApp] availability check failed id=${definition.id}: ${String(error)}\n`)
+        this.setAvailability(definition.id, false, '機能の状態を確認できません')
+      }
+    }
   }
 
   unavailableReason(id: string): string | undefined {
