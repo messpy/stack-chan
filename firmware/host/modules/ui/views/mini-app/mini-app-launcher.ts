@@ -11,9 +11,19 @@ export type MiniAppLauncherData = Readonly<{
 
 export const MiniAppLauncher = Container.template(($: MiniAppLauncherData) => {
   const styles = uiStyles()
+  const notice = new Label(null, { left: 12, right: 12, bottom: 0, height: 32, string: '', style: styles.bodyMuted })
   const rows: PiuContent[] = $.apps.map(
     (app) =>
-      new ActionButton(
+      app.unavailableReason ? new Label(null, {
+        name: `miniApp:${app.id}`,
+        left: 12, right: 12, height: 44,
+        string: `× ${app.title} (利用不可)`,
+        style: styles.bodyMuted,
+        active: true,
+        Behavior: class extends Behavior {
+          onTouchEnded() { notice.string = `${app.title}: ${app.unavailableReason}` }
+        },
+      }) : new ActionButton(
         {
           name: `miniApp:${app.id}`,
           icon: app.icon ?? 'play',
@@ -53,7 +63,7 @@ export const MiniAppLauncher = Container.template(($: MiniAppLauncherData) => {
     top: 0,
     bottom: 0,
     skin: styles.screen,
-    contents,
+    contents: [...contents, notice],
   }
 })
 
