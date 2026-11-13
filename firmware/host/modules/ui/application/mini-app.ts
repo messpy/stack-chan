@@ -98,7 +98,7 @@ export class MiniAppRegistry implements MiniAppRegistryCapability {
         const reason = definition.availability()
         this.setAvailability(definition.id, !reason, reason)
       } catch (error) {
-        trace(`[MiniApp] availability check failed id=${definition.id}: ${String(error)}\n`)
+        if (typeof trace === 'function') trace(`[MiniApp] availability check failed id=${definition.id}: ${String(error)}\n`)
         this.setAvailability(definition.id, false, '機能の状態を確認できません')
       }
     }
