@@ -134,15 +134,23 @@ async function main() {
     }
     const experimentalMiniApps = launch.prepared
 
+    // UI initialization must not wait for Wi-Fi. Network failure is a
+    // capability state, not a reason to withhold the face or mini-app drawer.
     phase = 'network'
     const bootServices = startHostBootServices({
       wifi: {
-        onStatusChanged: showWiFiConnectionStatus,
-        promptRecoveryChoice: waitForBootWiFiRecoveryChoice,
+        onStatusChanged: (status) => {
+          // Splash updates are only safe before the application owns its UI.
+          if (!context) showWiFiConnectionStatus(status)
+        },
+        // Do not block startup waiting for a physical recovery choice.
+        // Retry can be requested later from the Wi-Fi settings mini-app.
       },
     })
-    const networkReady = await bootServices.connectivity.network.ready
-    trace(`[main] network ready: ${networkReady.status}\n`)
+    void bootServices.connectivity.network.ready.then(
+      (result) => trace(`[main] network settled: ${result.status}\n`),
+      (error) => trace(`[main] network failed: ${startupErrorClass(error)}\n`),
+    )
     phase = 'context'
     const preferences = loadPreferenceConfig()
     const ownedDock = dockRuntime
@@ -155,11 +163,20 @@ async function main() {
     ownedDock?.onContextCreated(context)
     registerExperimentalMiniApps(experimentalMiniApps, context.ui.miniApps)
     trace('[main] app context created\n')
-    await runContextCreatedBehaviors(appBehaviors, context, {
-      device: getHostDeviceEnvironment(),
-      config: preferences,
-    })
-    if (Modules.has('lan-archive')) (Modules.importNow('lan-archive') as { startArchive: (context: StackchanContext) => void }).startArchive(context)
+    // Optional behavior failure must not prevent local mini-app registration.
+    try {
+      await runContextCreatedBehaviors(appBehaviors, context, {
+        device: getHostDeviceEnvironment(),
+        config: preferences,
+      })
+    } catch (error) {
+      trace(`[main] app behavior unavailable: ${startupErrorClass(error)}\n`)
+    }
+    try {
+      if (Modules.has('lan-archive')) (Modules.importNow('lan-archive') as { startArchive: (context: StackchanContext) => void }).startArchive(context)
+    } catch (error) {
+      trace(`[main] archive UI unavailable: ${startupErrorClass(error)}\n`)
+    }
     trace('[main] app behaviors ready\n')
     installModManagerShortcut()
   } catch (error) {

@@ -18,13 +18,16 @@ export type MiniAppDefinition = Readonly<{
   title: string
   icon?: 'play'
   hidden?: boolean
+  availability?: () => string | undefined
   create(context: MiniAppContext): PiuContainer | MiniAppInstance
 }>
 
-export type RegisteredMiniApp = Readonly<Pick<MiniAppDefinition, 'id' | 'title' | 'icon'>>
+export type RegisteredMiniApp = Readonly<Pick<MiniAppDefinition, 'id' | 'title' | 'icon'> & { unavailableReason?: string }>
 
 export type MiniAppRegistryCapability = Readonly<{
   register(definition: MiniAppDefinition): () => void
+  setAvailability?(id: string, available: boolean, reason?: string): boolean
+  refreshAvailability?(): void
 }>
 
 type RegistryListener = () => void
@@ -53,6 +56,7 @@ function validateDefinition(definition: MiniAppDefinition): MiniAppDefinition {
     title,
     ...(definition.icon ? { icon: definition.icon } : {}),
     ...(definition.hidden ? { hidden: true } : {}),
+    ...(definition.availability ? { availability: definition.availability } : {}),
     create: definition.create,
   })
 }
@@ -60,6 +64,7 @@ function validateDefinition(definition: MiniAppDefinition): MiniAppDefinition {
 export class MiniAppRegistry implements MiniAppRegistryCapability {
   #definitions = new Map<string, MiniAppDefinition>()
   #listeners = new Set<RegistryListener>()
+  #unavailable = new Map<string, string>()
 
   register(definition: MiniAppDefinition): () => void {
     const validated = validateDefinition(definition)
@@ -72,8 +77,35 @@ export class MiniAppRegistry implements MiniAppRegistryCapability {
       registered = false
       if (this.#definitions.get(validated.id) !== validated) return
       this.#definitions.delete(validated.id)
+      this.#unavailable.delete(validated.id)
       this.#notify()
     }
+  }
+
+  setAvailability(id: string, available: boolean, reason = '現在利用できません'): boolean {
+    if (!this.#definitions.has(id)) return false
+    const previous = this.#unavailable.get(id)
+    if (available) this.#unavailable.delete(id)
+    else this.#unavailable.set(id, reason.trim() || '現在利用できません')
+    if (previous !== this.#unavailable.get(id)) this.#notify()
+    return true
+  }
+
+  refreshAvailability(): void {
+    for (const definition of this.#definitions.values()) {
+      if (!definition.availability) continue
+      try {
+        const reason = definition.availability()
+        this.setAvailability(definition.id, !reason, reason)
+      } catch (error) {
+        if (typeof trace === 'function') trace(`[MiniApp] availability check failed id=${definition.id}: ${String(error)}\n`)
+        this.setAvailability(definition.id, false, '機能の状態を確認できません')
+      }
+    }
+  }
+
+  unavailableReason(id: string): string | undefined {
+    return this.#unavailable.get(id)
   }
 
   get(id: string): MiniAppDefinition | undefined {
@@ -83,7 +115,7 @@ export class MiniAppRegistry implements MiniAppRegistryCapability {
   list(): RegisteredMiniApp[] {
     return [...this.#definitions.values()]
       .filter((definition) => !definition.hidden)
-      .map(({ id, title, icon }) => Object.freeze({ id, title, ...(icon ? { icon } : {}) }))
+      .map(({ id, title, icon }) => Object.freeze({ id, title, ...(icon ? { icon } : {}), ...(this.#unavailable.has(id) ? { unavailableReason: this.#unavailable.get(id) } : {}) }))
       .sort((left, right) => left.title.localeCompare(right.title))
   }
 
