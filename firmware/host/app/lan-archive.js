@@ -176,6 +176,18 @@ async function recordAudio(robot) {
 }
 export function startArchive(robot) {
   let monitor,monitorVoice;
+  // Register essential local UI before optional services that may fail at boot.
+  // Each registration is isolated so one broken app cannot hide the others.
+  try {
+    startTimerUI(robot,{create:args=>callDeviceTool('timer_create',args),status:reminderStatus});
+  } catch (error) { trace('[boot-ui] timer registration failed: '+String(error)+'\\n'); }
+  try {
+    startAlarmSettings(robot,{create:args=>callDeviceTool('alarm_create',args),list:()=>callDeviceTool('reminder_list'),cancel:id=>callDeviceTool('reminder_cancel',{id}),stop:()=>callDeviceTool('alarm_stop')});
+    setAlarmDisplay({show:showRingingAlarm,close:hideRingingAlarm});
+  } catch (error) { trace('[boot-ui] alarm registration failed: '+String(error)+'\\n'); }
+  try {
+    setAlarmMotion(stopped=>createAlarmDance(robot,{rotation:getM5StackChanDriver()?.lastKnownRotation,stopped}));
+  } catch (error) { trace('[boot-ui] alarm motion setup failed: '+String(error)+'\\n'); }
   startDebugDrain();
   startLocalClock();
   startCustomFace(robot);
@@ -186,10 +198,7 @@ export function startArchive(robot) {
   startWiFiDisplay(robot);
   try{startSettings(robot);}catch(_){trace('[settings] initialization failed; USB remains available\n');}
   try{startDeviceTools(robot,()=>{if(monitor?.active){monitor.stopCurrent().catch(()=>{});return false;}if(directChatStatus().busy)pauseDirectChat();if(busy)return false;busy=true;return true;},()=>{busy=false;resumeDirectChat();});}catch(_){trace('[tools] initialization failed; USB remains available\n');}
-  startTimerUI(robot,{create:args=>callDeviceTool('timer_create',args),status:reminderStatus});
-  startAlarmSettings(robot,{create:args=>callDeviceTool('alarm_create',args),list:()=>callDeviceTool('reminder_list'),cancel:id=>callDeviceTool('reminder_cancel',{id}),stop:()=>callDeviceTool('alarm_stop')});
-  setAlarmDisplay({show:showRingingAlarm,close:hideRingingAlarm});
-  setAlarmMotion(stopped=>createAlarmDance(robot,{rotation:getM5StackChanDriver()?.lastKnownRotation,stopped}));
+
   const token=config.archiveToken;
   if(!token)return;
   globalThis.stackchanArchiveTranscript=archiveTranscript;
