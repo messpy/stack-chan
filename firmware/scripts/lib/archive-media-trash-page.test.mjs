@@ -1,7 +1,8 @@
-import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';import test from 'node:test';
-for(const [kind,path,end] of [['LAN','../../host/app/archive-web-page.js','async function messages(){'],['PC',process.env.STACKCHAN_HUB_INDEX || '../../../../hub/index.html','async function refresh(){']]){
- const resolved=kind==='PC' && process.env.STACKCHAN_HUB_INDEX ? process.env.STACKCHAN_HUB_INDEX : new URL(path,import.meta.url);
- test(kind+' delete requires confirmation, then refreshes; restore does not delete other data',{skip:kind==='PC' && !fs.existsSync(resolved) ? 'PC hub/index.html is external to this firmware checkout; set STACKCHAN_HUB_INDEX to run' : false},async()=>{
+import fs from 'node:fs';import {homedir} from 'node:os';import {join} from 'node:path';import vm from 'node:vm';import assert from 'node:assert/strict';import test from 'node:test';
+for(const [kind,path,end] of [['LAN','../../host/app/archive-web-page.js','async function messages(){'],['PC','index.html','async function refresh(){']]){
+ const resolved=kind==='PC'?(process.env.STACKCHAN_HUB_INDEX||join(process.env.STACKCHAN_HUB_ROOT||join(homedir(),'work','hub'),path)):new URL(path,import.meta.url);
+ test(kind+' delete requires confirmation, then refreshes; restore does not delete other data',async()=>{
+  if(!fs.existsSync(resolved))throw new Error('Page fixture missing; set STACKCHAN_HUB_ROOT or STACKCHAN_HUB_INDEX to an existing Hub checkout containing index.html');
   const page=fs.readFileSync(resolved,'utf8'),start=page.indexOf('const deletableMediaName=');const script=page.slice(start,page.indexOf(end,start));
   const elements=new Map(),calls=[];let confirmed=false,refreshes=0;
   const el=id=>{if(!elements.has(id))elements.set(id,{textContent:'',hidden:true,disabled:false,children:[],replaceChildren(){this.children=[]},append(...children){this.children.push(...children)}});return elements.get(id)};
