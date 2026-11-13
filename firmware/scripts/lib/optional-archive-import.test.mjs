@@ -104,9 +104,24 @@ test('errors after successful import remain visible to startup error handling', 
   assert.throws(() => result.startArchive(), /partial Archive initialization/);
 });
 
-test('registry availability errors are not silently swallowed', () => {
-  assert.throws(
-    () => importOptionalArchive({ has: () => { throw new Error('module registry unavailable'); } }),
-    /module registry unavailable/,
-  );
+test('non-ReferenceError registry failure also permits direct Archive import', () => {
+  const module = { startArchive() {} };
+  let imports = 0;
+  const result = importOptionalArchive({
+    has: () => { throw new Error('module registry unavailable'); },
+    importNow: () => { imports += 1; return module; },
+  }, () => assert.fail('unexpected import failure'));
+  assert.equal(result, module);
+  assert.equal(imports, 1);
+});
+
+test('registry and import failures cannot abort official core startup', () => {
+  const failure = new TypeError('registry unavailable');
+  let observed;
+  const result = importOptionalArchive({
+    has: () => { throw new Error('registry unavailable'); },
+    importNow: () => { throw failure; },
+  }, (error) => { observed = error; });
+  assert.equal(result, undefined);
+  assert.equal(observed, failure);
 });
