@@ -117,6 +117,7 @@ static uint32_t pcmRingWriteDownmix(xsPcmRing *ring, const uint8_t *src, uint32_
 	uint32_t srcSamples;
 	uint32_t srcIndex = 0;
 	uint32_t outputBytes;
+	uint32_t channel = 0;
 
 	if (!ring->data || !ring->state || ring->length < (PCM_FRAME_BYTES + sizeof(int16_t)) || !size)
 		return 0;
@@ -127,6 +128,19 @@ static uint32_t pcmRingWriteDownmix(xsPcmRing *ring, const uint8_t *src, uint32_
 		return 0;
 	}
 	srcSamples = size / 2;
+	// CoreS3 captures two microphone slots. Metering observes both, so do not
+	// silently encode an empty left slot when only the right carries speech.
+	// Match the existing recognition PCM policy: select the stronger channel
+	// for this complete capture block; never average opposite-phase microphones.
+	if (channels == 2) {
+		uint64_t leftEnergy = 0, rightEnergy = 0;
+		for (uint32_t i = 0; i < srcSamples; i += 2) {
+			int32_t left = input[i], right = input[i + 1];
+			leftEnergy += (uint64_t)(left * left);
+			rightEnergy += (uint64_t)(right * right);
+		}
+		channel = rightEnergy > leftEnergy ? 1 : 0;
+	}
 
 	while (srcIndex < srcSamples) {
 		uint32_t remain = srcSamples - srcIndex;
@@ -141,7 +155,7 @@ static uint32_t pcmRingWriteDownmix(xsPcmRing *ring, const uint8_t *src, uint32_
 			int16_t *output = (int16_t *)mono;
 			uint32_t i;
 			for (i = 0; i < chunkSamples; i++)
-				output[i] = input[srcIndex + (i * 2)];
+				output[i] = input[srcIndex + (i * 2) + channel];
 			srcIndex += chunkSamples * 2;
 		} else {
 			c_memcpy(mono, input + srcIndex, chunkBytes);

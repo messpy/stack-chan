@@ -1,17 +1,20 @@
 import {Container,Label,Skin,Style} from 'piu/MC';
 import {ActionButton} from 'ui-controls';
 import {uiStyles} from 'ui-theme';
+import {VolumePreviewQueue} from 'volume-preview';
 let robot;
-let preview=Promise.resolve();
+let previewQueue;
 function previewVolume(){
   const volume=robot.audio.volume;
   if(!volume)return;
-  preview=preview.then(()=>robot.audio.tone(880,100,volume)).catch(()=>trace('[volume] preview unavailable\n'));
+  // Keep at most one pending tone when the user presses the controls repeatedly.
+  previewQueue?.request(volume);
 }
 export function getVolume(){return {percent:Math.round(robot.audio.volume*100)};}
 export function setVolume(percent,playPreview=false){
   if(!Number.isInteger(percent)||percent<0||percent>100)throw new Error('Volume must be 0..100');
   robot.audio.volume=percent/100;
+  trace('[volume] applied percent='+getVolume().percent+'\n');
   if(playPreview)previewVolume();
   return getVolume();
 }
@@ -23,6 +26,10 @@ export function openVolume(){
 }
 export function startVolume(context){
   robot=context;
+  previewQueue=new VolumePreviewQueue({
+    play:volume=>robot.audio.tone(880,100,volume),
+    onError:()=>trace('[volume] preview unavailable\n')
+  });
   robot.ui.miniApps.register({id:'archive-volume',hidden:true,title:'音量',create(){
     const styles=uiStyles();
     const value=new Label(null,{left:0,right:0,top:10,height:38,style:new Style({font:'k8x12-24',color:'black',horizontal:'center'}),string:getVolume().percent+'%'});

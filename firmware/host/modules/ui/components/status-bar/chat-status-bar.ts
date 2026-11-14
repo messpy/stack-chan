@@ -333,6 +333,17 @@ class ChatStatusBarBehavior extends Behavior {
     }
   }
 
+  // Read-only diagnostic event: callers supply the result object, no UI mutation.
+  onStatusBarDiagnostics(container: Container, result: Record<string, unknown>) {
+    result.available = true
+    result.visible = container.visible
+    result.mode = this.#mode.kind === 'face' ? 'face' : 'app'
+    result.actionsVisible = this.#faceBarVisible
+    result.clockVisible = this.#clock?.visible === true
+    result.batteryVisible = this.#battery?.visible === true
+    result.wifiVisible = container.content('wifiBadge')?.visible === true
+  }
+
   onMiniAppAvailability(_container: Container, available: boolean) {
     this.#miniAppsAvailable = available
     this.updateFaceActions()

@@ -7,3 +7,5 @@ assert.equal(b.visible,true);assert.equal(b.running,true);assert.equal(bar.visib
 const rects=[];b.behavior.onDraw({fillColor:(_,x,y,w,h)=>rects.push({x,y,w,h})});assert.ok(rects.every(r=>r.x>=0&&r.y>=0&&r.x+r.w<=b.width&&r.y+r.h<=b.height));
 bar.behavior.onAppBarMode(bar,{kind:'app',title:'設定'});assert.equal(b.visible,true);assert.equal(b.running,true);bar.behavior.onUndisplaying(bar);assert.equal(b.running,false);
 console.log('PASS: tiny left battery followed by WiFi remains after face timeout and in settings, shares WiFi row without overlap, drawing fits its bounds');
+const result={};bar.behavior.onStatusBarDiagnostics(bar,result);assert.equal(result.available,true);assert.equal(result.mode,'app');assert.equal(result.batteryVisible,true);assert.equal(result.wifiVisible,true);
+bar.behavior.onAppBarMode(bar,{kind:'face'});bar.behavior.onFinished(bar);const hidden={};bar.behavior.onStatusBarDiagnostics(bar,hidden);assert.equal(hidden.actionsVisible,false);assert.equal(hidden.clockVisible,false);assert.equal(hidden.visible,true);assert.equal(hidden.batteryVisible,true);
