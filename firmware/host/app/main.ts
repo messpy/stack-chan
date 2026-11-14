@@ -229,10 +229,18 @@ async function main() {
     emitStartupProgress(phase, checkpoint, 'begin')
     // Archive is optional: a broken module import must not replace the official
     // face with a fatal startup screen. Keep its error in fixed-schema USB logs.
-    const archive = importOptionalArchive(Modules, (error: unknown) => {
+    let archive: { startArchive: (context: StackchanContext) => void } | undefined
+    try {
+      archive = importOptionalArchive(Modules, (error: unknown) => {
+        emitStartupDiagnostic(phase, 'archive-import', error)
+        trace('[main] archive import failed; continuing core startup\n')
+      }) as { startArchive: (context: StackchanContext) => void } | undefined
+    } catch (error) {
+      // The optional loader itself can fail before its internal import guard.
+      // Never let an Archive dependency prevent the official face from booting.
       emitStartupDiagnostic(phase, 'archive-import', error)
-      trace('[main] archive import failed; continuing core startup\n')
-    }) as { startArchive: (context: StackchanContext) => void } | undefined
+      trace('[main] archive loader failed; continuing core startup\n')
+    }
     if (archive) {
       emitStartupProgress(phase, 'archive-import', 'done')
       checkpoint = 'archive-start'
