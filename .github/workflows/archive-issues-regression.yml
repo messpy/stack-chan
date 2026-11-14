@@ -1,0 +1,106 @@
+name: Archive Issues 33-38 Regression
+
+on:
+  pull_request:
+    branches: [stackchan-super]
+    paths:
+      - 'firmware/host/app/archive-direct-chat.js'
+      - 'firmware/host/app/archive-offline.js'
+      - 'firmware/host/app/archive-offline-policy.js'
+      - 'firmware/host/app/lan-archive.js'
+      - 'firmware/host/app/archive-volume.js'
+      - 'firmware/host/app/archive-tools.js'
+      - 'firmware/scripts/**'
+      - '.github/workflows/archive-issues-regression.yml'
+  workflow_dispatch:
+
+# Old commits must not run multiple expensive CoreS3 builds concurrently.
+concurrency:
+  group: archive-issues-33-38-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-regression:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Archive Node regression
+        run: |
+          node --experimental-vm-modules --test \
+            firmware/scripts/lib/archive-ai-mode-persistence.test.mjs \
+            firmware/scripts/lib/archive-speaker-selection.test.mjs \
+            firmware/scripts/lib/archive-issues-33-36.test.mjs \
+            firmware/scripts/lib/archive-voice-volume.test.mjs \
+            firmware/scripts/lib/archive-offline.test.mjs \
+            firmware/scripts/lib/archive-build-preflight.test.mjs \
+            firmware/scripts/lib/idf-dependencies.test.mjs
+      - name: Full portable Archive and firmware-script Node regression suite
+        working-directory: ./firmware
+        shell: bash
+        run: |
+          # Existing SDK/Hub tests require external checkouts absent from this job.
+          # Their absence is explicitly reported and must not be counted as PASS.
+          files=()
+          for testfile in scripts/lib/*.test.mjs; do
+            case "$testfile" in
+              scripts/lib/archive-gemini-conversation.test.mjs)
+                echo '[WARN] SKIP archive-gemini-conversation: external MODDABLE SDK absent'
+                ;;
+              scripts/lib/archive-media-trash-page.test.mjs)
+                echo '[WARN] SKIP archive-media-trash-page: sibling hub/index.html absent'
+                ;;
+              *) files+=("$testfile") ;;
+            esac
+          done
+          node --experimental-vm-modules --test "${files[@]}"
+      - name: kmac quick-start shell syntax and read-only preflight
+        env:
+          STACKCHAN_SOURCE_REF: HEAD
+        run: |
+          bash -n firmware/scripts/kmac-pr39.sh
+          bash -n firmware/scripts/update-archive.sh
+          python3 -m py_compile firmware/scripts/archive-usb-audit.py firmware/scripts/archive-photo-lan.py firmware/scripts/voicevox-pc-play.py
+          python3 -m unittest discover -s firmware/scripts -p 'test_archive_usb_audit.py' -v
+          python3 -m unittest discover -s firmware/scripts -p 'test_archive_photo_lan.py' -v
+          python3 -m unittest discover -s firmware/scripts -p 'test_voicevox_pc_play.py' -v
+          bash firmware/scripts/kmac-pr39.sh check
+      - name: E2E evidence evaluator unit tests
+        run: python3 -m unittest discover -s firmware/scripts -p 'test_voice_e2e.py' -v
+
+  cores3-clean-archive-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Generate throwaway Archive private manifest
+        working-directory: ./firmware
+        run: npm run init:archive
+      - name: Clean CoreS3 Archive build (no flash)
+        working-directory: ./firmware
+        shell: bash
+        run: |
+          source "$HOME/.local/share/xs-dev-export.sh"
+          node scripts/clean.mjs
+          npm run build:archive
+      - name: Verify all Archive IDF components and firmware binary
+        working-directory: ./firmware
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, statSync } from 'node:fs'
+          const manifest = readFileSync('dist/tmp/esp32/m5stack_cores3/release/stack-chan-host/xsProj-esp32s3/main/idf_component.yml', 'utf8')
+          for (const name of ['esp32-camera', 'esp_jpeg', 'esp_audio_codec']) {
+            if (!manifest.includes('espressif/' + name + ':')) throw new Error('Missing dependency: ' + name)
+          }
+          const bin = 'dist/bin/esp32/m5stack_cores3/release/stack-chan-host/xs_esp32.bin'
+          if (statSync(bin).size < 100_000) throw new Error('Firmware binary missing/too small')
+          console.log('[CHECK] CoreS3 Archive clean build completed; manifest and firmware found')
+          NODE

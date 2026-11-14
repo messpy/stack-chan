@@ -124,6 +124,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
 
   disconnect() {
     this.uploading = false
+    this.postMessage({id:'uploadState',enabled:false})
     this.encoder?.clear()
     super.disconnect()
   }
@@ -267,11 +268,13 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
     this.encoder.clear()
     this.resetEncodeStats()
     this.uploading = true
+    this.postMessage({id:'uploadState',enabled:true})
     this.sendProtocolEvent(this.withSession({ type: 'listen', state: 'start', mode }))
   }
 
   stopListening() {
     this.uploading = false
+    this.postMessage({id:'uploadState',enabled:false})
     this.encoder?.clear()
     this.sendProtocolEvent(this.withSession({ type: 'listen', state: 'stop' }))
   }
@@ -289,6 +292,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
 
   abort(message = {}) {
     this.uploading = false
+    this.postMessage({id:'uploadState',enabled:false})
     this.encoder?.clear()
     this.decoderPacket = undefined
     this.sendProtocolEvent(
@@ -313,6 +317,11 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
         packet.set(new Uint8Array(this.encoderPacket, 0, packetBytes))
         this.write(packet, binary)
         this.encodePackets += 1
+        const now = Date.now()
+        if (!this.lastUploadReport || now - this.lastUploadReport >= 1000) {
+          this.lastUploadReport = now
+          this.postMessage({id:'uploadState',enabled:true,sentAt:this.lastBinaryWriteAt ?? 0,packets:this.encodePackets,droppedBytes:this.encoder.droppedPcmBytes ?? 0})
+        }
         this.encodePCMBytes += this.encoder.inputBytes
         this.encodeCompressedBytes += packetBytes
         this.encodeUs += this.encoder.encodeUs
@@ -385,7 +394,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
 
   stt(message) {
     if (typeof message.text === 'string' && message.text.trim()) { this.replyRequested = true; this.replyDeadline = Date.now() + 30000 }
-    if(this.recognitionOnly){this.abort({reason:'recognition_only'});this.postPresentation({id:'receiveInputText',text:message.text});return}
+    if(this.recognitionOnly){this.abort({reason:'recognition_only'});this.startListening({mode:this.listeningMode});this.postPresentation({id:'receiveInputText',text:message.text});return}
     if (message.glyph_push) {
       this.postPresentation({
         id: 'receiveGlyphPush',
@@ -410,7 +419,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
   }
 
   tts(message) {
-    if(this.recognitionOnly){if(message.state==='start')this.abort({reason:'recognition_only'});return}
+    if(this.recognitionOnly){if(message.state==='start'){this.abort({reason:'recognition_only'});this.startListening({mode:this.listeningMode})}return}
     // The cloud can emit a farewell after ~60 seconds of silence. Only play
     // replies to recognized speech or an explicit wake/greeting request.
     if (message.state === 'start') {
@@ -437,6 +446,7 @@ export default class XiaozhiModel extends ServerChatWebSocketWorker {
           `[opus] packets=${this.encodePackets} pcm=${this.encodePCMBytes}B captured=${captured}B dropped_pcm=${droppedPcm}B compressed=${this.encodeCompressedBytes}B encode_avg=${average}us encode_max=${this.encodeMaxUs}us load=${load.toFixed(2)}%\n`,
         )
         this.uploading = false
+        this.postMessage({id:'uploadState',enabled:false})
         this.encoder?.clear()
         this.resetEncodeStats()
         this.decoderPacket = undefined

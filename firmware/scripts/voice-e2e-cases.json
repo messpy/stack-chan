@@ -1,0 +1,186 @@
+{
+  "schema": 1,
+  "description": "CoreS3 physical voice E2E stimuli (18 cases); human evidence and device state are mandatory; OFF cannot receive a voice ON instruction without an active recognizer",
+  "cases": [
+    {
+      "id": "photo_explicit",
+      "text": "写真撮って",
+      "required": [
+        "asr",
+        "photo",
+        "touch_after"
+      ],
+      "note": "Explicit capture without relying on an AI tool choice"
+    },
+    {
+      "id": "photo_denied",
+      "text": "写真を撮らないで",
+      "required": [
+        "asr",
+        "no_photo"
+      ],
+      "note": "Negated camera request must not start capture"
+    },
+    {
+      "id": "photo_topic",
+      "text": "写真について教えて",
+      "required": [
+        "asr",
+        "no_photo",
+        "response"
+      ],
+      "note": "Mentioning photographs is not authorization"
+    },
+    {
+      "id": "camera_describe",
+      "text": "カメラで見てください",
+      "required": [
+        "asr",
+        "photo",
+        "response"
+      ],
+      "note": "User-authorized visual description"
+    },
+    {
+      "id": "ordinary_chat",
+      "text": "こんにちは。今日の気分はどう？",
+      "required": [
+        "asr",
+        "no_photo",
+        "response",
+        "audio"
+      ],
+      "note": "Ordinary conversation must not trigger camera"
+    },
+    {
+      "id": "volume_20",
+      "text": "音量を20パーセントにして",
+      "required": [
+        "asr",
+        "volume",
+        "audio"
+      ],
+      "note": "Check actual output and stored percent"
+    },
+    {
+      "id": "volume_30",
+      "text": "音量を30パーセントにして",
+      "required": [
+        "asr",
+        "volume",
+        "audio"
+      ],
+      "note": "Run alternating 20↔30 ten times during device acceptance"
+    },
+    {
+      "id": "chat_off",
+      "text": "AIモードをオフにして",
+      "required": [
+        "asr",
+        "mode"
+      ],
+      "note": "Check persisted setting and ownership"
+    },
+    {
+      "id": "chat_on",
+      "text": "AIモードをオンにして",
+      "required": [
+        "asr",
+        "mode"
+      ],
+      "note": "Check next turn and reboot restore"
+    },
+    {
+      "id": "post_capture_chat",
+      "text": "今、会話できますか？",
+      "required": [
+        "asr",
+        "no_photo",
+        "response",
+        "audio"
+      ],
+      "note": "Ensure conversation resumes after camera"
+    },
+    {
+      "id": "long_conversation",
+      "text": "続けてお話ししてください",
+      "required": [
+        "asr",
+        "response",
+        "audio",
+        "stability"
+      ],
+      "note": "Repeat across 30 minutes and record heap/reset reason"
+    },
+    {
+      "id": "mode_recognition_on",
+      "text": "文字起こしをオンにして",
+      "required": [
+        "asr",
+        "mode"
+      ],
+      "note": "Start with conversation ON. Confirm stored transcription ON, conversation OFF, and old session closed"
+    },
+    {
+      "id": "mode_recognition_only_no_tool",
+      "text": "写真撮って",
+      "required": [
+        "asr",
+        "photo",
+        "no_head",
+        "no_llm"
+      ],
+      "note": "Transcription-only mode can run a user's exact local photo command without any cloud LLM/tool or head movement."
+    },
+    {
+      "id": "mode_recognition_off",
+      "text": "文字起こしをオフにして",
+      "required": [
+        "asr",
+        "mode"
+      ],
+      "note": "Start with transcription ON. Confirm explicit OFF persists and microphone stops"
+    },
+    {
+      "id": "mode_reboot_chat_on",
+      "text": "こんにちは",
+      "required": [
+        "boot_mode",
+        "asr",
+        "response",
+        "audio"
+      ],
+      "note": "Manually set conversation ON, power-cycle CoreS3 before the trial. Confirm saved AND connected values, not just ON on screen"
+    },
+    {
+      "id": "mode_reboot_chat_off",
+      "text": "こんにちは",
+      "required": [
+        "boot_mode",
+        "no_asr",
+        "no_audio"
+      ],
+      "note": "Manually set conversation+transcription OFF, power-cycle CoreS3; sending stimulus must not activate microphone or cloud. Prove this via active monitor and physical output"
+    },
+    {
+      "id": "head_voice_right",
+      "text": "右を向いて",
+      "required": [
+        "asr",
+        "head",
+        "response"
+      ],
+      "note": "Hardware observation for the previously working #32 motion; do not claim motor movement from a tool acknowledgement"
+    },
+    {
+      "id": "head_voice_up",
+      "text": "上を向いて",
+      "required": [
+        "asr",
+        "head",
+        "response"
+      ],
+      "note": "Measure physical tilt direction and return to safe pose if testing fails"
+    }
+  ]
+}

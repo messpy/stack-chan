@@ -1,4 +1,5 @@
 import {headMoveTool,moveHead} from 'archive-head-motion';
+import {getVolume,setVolume} from 'archive-volume';
 import Time from 'time';
 import {nextDailyDue,japaneseClock,finishReminder} from 'archive-reminder-time';
 import {playAlarmSound,stopAlarmSound} from 'archive-alarm-sound';
@@ -11,7 +12,8 @@ const elapsedTimer=t=>Math.min(t.duration,(Time.ticks-t.started)>>>0);
 let alarmDisplay,alarmMotion;
 export function setAlarmMotion(factory){alarmMotion=factory;}
 export function setAlarmDisplay(display){alarmDisplay=display;}
-const toolDefinitions=()=>definitions??(definitions=JSON.parse(String.fromArrayBuffer(new Resource('reminder-tools.txt'))).concat(headMoveTool));
+const volumeTools=[{name:'volume_get',description:'本体の現在の音量を取得する。',inputSchema:{type:'object',properties:{},additionalProperties:false}},{name:'volume_set',description:'ユーザーが依頼した本体音量を0〜100%で指定する。',inputSchema:{type:'object',properties:{percent:{type:'integer',minimum:0,maximum:100}},required:['percent'],additionalProperties:false}}];
+const toolDefinitions=()=>definitions??(definitions=JSON.parse(String.fromArrayBuffer(new Resource('reminder-tools.txt'))).concat(headMoveTool,volumeTools));
 let robot,claim,release,ringing=false,stopped=false;
 const ready=()=>Date.now()>1700000000000;
 const localTime=()=>new Date(Date.now()+9*3600000).toISOString().slice(0,19)+'+09:00';
@@ -22,6 +24,8 @@ export function reminderStatus(){return {clockReady:ready(),timezone:'Asia/Tokyo
 export function callDeviceTool(name,args={}){
   if(!toolDefinitions().some(tool=>tool.name===name))throw new Error('Unknown device tool');
   if(name==='head_move')return moveHead(robot,args);
+  if(name==='volume_get')return getVolume();
+  if(name==='volume_set')return setVolume(args.percent);
   if(name==='clock_now')return {clockReady:ready(),timezone:'Asia/Tokyo',localTime:ready()?localTime():null,utc:ready()?new Date().toISOString():null};
   if(name==='reminder_list')return {...reminderStatus(),items:reminderStatus().items.filter(row=>args.include_completed||row.status==='scheduled'||row.status==='pending')};
   if(name==='alarm_stop'){stopped=true;stopAlarmSound();return {stopping:ringing};}
@@ -63,7 +67,7 @@ async function notify(item){
     try{robot.lightRainbow?.('head');}catch(_){trace('[tools] rainbow LED unavailable\n');}
     let visible=false;try{visible=alarmDisplay?.show(item)===true;}catch(_){trace('[tools] alarm screen unavailable\n');}if(!visible)robot.showBalloon(item.title);
     try{dance=alarmMotion?.(()=>stopped);motionDone=dance?.finished.catch(()=>trace('[tools] alarm motion failed\n'));}catch(_){trace('[tools] alarm motion unavailable\n');}
-    let custom=false;try{custom=await playAlarmSound(robot,()=>stopped);}catch(_){trace('[tools] custom sound unavailable; tone fallback\n');}
+    let custom=false;try{custom=await playAlarmSound(robot,()=>stopped,0,item.kind);}catch(_){trace('[tools] custom sound unavailable; tone fallback\n');}
     if(!custom)for(let i=0;i<12&&!stopped;i++){
       await robot.audio.tone(i%2?660:880,180,Math.min(robot.audio.volume,0.45));
       await wait(180);

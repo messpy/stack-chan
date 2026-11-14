@@ -31,6 +31,7 @@ import { validateFirmwareBundleTarget } from './lib/firmware-bundle.mjs'
 import { prepareCoreS3IdfDependencies } from './lib/idf-dependencies.mjs'
 import { installModArchive, resolveModArchivePath } from './lib/mod-flash.mjs'
 import { prepareCoreS3VersionSdkconfig, prepareVersionSdkconfig, readModdableVersion } from './lib/moddable-version.mjs'
+import { prepareModdableXslArgsFile } from './lib/moddable-xsl-args.mjs'
 
 const command = process.argv[2]
 const rawArgs = process.argv.slice(3)
@@ -171,6 +172,21 @@ if (buildVariantChanged && ['m5stackchan_cores3', 'stackchan_rt'].includes(devic
     })
   } catch (error) {
     console.error(`[stack-chan] IDF dependencies could not be prepared after target clean: ${error.message}`)
+    process.exit(1)
+  }
+}
+
+if (
+  !dryRun &&
+  process.platform !== 'win32' &&
+  ['build', 'flash', 'deploy', 'debug'].includes(command) &&
+  ['m5stackchan_cores3', 'stackchan_rt'].includes(deviceName)
+) {
+  try {
+    const { status, templatePath } = prepareModdableXslArgsFile()
+    console.log('[stack-chan] Moddable xsl args.txt: ' + status + ' (' + templatePath + ')')
+  } catch (error) {
+    console.error('[stack-chan] Moddable xsl argument workaround failed: ' + error.message)
     process.exit(1)
   }
 }
