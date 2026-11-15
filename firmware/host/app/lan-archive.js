@@ -35,7 +35,7 @@ import {startSettings,openSettings,closeSettings,getSettingsStatus,vaultSelfTest
 import {startDeviceTools,setAlarmDisplay,setAlarmMotion,callDeviceTool,listDeviceTools,reminderStatus} from 'archive-tools';
 import Time from 'time';
 import {getM5StackChanDriver} from 'm5stackchan-servo-driver';
-import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG} from 'archive-usb';
+import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG,heapStatus} from 'archive-usb';
 import Base64 from 'base64';
 import config from 'mc/config';
 import {HttpServerService, Response} from 'http-server-service';
@@ -176,7 +176,10 @@ async function recordAudio(robot) {
 }
 export function startArchive(robot) {
   let monitor,monitorVoice;
+  const bootHeap=stage=>{try{const h=heapStatus();trace('[boot-heap] stage='+stage+' internalFree='+h.internalFree+' internalLargest='+h.internalLargest+' psramFree='+h.psramFree+'\n');}catch(_){}};
+  bootHeap('before-debug-drain');
   startDebugDrain();
+  bootHeap('after-debug-drain');
   startLocalClock();
   startCustomFace(robot);
   startOffline(robot,{stopCloud:()=>{if(directChatStatus().recognitionMode)setRecognitionMode(false);if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings,startCloud:()=>setChatMode(true),openAI:()=>robot.ui.application.behavior.launchMiniApp('archive-ai-settings')});
@@ -194,6 +197,12 @@ export function startArchive(robot) {
   if(!token)return;
   globalThis.stackchanArchiveTranscript=archiveTranscript;
   globalThis.abort=(reason,exception)=>{try{writeUSB(JSON.stringify({event:'fatal',reason:String(reason),detail:String(exception).slice(0,300)}));}catch(_){};rebootUSB();return true;};
+  bootHeap('before-lan-monitor');
+  bootHeap('before-lan-monitor');
+  bootHeap('before-lan-monitor');
+  bootHeap('before-lan-monitor');
+  bootHeap('before-lan-monitor');
+  bootHeap('before-lan-monitor');
   monitor=createLANMonitor({robot,now:()=>Date.now(),repeat:(fn,ms)=>Timer.repeat(fn,ms),cancel:id=>Timer.clear(id),token:()=>randomHex(16),
     claim(){
       if(offlineStatus().playing||reminderStatus().ringing||(busy&&!directChatStatus().busy))throw new Error('本体で処理中です');
