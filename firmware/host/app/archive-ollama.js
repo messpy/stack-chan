@@ -20,7 +20,7 @@ export function ollamaModel() {
 export function validOllamaModel(model) {
   return typeof model === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,99}$/.test(model)
 }
-export async function ollamaChat(messages, tools = [], runTool, isCurrent = () => true) {
+export async function ollamaChat(messages, tools = [], runTool, isCurrent = () => true, requestHTTP = postVision) {
   const key = getSettings().api?.ollama?.trim()
   if (!key) throw new Error('Ollama Cloud APIキーを設定してください')
   const model = ollamaModel()
@@ -42,7 +42,7 @@ export async function ollamaChat(messages, tools = [], runTool, isCurrent = () =
       options: { num_predict: 1200 },
       ...(functions.length ? { tools: functions } : {}),
     }
-    const reply = await postVision(
+    const reply = await requestHTTP(
       'ollama.com',
       '/api/chat',
       [
@@ -107,7 +107,7 @@ export async function checkOllama() {
 }
 
 export const DEFAULT_GEMINI_TEXT_MODEL='gemini-3.5-flash-lite'
-export async function geminiTextChat(messages,tools=[],runTool,isCurrent=()=>true){
+export async function geminiTextChat(messages,tools=[],runTool,isCurrent=()=>true,requestHTTP=postVision){
  const settings=getSettings(),key=settings.api?.gemini?.trim();
  if(!key)throw new Error('Gemini APIキーを設定してください');
  const model=settings.geminiTextModel||DEFAULT_GEMINI_TEXT_MODEL;
@@ -116,7 +116,7 @@ export async function geminiTextChat(messages,tools=[],runTool,isCurrent=()=>tru
  for(let round=0;round<5;round++){
   if(!isCurrent())throw new Error('会話が切り替わりました');
   const body={systemInstruction:{parts:[{text:system}]},contents,generationConfig:{maxOutputTokens:1200},...(tools.length?{tools:[{functionDeclarations:tools.map(t=>({name:t.name,description:t.description||'',parametersJsonSchema:t.inputSchema||t.parameters||{type:'object',properties:{}}}))}]}:{})};
-  const response=JSON.parse(await postVision('generativelanguage.googleapis.com','/v1beta/models/'+encodeURIComponent(model)+':generateContent',[['content-type','application/json'],['x-goog-api-key',key]],ArrayBuffer.fromString(JSON.stringify(body)),'POST',60000));
+  const response=JSON.parse(await requestHTTP('generativelanguage.googleapis.com','/v1beta/models/'+encodeURIComponent(model)+':generateContent',[['content-type','application/json'],['x-goog-api-key',key]],ArrayBuffer.fromString(JSON.stringify(body)),'POST',60000));
   if(!isCurrent())throw new Error('会話が切り替わりました');
   const content=response.candidates?.[0]?.content,parts=content?.parts||[],calls=parts.filter(p=>p.functionCall);
   if(calls.length){

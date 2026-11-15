@@ -1,3 +1,11 @@
+import {workerTextDiagnostics} from 'archive-text-transport';
+import {createKoeAct} from 'archive-koeact';
+import * as irNative from 'archive-ir-native';
+import {createIRRemote} from 'archive-ir';
+import {createAISchedule} from 'archive-ai-schedule';
+import {createCameraWatch,grayscale565} from 'archive-camera-diff';
+import {createTextRequest} from 'archive-text-request';
+import {startFeatureUI} from 'archive-feature-ui';
 import {mediaTrash,mediaFilePage} from 'archive-media-trash';
 import {createLANMonitor} from 'archive-lan-monitor';
 import AudioIn from 'embedded:io/audio/in';
@@ -27,9 +35,9 @@ import {imageUploadCommand} from 'archive-image-upload';
 import {startWiFiDisplay,wifiDisplayStatus} from 'archive-wifi-display';
 import {analyzeJPEG,visionStatus} from 'archive-vision';
 import {startAlarmSettings,openAlarmSettings,showRingingAlarm,hideRingingAlarm} from 'archive-alarm-ui';
-import {alarmSoundCommand,playAlarmSound} from 'archive-alarm-sound';
+import {stopAlarmSound,alarmSoundCommand,playAlarmSound} from 'archive-alarm-sound';
 import {startWeb,openControl,controlStatus} from 'archive-web';
-import {microphoneIndicator,startDirectChat,directChatStatus,chatIdleStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat,suspendDirectChatForAutomaticOffline,resumeDirectChatFromAutomaticOffline} from 'archive-direct-chat';
+import {webTextTurn,microphoneIndicator,startDirectChat,directChatStatus,chatIdleStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat,suspendDirectChatForAutomaticOffline,resumeDirectChatFromAutomaticOffline} from 'archive-direct-chat';
 import {recordMemory,history,deviceHistory,currentSpeaker,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
 import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
 import {acceptAudioChunk} from 'archive-audio-upload';
@@ -46,6 +54,7 @@ import {bgr24,bitmapHeader,aviHeader,frameHeader,aviAudioHeader,audioFrameHeader
 
 let sequence=0;
 let busy=false;
+let automaticCapture=false;
 let photoActive=false;
 let lastServoReadFailure='none';
 let bootResetCode=null;
@@ -84,11 +93,12 @@ function save(name,parts) {
   });
 }
 const id=()=>`${Date.now()}-${sequence++}`;
-export function archiveTranscript(role,text,eventId,image,speakerId) {
+export function archiveTranscript(role,text,eventId,image,speakerId,metadata) {
   if(!text)return;
   if(role==='input')globalThis.stackchanIdleActivity?.('input-transcript');
   try {
     const event={id:typeof eventId==='string'&&/^[a-z0-9-]{1,100}$/.test(eventId)?eventId:id(),role:role==='input'?'user':'assistant',text:String(text).slice(-4096),created:Date.now()};
+    if(metadata?.source==='web'&&typeof metadata.requestId==='string'){event.source='web';event.requestId=metadata.requestId;event.turnId='web-'+metadata.requestId;}
     event.speakerId=speakerId===undefined?(directChatStatus().speaker?.id??null):speakerId;
     if(typeof image==='string'&&safe(image)&&image.endsWith('.jpg'))event.image=image;
     save(`chat-${event.id}.json`,[ArrayBuffer.fromString(JSON.stringify(event))]);
@@ -277,10 +287,10 @@ export function startArchive(robot) {
   try{markHeap('archive-start',heapStatus(),trace)}catch(_){}
   startLocalClock();
   startCustomFace(robot);
-  startIdleFace(robot,()=>{
+  const idleFace=startIdleFace(robot,()=>{
     const ui={};robot.ui.application.distribute('onStatusBarDiagnostics',ui);
     return idleFaceAllowed({faceMode:globalThis.stackchanFaceMode||'simple',
-      customFace:globalThis.stackchanCustomFaceEnabled,busy,photo:photoActive,
+      customFace:globalThis.stackchanCustomFaceEnabled,busy,backgroundCapture:automaticCapture,photo:photoActive,
       monitor:monitor?.active,offline:offlineStatus().playing,chat:chatIdleStatus(),ui});
   });
   startOffline(robot,{stopCloud:()=>{if(directChatStatus().recognitionMode)setRecognitionMode(false);if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings,startCloud:()=>setChatMode(true),openAI:()=>robot.ui.application.behavior.launchMiniApp('archive-ai-settings')});
@@ -320,13 +330,61 @@ export function startArchive(robot) {
       }finally{unlock?.();}
     }
   });
+  const koeact=createKoeAct({robot,pause:pauseDirectChat,resume:resumeDirectChat,claim:()=>{if(busy||photoActive||monitor.active||reminderStatus().ringing)return false;busy=true;return true;},release:()=>{busy=false;},canAct:()=>!reminderStatus().ringing&&!reminderStatus().items.some(r=>r.status==='pending')});
+  const irRemote=createIRRemote({read:()=>getSettings().irRemote,save:value=>changeSettings(data=>{data.irRemote=value;}),backend:irNative,available:()=>!busy&&!photoActive&&!monitor.active&&!directChatStatus().busy&&!reminderStatus().ringing});
+  globalThis.stackchanIRVoice=text=>{if(!irRemote.voice(text,true))return false;const paused=pauseDirectChat();try{return irRemote.voice(text);}finally{if(paused)resumeDirectChat();}};
+  Timer.repeat(()=>irRemote.tick(),100);
+  const textRequest=createTextRequest({run:webTextTurn});
+  const aiSchedule=createAISchedule({read:()=>getSettings().aiSchedule,save:value=>changeSettings(data=>{data.aiSchedule=value;}),apply:setChatMode,ready:()=>localClockStatus().ready});
+  const cameraWatch=createCameraWatch({read:()=>getSettings().cameraWatch,save:value=>changeSettings(data=>{data.cameraWatch=value;}),
+    available:()=>!busy&&!photoActive&&!monitor.active&&!directChatStatus().busy&&!reminderStatus().ringing&&!offlineStatus().playing&&!irRemote.status().learning,
+    pose:()=>({...getM5StackChanDriver()?.lastKnownRotation||robot.pose.body.rotation}),
+    async capture(){
+      if(busy||photoActive)throw new Error('Camera busy');busy=true;automaticCapture=true;let frame;
+      try{const options={width:176,height:144,imageType:'rgb565le'};await robot.camera.start(options);frame=await robot.camera.capture(options);return grayscale565(frame.buffer,frame.width,frame.height);}
+      finally{try{frame?.close?.();}finally{try{await robot.camera.stop();}finally{busy=false;automaticCapture=false;}}}
+    },
+    async notify(event){robot.showBalloon(event.test?'見守り通知テスト':'カメラに変化を検知しました',{holdMs:10000});}
+  });
+  startFeatureUI(robot,{schedule:aiSchedule,watch:cameraWatch,ir:irRemote,koeact});
+  Timer.repeat(()=>{aiSchedule.tick().catch(()=>{});cameraWatch.tick().catch(()=>{});},1000);
+  let libraryPlayback={state:'idle'},libraryStop=false;
   async function execute(request){
     if(monitor.active&&!request.op.startsWith('/monitor/')&&!['/status','/volume','/chat/status','/photo/status','/files','/files/page','/network/status','/speaker/list','/settings/status','/reminders','/debug/status','/diagnostics/status','/motor-status','/media/trash'].includes(request.op))throw new Error('動作確認を終了してから操作してください');
     const capture=['/face/save','/face/restore','/alarm-sound/preview','/motor/test','/motor/recover','/image/finish','/photo','/record','/audio','/chat-record'].includes(request.op);
     const paused=capture?pauseDirectChat():false;
     try{
       let result;
-      if(request.op==='/monitor/start')result=monitor.start();
+      if(request.op==='/idle/status')result=idleFace.status();
+      else if(request.op==='/voice/status')result=koeact.status();
+      else if(request.op==='/voice/listen')result=koeact.start(request.args);
+      else if(request.op==='/voice/cancel')result=koeact.cancel();
+      else if(request.op==='/ir/status'||request.op==='/ir/list')result=irRemote.status();
+      else if(request.op==='/ir/configure')result=irRemote.configure(request.args);
+      else if(request.op==='/ir/learn/start')result=irRemote.learn(request.args);
+      else if(request.op==='/ir/learn/cancel')result=irRemote.cancel();
+      else if(request.op==='/ir/send')result=irRemote.send(request.args?.id);
+      else if(request.op==='/ir/delete')result=irRemote.delete(request.args);
+      else if(request.op==='/ai-schedule/status')result=aiSchedule.status();
+      else if(request.op==='/ai-schedule/configure')result=aiSchedule.configure(request.args);
+      else if(request.op==='/camera-watch/status')result=cameraWatch.status();
+      else if(request.op==='/camera-watch/configure')result=cameraWatch.configure(request.args);
+      else if(request.op==='/camera-watch/stop')result=cameraWatch.stop();
+      else if(request.op==='/camera-watch/test')result=await cameraWatch.test();
+      else if(request.op==='/chat/text')result=textRequest.start(request.args);
+      else if(request.op==='/chat/text/status')result={...textRequest.status(request.args?.id),transport:workerTextDiagnostics()};
+      else if(request.op==='/chat/text/cancel')result=textRequest.cancel(request.args?.id);
+      else if(request.op==='/audio-library/status')result={...libraryPlayback};
+      else if(request.op==='/audio-library/stop'){libraryStop=true;if(libraryPlayback.state==='playing')stopAlarmSound();result={...libraryPlayback};}
+      else if(request.op==='/audio-library/play'){
+        if(busy||directChatStatus().busy||reminderStatus().ringing)throw new Error('会話・録音・アラームが終わってから再生してください');
+        const name=request.args?.name;
+        if(!alarmSoundCommand('list').items.some(item=>item.file===name))throw new Error('保存済み音声を選んでください');
+        busy=true;libraryStop=false;libraryPlayback={state:'playing',name};
+        Promise.resolve().then(async()=>{let unlock;try{unlock=robot.audio.acquireExclusive();await playAlarmSound(robot,()=>{if(reminderStatus().items.some(item=>item.status==='pending'))libraryStop=true;return libraryStop;},0,'alarm',name);libraryPlayback={state:libraryStop?'stopped':'completed',name};}catch(_){libraryPlayback={state:'failed',name,error:'音声を再生できませんでした'};}finally{unlock?.();busy=false;}});
+        result={...libraryPlayback};
+      }
+      else if(request.op==='/monitor/start')result=monitor.start();
       else if(request.op==='/monitor/stop')result=await monitor.stop(request.args?.id);
       else if(request.op==='/monitor/status')result=monitor.status(request.args?.id);
       else if(request.op==='/monitor/audio')result=monitor.audio(request.args?.id,request.args?.enabled);
@@ -356,13 +414,13 @@ export function startArchive(robot) {
       else if(request.op==='/offline/action')result=await offlineAction(request.args?.action);
       else if(request.op==='/clock/status')result=localClockStatus();
       else if(request.op==='/alarms/open')result=openAlarmSettings();
-      else if(request.op.startsWith('/alarm-sound/')&&request.op!=='/alarm-sound/preview')result=alarmSoundCommand(request.op.slice('/alarm-sound/'.length),request.args);
+      else if(request.op.startsWith('/alarm-sound/')&&request.op!=='/alarm-sound/preview'){if(request.op==='/alarm-sound/discover'&&busy)throw new Error('本体の処理が終わってから再検出してください');result=alarmSoundCommand(request.op.slice('/alarm-sound/'.length),request.args);}
       else if(request.op==='/alarm-sound/preview'){
         if(busy||reminderStatus().ringing)throw new Error('音声の再生・録音が終わってから試聴してください');
         const kind=request.args?.kind||'alarm';
         if(!['alarm','timer'].includes(kind))throw new Error('通知音の種類を選んでください');
         busy=true;
-        try{result={played:await playAlarmSound(robot,()=>false,Math.max(1,Math.min(5,Number(request.args?.seconds)||2)),kind)};if(!result.played){await robot.audio.tone(880,240,Math.min(robot.audio.volume,0.45));result={played:true,standard:true};}}
+        try{result={played:await playAlarmSound(robot,()=>false,Math.max(1,Math.min(5,Number(request.args?.seconds)||2)),kind,request.args?.name)};if(!result.played){await robot.audio.tone(880,240,Math.min(robot.audio.volume,0.45));result={played:true,standard:true};}}
         finally{busy=false;}
       }
       else if(request.op==='/volume'){result=request.args?.percent===undefined?getVolume():setVolume(Number(request.args.percent),request.args.preview===true&&!monitor.active);}
@@ -401,7 +459,7 @@ export function startArchive(robot) {
         closeSettings();robot.ui.showFace();result=getSettingsStatus();
       }else if(request.op==='/settings/status')result=getSettingsStatus();
       else if(request.op==='/settings/self-test')result=vaultSelfTest();
-      else if(request.op==='/settings/http-test')result=await settingsHttpSelfTest();
+      else if(request.op==='/settings/http-test')result=await settingsHttpSelfTest({control:request.args?.mode==='control',token:config.archiveToken});
       else if(request.op==='/settings/scan-test')result={count:(await scanNearby()).length};
       else if(request.op==='/tools/list')result={tools:listDeviceTools()};
       else if(request.op==='/tools/call')result=await callDeviceTool(request.args?.name,request.args?.arguments??{});

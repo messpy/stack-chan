@@ -8,10 +8,12 @@
     "$(MODDABLE)/modules/drivers/sensors/si12t/manifest.json",
     "$(MODULES)/network/wifi/manifest.json",
     "$(MODULES)/network/sntp/manifest.json",
-    "../modules/conversation/chat-audioio/server.manifest.json"
+    "../modules/conversation/chat-audioio/server.manifest.json",
+    "../../vendor/koeact/manifest.json"
   ],
   "modules": {
     "lan-archive": "./lan-archive",
+    "archive-browser-connection": "./archive-browser-connection",
     "archive-codec": "./archive-codec",
     "stackchan-sdcard": "../platforms/m5stackchan_cores3/sd-card",
     "stackchan-sdroot": "../platforms/m5stackchan_cores3/sd-root",
@@ -45,7 +47,7 @@
     "archive-offline-policy": "./archive-offline-policy",
     "archive-offline-speech": "./archive-offline-speech",
     "archive-local-clock": "./archive-local-clock",
-    "archive-offline-tts": "../modules/audio/stackchan-voice/tts-stackchan-voice",
+    "archive-offline-tts": "./archive-offline-tts",
     "archive-ollama": "./archive-ollama",
     "archive-chat-audioio": "./archive-chat-audioio",
     "archive-memory": [
@@ -54,7 +56,7 @@
     ],
     "stackchanOpusDecoder": "../modules/audio/platforms/m5stackchan-cores3/esp32-opus-decoder",
     "stackchanOpusEncoder": "../modules/audio/platforms/m5stackchan-cores3/esp32-opus-encoder",
-    "archivePcmRingWriter": "../modules/conversation/chat-audioio/pcm-ring-writer-native",
+    "archivePcmRingWriter": "./archive-pcm-ring-writer",
     "archiveGeminiLive": "./archive-gemini-worker",
     "archive-gemini-protocol": "./archive-gemini-protocol",
     "archive-alarm-sound": "./archive-alarm-sound",
@@ -79,7 +81,21 @@
     "archive-custom-face": "./archive-custom-face",
     "archive-face-editor-assets": "./archive-face-editor-assets",
     "archive-lan-monitor": "./archive-lan-monitor",
-    "archive-media-trash": "./archive-media-trash"
+    "archive-media-trash": "./archive-media-trash",
+    "archive-ai-schedule": "./archive-ai-schedule",
+    "archive-camera-diff": "./archive-camera-diff",
+    "archive-text-request": "./archive-text-request",
+    "archive-feature-ui": "./archive-feature-ui",
+    "archive-features-page": "./archive-features-page",
+    "archive-ir": "./archive-ir",
+    "archive-ir-native": [
+      "./archive-ir-native",
+      "./archive-ir-native.c"
+    ],
+    "archive-koeact": "./archive-koeact",
+    "archive-voice-command-policy": "./archive-voice-command-policy",
+    "archive-text-transport": "./archive-text-transport",
+    "archive-text-network-worker": "./archive-text-network-worker"
   },
   "defines": {
     "file": {
@@ -101,7 +117,7 @@
     "camera": {
       "scl": -1,
       "sda": -1,
-      "i2c_port": 0
+      "i2c_port": 1
     },
     "audioIn": {
       "sampleRate": 16000,

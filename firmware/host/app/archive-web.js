@@ -5,12 +5,14 @@ import {Container,Label,Text,Skin,Style} from 'piu/MC';
 import QRCode from 'piu/QRCode';
 import {uiFont} from 'ui-theme';
 import {HttpServerService,Response} from 'http-server-service';
-import ArchiveHTTPServer from 'archive-http-server';
+import ArchiveHTTPServer,{httpServerDiagnostics} from 'archive-http-server';
 import {getSettingsStatus,openSettings} from 'archive-settings';
 import PAGE from 'archive-web-page';
+// SD history writes can delay the next request; retain its TCP connection.
+class ControlHTTPServer extends ArchiveHTTPServer {constructor(options){super({...options,keepAlive:60000});}}
 let robot,actions,access,server,lastStartError=false,screenMode='lan',screenQR='waiting';
 const mediaName=name=>typeof name==='string'&&/^[a-z0-9-]+\.(bmp|avi|wav|jpg|json)$/.test(name);
-export function controlStatus(){const s=getSettingsStatus();return {ready:!!server,ip:s.connected?s.ip:s.setupIP||'',lanIP:s.connected?s.ip:'',apIP:s.setupIP||'',port:8082,lan:s.connected,ap:s.setupActive,screenMode,screenQR};}
+export function controlStatus(){const s=getSettingsStatus();return {ready:!!server,ip:s.connected?s.ip:s.setupIP||'',lanIP:s.connected?s.ip:'',apIP:s.setupIP||'',port:8082,http:httpServerDiagnostics(8082),lan:s.connected,ap:s.setupActive,screenMode,screenQR};}
 export function openControl(mode){
   robot.ui.application.behavior.closeDrawer?.();
   if(!robot.ui.application.behavior.launchMiniApp(mode==='ap'?'archive-control-ap':'archive-control'))throw new Error('Control QR unavailable');
@@ -24,7 +26,7 @@ function protect(handler){return async c=>{
   try{return await handler(c);}catch(error){trace('[control] request failed: '+String(error?.name||'Error')+'\n');return c.json({error:String(error.message||'本体で処理できませんでした')},503);}
 };}
 function startServer(){
-  const listener=new HttpServerService({server:ArchiveHTTPServer,port:8082,maxRequestBodyBytes:20000});
+  const listener=new HttpServerService({server:ControlHTTPServer,port:8082,maxRequestBodyBytes:20000});
   try {
   listener.get('/',protect(c=>{c.header('Set-Cookie','sc_device='+access+'; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400');return new Response(PAGE,{headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Set-Cookie':'sc_device='+access+'; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400'}});}));
   for(const [path,name,type] of [['/face-editor','page','text/html'],['/face-editor.js','script','text/javascript'],['/face-format.js','format','text/javascript']])listener.get(path,protect(()=>new Response(faceEditorAsset(name),{headers:{'Content-Type':type+'; charset=utf-8'}})));
@@ -123,7 +125,7 @@ export function startWeb(context,callbacks,token){
       ['本体のボタンで操作',()=>actions.openOffline()],['日時を合わせる',()=>launch('archive-local-clock')]
     ]);return view;
   }});
-  for(const key of ['archiveVolume','directChatMode','offlineMode','alarmSettings','toggleFace','cycleEmotion','toggleSpeech','speakStackchan','handAnimation','cameraPreview','toggleLookAround','servoTest','toggleLED','playTone','recordPlayback','toggleColor'])robot.drawer.removeDrawerButton(key);
+  for(const key of ['directChatMode','offlineMode','alarmSettings','toggleFace','cycleEmotion','toggleSpeech','speakStackchan','handAnimation','cameraPreview','toggleLookAround','servoTest','toggleLED','playTone','recordPlayback','toggleColor'])robot.drawer.removeDrawerButton(key);
   robot.drawer.addDrawerButton({key:'networkSettings',label:'設定',callback:()=>{robot.ui.application.behavior.closeDrawer?.();launch('archive-settings');}});
   // Only startup/recovery is polled; an opened HTTP server stays active.
   // A LAN/AP transition may take up to 3 seconds to expose the control page.

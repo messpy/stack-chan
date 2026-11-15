@@ -21,7 +21,6 @@ export function setVolume(percent,playPreview=false){
 export function openVolume(){
   robot.ui.application.behavior.closeDrawer?.();
   if(!robot.ui.application.behavior.launchMiniApp('archive-volume'))throw new Error('Volume screen unavailable');
-  previewVolume();
   return getVolume();
 }
 export function startVolume(context){
@@ -33,12 +32,12 @@ export function startVolume(context){
   robot.ui.miniApps.register({id:'archive-volume',hidden:true,title:'音量',create(){
     const styles=uiStyles();
     const value=new Label(null,{left:0,right:0,top:10,height:38,style:new Style({font:'k8x12-24',color:'black',horizontal:'center'}),string:getVolume().percent+'%'});
-    const change=percent=>{setVolume(Math.max(0,Math.min(100,percent)));value.string=getVolume().percent+'%';previewVolume();};
+    const change=percent=>{setVolume(Math.max(0,Math.min(100,percent)));value.string=getVolume().percent+'%';};
     return {content:new Container(null,{left:0,right:0,top:0,bottom:0,skin:new Skin({fill:'white'}),contents:[value,
       new ActionButton({label:'−10%',onTap:()=>change(getVolume().percent-10)},{left:16,top:60,width:136,height:48}),
       new ActionButton({label:'＋10%',onTap:()=>change(getVolume().percent+10)},{right:16,top:60,width:136,height:48}),
       new ActionButton({label:'消音',onTap:()=>change(0)},{left:16,right:16,top:120,height:48})
     ]})};
   }});
-  robot.drawer.addDrawerButton({key:'archiveVolume',label:'音量',callback:openVolume});
+  robot.drawer.addDrawerButton({key:'archiveVolume',label:'音量 ＋／−',callback:openVolume});
 }

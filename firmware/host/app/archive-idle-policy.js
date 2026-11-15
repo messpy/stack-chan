@@ -29,9 +29,9 @@ export class IdleSleepPolicy {
 
 // Listening is idle-capable; playback, pending replies and hardware/UI work are not.
 export function idleFaceAllowed({faceMode='simple',customFace=false,busy=false,photo=false,
-  monitor=false,offline=false,chat={},ui={}}={}) {
+  monitor=false,offline=false,backgroundCapture=false,chat={},ui={}}={}) {
   return faceMode==='simple' && !customFace && !photo && !monitor && !offline
-    && !(busy&&!chat.busy) && chat.state!=='speaking'
+    && !(busy&&!chat.busy&&!backgroundCapture) && chat.state!=='speaking'
     && !['thinking','transcribing','speaking'].includes(chat.audioPhase)
     && ui.available===true && ui.mode==='face';
 }

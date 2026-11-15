@@ -40,7 +40,9 @@ export function changeSettings(change){
   // both exist but neither could be authenticated on this boot.
   if(loadError)throw new Error('保存済み設定を読み取れません。元のSD設定は保持しています');
   const next=JSON.parse(JSON.stringify(data));change(next);next.generation=data.generation+1;
-  const encrypted=sealVault(ArrayBuffer.fromString(JSON.stringify(next)));
+  const plain=ArrayBuffer.fromString(JSON.stringify(next));
+  if(plain.byteLength>65536)throw new Error('設定の保存容量を超えました。不要な音声・IR登録を減らしてください');
+  const encrypted=sealVault(plain);
   let persisted=false;
   withSDCard(root=>{
     const file=root.openFile({path:path(next.generation%2),mode:'w'});

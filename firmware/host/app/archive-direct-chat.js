@@ -1,3 +1,5 @@
+import {workerPostVision,workerXiaoZhiText} from 'archive-text-transport'
+import {xiaozhiTextChat} from 'archive-xiaozhi-vision'
 import {headDirectionFromText} from 'archive-head-motion'
 import {heapStatus,collectMemory} from 'archive-usb'
 import {checkVoiceMemory,voiceMemoryAdmission,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
@@ -1019,6 +1021,7 @@ async function connect() {
             }
             const recognized=input;input = ''
             headHandled=undefined
+            if(!standalone){try{if(globalThis.stackchanIRVoice?.(recognized)){showConversationBalloon('赤外線を送信しました。家電の動作を確認してください');return;}}catch(_){showConversationBalloon('赤外線を送信できませんでした');return;}}
             const modeCommand=modeCommandFromText(recognized)
             if(modeCommand) {
               try {
@@ -1547,4 +1550,31 @@ export async function testDirectConnection(provider = chatProvider(), options = 
       release()
     }
   }
+}
+
+export async function webTextTurn(args,isCurrent){
+ if(!robot||!getSettingsStatus().connected)throw new Error('Wi-Fiへ接続してください')
+ const provider=chatProvider(),cfg=getSettings();
+ if(provider==='gemini'&&!cfg.api?.gemini||provider==='ollama'&&!cfg.api?.ollama||provider==='xiaozhi'&&!cfg.directChat?.cloudConsent)throw new Error('AIの接続設定が必要です')
+ const paused=pauseDirectChat();
+ if(!claim()){if(paused)resumeDirectChat();throw new Error('本体で処理中です')}
+ const selected=provider,turnGeneration=generation,speaker=currentSpeaker()?.id,valid=()=>isCurrent()&&chatProvider()===selected&&generation===turnGeneration&&currentSpeaker()?.id===speaker;
+ let speech,unlockText,cancelTimer;
+ try{
+  collectMemory();
+  globalThis.stackchanIdleActivity?.('web-text');
+  const context=conversationInstructions();
+  // No action tools. XiaoZhi may only read this browser message through MCP.
+  const answer=provider==='xiaozhi'?await workerXiaoZhiText(args.text,getSettings().directChat):await (provider==='ollama'?ollamaChat:geminiTextChat)([{role:'system',content:context},{role:'user',content:args.text}],[],undefined,valid,workerPostVision);
+  if(!valid())throw new Error('送信を中止しました')
+  const question=archive('input',args.text,'web-'+args.id+'-user',undefined,undefined,{source:'web',requestId:args.id});
+  const response=archive('output',answer,'web-'+args.id+'-assistant',undefined,undefined,{source:'web',requestId:args.id});
+  showConversationBalloon(answer,{holdMs:60000});
+  let spoken=false,speechError='';
+  if(args.speak){
+   try{unlockText=robot.audio.acquireExclusive();speech=new RecognitionTTS({volume:robot.audio.volume});cancelTimer=Timer.repeat(()=>{if(!valid())speech.cancel();},100);await new Promise((resolve,reject)=>speech.stream(answer,robot.audio.volume,e=>e?reject(e):resolve()));spoken=true;}
+   catch(_){speechError='回答は取得しましたが読み上げできませんでした';}
+  }
+  return {provider,answer,spoken,speechError,historySaved:!!question&&!!response};
+ }finally{if(cancelTimer!==undefined)Timer.clear(cancelTimer);try{speech?.cancel?.();}catch(_){}unlockText?.();release();if(paused)resumeDirectChat();Timer.set(()=>collectMemory(),0);}
 }

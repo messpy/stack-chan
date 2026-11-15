@@ -17,7 +17,6 @@ export const ChatStatusBarState = Object.freeze({
 export type ChatStatusBarState = (typeof ChatStatusBarState)[keyof typeof ChatStatusBarState]
 
 const barHeight = 44
-export const FACE_ACTIONS_VISIBLE_MS = 4000
 const levelHeight = 16
 const levelWidth = 4
 const iconSize = 16
@@ -302,8 +301,8 @@ class ChatStatusBarBehavior extends Behavior {
 
   onFinished(container: Container) {
     if (this.#mode.kind !== 'face') return
-    this.setFaceBarVisible(false)
     container.stop()
+    this.setFaceBarVisible(true)
   }
 
   onUndisplaying(container: Container) {
@@ -403,9 +402,7 @@ class ChatStatusBarBehavior extends Behavior {
       this.#indicator.stop()
       return
     }
-    // The face AppBar owns the top-left system area while it is visible. Once
-    // its four-second reveal ends, input status replaces it at the natural
-    // left edge instead of remaining shifted beside an absent battery icon.
+    // The persistent face AppBar owns the top-left system area.
     this.#levelTrack.visible = persistentInputVisible
     this.#statusIcon.visible = persistentInputVisible
     this.#statusIcon.state = 0
@@ -434,9 +431,7 @@ class ChatStatusBarBehavior extends Behavior {
     if (this.#mode.kind !== 'face') return
     this.setFaceBarVisible(true)
     container.stop()
-    container.duration = FACE_ACTIONS_VISIBLE_MS
-    container.time = 0
-    container.start()
+    // Keep face navigation available even without a network connection.
   }
 
   setFaceBarVisible(visible: boolean) {

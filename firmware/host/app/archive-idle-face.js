@@ -1,4 +1,4 @@
-import {Port} from 'piu/MC';
+import {Behavior,Port} from 'piu/MC';
 import Timer from 'timer';
 import Time from 'time';
 import {IdleSleepPolicy,DEEP_SLEEP_AFTER_MS} from 'archive-idle-policy';

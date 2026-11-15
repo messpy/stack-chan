@@ -2,7 +2,7 @@ import { expressionName, faceBounds, faceTemplate, faceTransform, validateFace }
 import { changeSettings, getSettings } from 'archive-vault'
 import { FaceBase, SimpleFace } from 'behaviors/face'
 import { Outline } from 'commodetto/outline'
-import { Container, Skin } from 'piu/MC'
+import { Behavior, Container, Skin } from 'piu/MC'
 import { Shape } from 'piu/shape'
 
 let robot

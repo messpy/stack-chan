@@ -29,8 +29,66 @@ function cancelUpload(){
  return true;
 }
 function wavInfo(file){const b=file.read(44,0),v=new DataView(b);if(b.byteLength!==44||v.getUint32(0,false)!==0x52494646||v.getUint32(8,false)!==0x57415645||v.getUint32(36,false)!==0x64617461||v.getUint16(20,true)!==1||v.getUint16(22,true)!==1||v.getUint16(34,true)!==16||v.getUint32(24,true)!==24000)throw new Error('Expected 24kHz mono PCM WAV');const bytes=v.getUint32(40,true);if(bytes<2||bytes%2||bytes+44!==file.status().size)throw new Error('Invalid WAV size');return {bytes,sampleRate:24000,duration:bytes/48000};}
+const libraryName=value=>typeof value==='string'&&/^alarm-[a-f0-9]+-audio\.wav$/.test(value);
+function librarySound(name,label,original){
+ if(!libraryName(name))throw new Error('保存済み音声を選んでください');
+ let info;
+ withSDCard(root=>{const file=root.openFile({path:folder+name,mode:'r'});try{info=wavInfo(file);}finally{file.close();}});
+ const settings=getSettings();
+ const matches=[...(settings.audioLibrary||[]),settings.alarmSound,settings.timerSound].filter(item=>item?.file===name);
+ const saved=matches[0];
+ if(original!==undefined){
+  if(typeof original!=='string'||!/^alarm-[a-f0-9]+-source\.mp3$/.test(original))throw new Error('Invalid original sound');
+  withSDCard(root=>{if(!root.status(folder+original).isFile())throw new Error('Original MP3 missing');});
+ }
+ const source=original??matches.find(item=>item.original)?.original;
+ return {file:name,label:String(label||saved?.label||name).slice(0,100),...(source?{original:source}:{}),...info};
+}
+function selectSound(sound,target){
+ if(!validTarget(target))throw new Error('通知音の設定先を選んでください');
+ changeSettings(data=>{
+  if(target==='alarm'||target==='both')data.alarmSound=sound;
+  if(target==='timer'||target==='both')data.timerSound=sound;
+ });
+}
+function scanSounds(){
+ const labels=new Map((getSettings().audioLibrary||[]).map(item=>[item.file,item.label]));
+ const items=[];
+ withSDCard(root=>{for(const name of root.scan('stackchan')){
+  if(!libraryName(name))continue;
+  const status=root.status(folder+name);
+  if(status.isFile())items.push({file:name,label:labels.get(name)||name,size:status.size});
+  if(items.length>=100)break;
+ }});
+ return {items};
+}
+function listSounds(){
+ const settings=getSettings(),rows=new Map();
+ for(const item of [settings.alarmSound,settings.timerSound,...(settings.audioLibrary||[])]){
+  if(!item||!libraryName(item.file))continue;
+  rows.set(item.file,{...rows.get(item.file),...item});
+ }
+ return {items:[...rows.values()].map(item=>({file:item.file,label:item.label||item.file,size:item.size??(Number.isInteger(item.bytes)?item.bytes+44:null)}))};
+}
 export function alarmSoundCommand(op,args={}){
  if(op==='status')return alarmSoundStatus();
+ if(op==='list')return listSounds();
+ if(op==='discover'){
+  if(upload||stopPlayback)throw new Error('音声の転送・再生が終わってから再検出してください');
+  const old=new Map((getSettings().audioLibrary||[]).map(item=>[item.file,item]));
+  const found=scanSounds();
+  changeSettings(data=>{data.audioLibrary=found.items.map(item=>({...old.get(item.file),...item}));});
+  return listSounds();
+ }
+ if(op==='select'){const sound=librarySound(args.name,args.label,args.original);selectSound(sound,args.target);return alarmSoundStatus();}
+ if(op==='delete'){
+  if(args.confirmed!==true||!libraryName(args.name))throw new Error('削除する音声を確認してください');
+  if(stopPlayback)throw new Error('再生が終わってから削除してください');
+  if([selectedReminderSound('alarm'),selectedReminderSound('timer')].some(sound=>sound?.file===args.name))throw new Error('通知音に使用中です。設定を変更してから削除してください');
+  withSDCard(root=>{if(!root.status(folder+args.name).isFile())throw new Error('音声がありません');root.delete(folder+args.name);});
+  changeSettings(data=>{data.audioLibrary=(data.audioLibrary||[]).filter(item=>item.file!==args.name);});
+  return {deleted:true};
+ }
  if(op==='cancel')return {cancelled:cancelUpload()};
  if(op==='reset'){
   const target=args.target;
@@ -43,6 +101,7 @@ export function alarmSoundCommand(op,args={}){
  }
  if(op==='begin'){
   if(!['source','audio'].includes(args.role)||!Number.isSafeInteger(args.size)||args.size<44||args.size>32000000)throw new Error('Invalid sound upload');
+  if(args.role==='audio'&&listSounds().items.length>=100)throw new Error('保存済み音声は100件までです。不要な音声を削除してください');
   if(upload&&Date.now()-upload.time>120000)cancelUpload();
   if(upload)throw new Error('別の音声をアップロード中です。完了または中止してください');
   const name='alarm-'+randomHex().slice(0,16)+'-'+(args.role==='source'?'source.mp3':'audio.wav');
@@ -69,7 +128,7 @@ export function alarmSoundCommand(op,args={}){
   if(!upload||upload.offset!==upload.size)throw new Error('Sound upload incomplete');
   const item=upload;let info;
   const target=args.target||'alarm';
-  if(item.role==='audio'&&!validTarget(target))throw new Error('Invalid sound target');
+  if(item.role==='audio'&&target!=='library'&&!validTarget(target))throw new Error('Invalid sound target');
   const original=args.original;
   if(item.role==='audio'&&original!==undefined){
    if(typeof original!=='string'||!/^alarm-[a-f0-9]+-source\.mp3$/.test(original))
@@ -91,6 +150,7 @@ export function alarmSoundCommand(op,args={}){
    const label=String(args.label||'カスタム通知音').slice(0,100);
    const sound={file:item.name,label,...(original?{original}:{}),...info};
    changeSettings(data=>{
+    data.audioLibrary=[...(data.audioLibrary||[]).filter(item=>item.file!==sound.file),{file:sound.file,label:sound.label,size:item.size,...(sound.original?{original:sound.original}:{})}].slice(-100);
     if(target==='alarm'||target==='both')data.alarmSound=sound;
     if(target==='timer'||target==='both')data.timerSound=sound;
    });
@@ -100,8 +160,8 @@ export function alarmSoundCommand(op,args={}){
  throw new Error('Unknown alarm sound operation');
 }
 export function stopAlarmSound(){stopPlayback?.();}
-export async function playAlarmSound(robot,shouldStop=()=>false,seconds=0,kind='alarm'){
- const sound=selectedReminderSound(kind);if(!sound)return false;
+export async function playAlarmSound(robot,shouldStop=()=>false,seconds=0,kind='alarm',name){
+ const sound=name?librarySound(name):selectedReminderSound(kind);if(!sound)return false;
  let file,audio,drainTimer;let done=false,offset=44;
  const pcm=new Uint8Array(8192);
  const stats=lastPlayback={state:'preparing',bytes:0,readMaxMs:0,queueStarvations:0,bufferBytes:pcm.byteLength,bufferCount:1};
