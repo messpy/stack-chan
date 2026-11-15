@@ -6,7 +6,7 @@ class SMBus{readBuffer(_reg,b){b.set(registers);}readUint8(){return 0;}writeUint
 class Node{constructor(_,o){Object.assign(this,o);this.children=[];}add(n){this.children.push(n);}}
 const context=vm.createContext({Date:ClockDate,trace(){},device:{io:{SMBus},i2c:{internal:{}}},String:Object.assign(String,{fromArrayBuffer:b=>Buffer.from(b).toString()})});
 let failSpeech=false;
-const deps={time:{default:{get ticks(){return ticks;},set(seconds){wall=seconds*1000;}}},timer:{default:{repeat(fn,ms){callbacks.push({fn,ms});return 1;},set(fn){fn();return 1;}}},'archive-vault':{getSettings:()=>settings,changeSettings:fn=>{fn(settings);saved++;},randomHex:()=>String(saved).padStart(8,'0')},Resource:{default:class{constructor(){return Buffer.from(fs.readFileSync(new URL('../../host/app/reminder-tools.json',import.meta.url)));}}},'archive-alarm-sound':{playAlarmSound:async()=>true,stopAlarmSound(){}},'archive-offline-tts':{TTS:class{stream(text,volume,done){spoken.push({text,volume});done(failSpeech?new Error('speaker failed'):undefined);}}},'piu/MC':{Container:Node,Label:Node,Text:Node,Skin:class{},Style:class{}},'ui-theme':{uiFont:()=>''},'archive-ui-button':{createUIButton:(d,m,l)=>({...d,...l,press:()=>m[d.method]()})}};
+const deps={'archive-head-motion':{headMoveTool:{name:'head_move',inputSchema:{type:'object',properties:{}}},moveHead:()=>{throw Error('No head motion in offline test')}},'archive-volume':{getVolume:()=>({percent:10}),setVolume:percent=>({percent})},time:{default:{get ticks(){return ticks;},set(seconds){wall=seconds*1000;}}},timer:{default:{repeat(fn,ms){callbacks.push({fn,ms});return 1;},set(fn){fn();return 1;}}},'archive-vault':{getSettings:()=>settings,changeSettings:fn=>{fn(settings);saved++;},randomHex:()=>String(saved).padStart(8,'0')},Resource:{default:class{constructor(){return Buffer.from(fs.readFileSync(new URL('../../host/app/reminder-tools.json',import.meta.url)));}}},'archive-alarm-sound':{playAlarmSound:async()=>true,stopAlarmSound(){}},'archive-offline-tts':{TTS:class{stream(text,volume,done){spoken.push({text,volume});done(failSpeech?new Error('speaker failed'):undefined);}}},'piu/MC':{Container:Node,Label:Node,Text:Node,Skin:class{},Style:class{}},'ui-theme':{uiFont:()=>''},'archive-ui-button':{createUIButton:(d,m,l)=>({...d,...l,press:()=>m[d.method]()})}};
 const cache=new Map();async function load(name){if(cache.has(name))return cache.get(name);let module;
 if(deps[name]){const values=deps[name];module=new vm.SyntheticModule(Object.keys(values),function(){for(const [k,v]of Object.entries(values))this.setExport(k,v);},{context});}
 else if(['archive-local-clock','archive-tools','archive-reminder-time','archive-offline','archive-offline-speech'].includes(name))module=new vm.SourceTextModule(fs.readFileSync(new URL('../../host/app/'+name+'.js',import.meta.url),'utf8'),{context});
@@ -27,8 +27,21 @@ settings.reminders=[];wall=0;ticks=0xffffff00;tools.callDeviceTool('timer_create
 settings.reminders=[{id:'old-clockless',kind:'timer',clockPending:true,status:'scheduled',due:30000}];poll();assert.equal(settings.reminders[0].status,'cancelled');
 wall=Date.parse('2026-10-31T03:00:00Z');let stoppedCloud=0,claimed=false,faceShown=0;const overlays=[],launched=[];let onlineStarts=0,aiSettings=0;
 const offlineModule=await load('archive-offline');await offlineModule.evaluate();const offline=offlineModule.namespace;
+assert.equal(offline.offlineCommandFromText('こんにちは'), 'hello');
+assert.equal(offline.offlineCommandFromText('今何時？'), 'time');
+assert.equal(offline.offlineCommandFromText('アラームを止めて'), 'stop');
+assert.equal(offline.offlineCommandFromText('写真を撮って'), null);
+assert.equal(offline.offlineCommandFromText('AIを起動'), null);
+assert.equal(offline.offlineCommandFromText('x'.repeat(121)), null);
+assert.equal((await offline.offlineTextCommand('写真を撮って')).handled, false);
+console.log('PASS: offline text commands are local-only, allowlisted, and reject unsupported requests');
 offline.startOffline({showBalloon(){},drawer:{addDrawerButton(){}},ui:{showFace(){faceShown++;},addEffect(effect){overlays.push(effect);},removeEffect(effect){overlays.splice(overlays.indexOf(effect),1);},miniApps:{register(){}},application:{behavior:{launchMiniApp(id){launched.push(id);}}}},audio:{volume:.1,acquireExclusive:()=>()=>released++}},{stopCloud:()=>stoppedCloud++,claim:()=>{if(claimed)return false;claimed=true;return true;},release:()=>{claimed=false;},tool:tools.callDeviceTool,startCloud:()=>onlineStarts++,openAI:()=>aiSettings++});
-assert.equal((await offline.offlineAction('hello')).spoken,true);assert.ok(spoken.some(p=>p.text.includes('こんにちは')));assert.equal(released,1);assert.equal(claimed,false);assert.equal(stoppedCloud,1);await offline.offlineAction('time');assert.ok(spoken.some(p=>p.text==='じゅうにじ。'));assert.equal(spoken.at(-1).text,'ちょうどです。');assert.equal(offline.offlineStatus().recognition,false);
+const routed = await offline.offlineTextCommand('こんにちは！');
+assert.equal(routed.handled, true);
+assert.equal(routed.spoken, true);
+assert.equal(routed.text, 'こんにちは。スタックちゃんです。ネットがなくても、ここにいるよ。');
+assert.equal(offline.offlineStatus().playing, false);
+assert.ok(spoken.some(p=>p.text.includes('こんにちは')));assert.equal(released,1);assert.equal(claimed,false);assert.equal(stoppedCloud,1);await offline.offlineAction('time');assert.ok(spoken.some(p=>p.text==='じゅうにじ。'));assert.equal(spoken.at(-1).text,'ちょうどです。');assert.equal(offline.offlineStatus().recognition,false);
 console.log('PASS: RTC UTC/BCD and cold-boot restore, invalid dates/low voltage rejected, clockless timer, forward/backward wall jumps, tick wrap, restart policy, local Japanese TTS, audio release, no network dependencies');
 
 offline.openOffline();assert.equal(faceShown,1);assert.equal(launched.length,0);assert.equal(overlays.length,1);assert.equal(offline.offlineStatus().faceButtonsVisible,true);
@@ -54,6 +67,17 @@ console.log('PASS: one offline timer per start panel; queued/repeated releases a
 
 for(let i=0;i<5&&!overlays[0].children.some(b=>b.method==='timer');i++)overlays[0].children.find(b=>b.method==='next').press();overlays[0].children.find(b=>b.method==='timer').press();const failedStart=overlays[0].children.find(b=>b.method==='start'),countBeforeFailure=settings.reminders.filter(r=>r.kind==='timer').length;failSpeech=true;await assert.rejects(()=>failedStart.press(),/設定済み/);await failedStart.press();assert.equal(settings.reminders.filter(r=>r.kind==='timer').length,countBeforeFailure+1);assert.ok(!overlays[0].children.some(b=>b.method==='start'));failSpeech=false;
 console.log('PASS: a successfully saved timer remains one-shot even if acknowledgement speech fails');
+
+// Automatic fallback must be reversible and must not write a user-selected OFF.
+const savedOffCount=stoppedCloud;
+offline.openOffline({automatic:true});
+assert.equal(stoppedCloud,savedOffCount,'automatic offline must never call stopCloud');
+await offline.offlineAction('hello');
+assert.equal(stoppedCloud,savedOffCount,'local speech while automatically offline must not persist OFF');
+offline.closeOffline();
+await offline.offlineAction('time');
+assert.equal(stoppedCloud,savedOffCount+1,'ordinary explicit offline actions keep manual policy');
+console.log('PASS: auto offline preserves user AI preference even after a local speech action');
 
 const bootResult=await offline.offlineAction('boot');
 assert.equal(bootResult.text,'スタックチャン');

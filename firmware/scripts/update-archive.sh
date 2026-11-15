@@ -68,7 +68,14 @@ fi
 [[ $mode != --build-only ]] || exit 0
 shopt -s nullglob
 ports=(/dev/ttyACM* /dev/ttyUSB*)
-(( ${#ports[@]} == 1 )) || { echo 'Connect exactly one USB serial device before flashing.' >&2; exit 1; }
+if [[ -n ${STACKCHAN_PORT:-} ]]; then
+  # An explicit selection is required when several serial devices are connected.
+  [[ ${STACKCHAN_PORT} == /dev/ttyACM* || ${STACKCHAN_PORT} == /dev/ttyUSB* ]] || { echo 'STACKCHAN_PORT must be a USB serial port under /dev.' >&2; exit 1; }
+  [[ -e ${STACKCHAN_PORT} ]] || { echo 'Selected StackChan USB port is missing.' >&2; exit 1; }
+  ports=("${STACKCHAN_PORT}")
+else
+  (( ${#ports[@]} == 1 )) || { echo 'Connect exactly one USB serial device or set STACKCHAN_PORT explicitly.' >&2; exit 1; }
+fi
 [[ -r ${ports[0]} && -w ${ports[0]} ]] || { echo 'USB serial port is not accessible.' >&2; exit 1; }
 if systemctl --user is-active --quiet "$service"; then
   restart_hub=true

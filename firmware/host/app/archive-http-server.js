@@ -20,6 +20,9 @@
 
 import Timer from "timer";
 
+const liveServers = new Set;
+export function httpServerDiagnostics(port){for(const server of liveServers)if(server.port===port)return server.diagnostics;return null;}
+
 const more = Object.freeze({more: true});
 
 class Connection {
@@ -50,6 +53,7 @@ class Connection {
 		this.#timeout = keepAlive ?? 0;
 		this.#lineBuffer.position = 0;
 	}
+	get diagnostics(){return {state:this.#state,readable:this.#readable??0,writable:this.#writable,remaining:typeof this.#remaining==="number"?this.#remaining:null,lineBytes:this.#lineBuffer.position};}
 	close() {
 		this.#notify?.(this);
 		this.#notify = this.#callbacks = this.#registered = undefined;
@@ -178,7 +182,10 @@ class Connection {
 			this.#remaining -= byteLength;
 			if (0 === this.#remaining) {
 				this.#done();
-				this.#writable = 0;
+				// A persistent connection keeps the unused TCP send capacity.
+				// No new writable notification is required while that capacity remains.
+				if (!this.#socket) this.#writable = 0;
+				return 0; // This response body is complete, even when the socket is reusable.
 			}
 
 			return this.#writable;
@@ -576,8 +583,11 @@ class HTTPServer {
 				}
 			}
 		});
+		liveServers.add(this);
 	}
+	get diagnostics(){return {port:this.port,connections:[...this.#connections].slice(0,8).map(c=>c.diagnostics)};}
 	close() {
+		liveServers.delete(this);
 		this.#connections?.forEach(connection => connection.close());
 		this.#connections = undefined;
 		this.#listener?.close();

@@ -3,7 +3,10 @@
     "stackchanServerChatWebSocketWorker": "./server-chat-websocket-worker",
     "xiaozhiV1": "./xiaozhi",
     "xiaozhi-contract": "./xiaozhi-contract",
-    "xiaozhiV1Model": "./xiaozhi-model"
+    "xiaozhiV1Model": "./xiaozhi-model",
+    "stackchanAsyncAudioOut": "../../audio/async-output/stackchan-async-output"
   },
-  "preload": ["stackchanServerChatWebSocketWorker"]
+  "preload": [
+    "stackchanServerChatWebSocketWorker"
+  ]
 }

@@ -40,6 +40,7 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
     this.#socketIO = null
     this.#state = 0
     this.#writable = 0
+    this.lastBinaryWriteAt = 0
     try {
       ws?.close()
     } catch {
@@ -160,6 +161,12 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
     this.write(ArrayBuffer.fromString(JSON.stringify(json)), text)
   }
 
+  writeSocket(data, options) {
+    const writable = this.ws.write(data, options)
+    if (options?.binary && data.byteLength) this.lastBinaryWriteAt = Date.now()
+    return writable
+  }
+
   write(data, options) {
     if (!this.ws) return
     if (this.#buffers.length) {
@@ -168,11 +175,11 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
     }
     const writable = this.#writable
     if (data.byteLength <= writable) {
-      this.#writable = this.ws.write(data, options)
+      this.#writable = this.writeSocket(data, options)
       return
     }
     if (writable > 0) {
-      this.#writable = this.ws.write(data.slice(0, writable), {
+      this.#writable = this.writeSocket(data.slice(0, writable), {
         ...options,
         more: true,
       })
@@ -198,13 +205,13 @@ export default class ServerChatWebSocketWorker extends ChatWorker {
       const data = buffer.data
       const writable = this.#writable
       if (data.byteLength <= writable) {
-        this.#writable = this.ws.write(data, buffer.options)
+        this.#writable = this.writeSocket(data, buffer.options)
         this.#queuedBytes -= data.byteLength
         this.#buffers.shift()
         continue
       }
       if (writable > 0) {
-        this.#writable = this.ws.write(data.slice(0, writable), {
+        this.#writable = this.writeSocket(data.slice(0, writable), {
           ...buffer.options,
           more: true,
         })

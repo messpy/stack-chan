@@ -33,11 +33,26 @@ export function prepareCoreS3IdfDependencies({
   applicationName,
   mode,
   realtime = false,
+  archive = false,
   solutionDirectory,
 }) {
   if (!outputDirectory) throw new Error('Build output directory is required')
-  const dependencies = dependenciesByPlatform[platformName]
-  if (!dependencies) throw new Error(`Unsupported CoreS3 platform: ${platformName}`)
+  const defaults = dependenciesByPlatform[platformName]
+  if (!defaults) throw new Error(`Unsupported CoreS3 platform: ${platformName}`)
+  if (archive && platformName !== 'm5stack_cores3') throw new Error('Archive preflight requires m5stack_cores3')
+  const dependencies = new Map(defaults)
+  if (archive) {
+    // Seed all external components before the SDK runs concurrent add-dependency commands.
+    const camera = JSON.parse(readFileSync(new URL('../../host/modules/camera/manifest_device.json', import.meta.url)))
+    const config = JSON.parse(readFileSync(new URL('../../host/app/manifest_archive.example.json', import.meta.url)))
+    for (const entry of [...camera.dependencies, ...config.platforms['esp32/m5stack_cores3'].dependency]) {
+      if (!entry.name) continue
+      const name = `espressif/${entry.name}`
+      if (dependencies.has(name) && dependencies.get(name) !== entry.version)
+        throw new Error(`Conflicting IDF dependency versions: ${name}`)
+      dependencies.set(name, entry.version)
+    }
+  }
   if (!applicationName) throw new Error('Application name is required')
   if (!['debug', 'instrument', 'release'].includes(mode)) throw new Error(`Unsupported build mode: ${mode}`)
 

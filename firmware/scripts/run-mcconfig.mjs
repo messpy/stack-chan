@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process'
-import { assertNoCustomBuildOutput, ensureBuildOutputDirectory, moddableOutputArguments } from './lib/build-output.mjs'
+import { assertNoCustomBuildOutput, buildOutputDirectory, hostApplicationName, ensureBuildOutputDirectory, moddableOutputArguments } from './lib/build-output.mjs'
+import { prepareCoreS3IdfDependencies } from './lib/idf-dependencies.mjs'
+import { archiveBuildPreflight } from './lib/archive-build-preflight.mjs'
 import { prepareCoreS3VersionSdkconfig } from './lib/moddable-version.mjs'
 
 const args = process.argv.slice(2)
@@ -14,6 +16,15 @@ try {
 }
 
 ensureBuildOutputDirectory()
+const archiveBuild = archiveBuildPreflight(args)
+if (archiveBuild) {
+  try {
+    prepareCoreS3IdfDependencies({ outputDirectory: buildOutputDirectory, applicationName: hostApplicationName, ...archiveBuild })
+  } catch (error) {
+    console.error(`[stack-chan] Archive IDF dependency preflight failed: ${error.message}`)
+    process.exit(1)
+  }
+}
 let subprocessEnvironment = process.env
 if (targetsM5StackChanCoreS3(args)) {
   try {

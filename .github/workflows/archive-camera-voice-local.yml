@@ -1,0 +1,104 @@
+name: Archive Camera Local Voice Capture
+
+on:
+  push:
+    branches:
+      - fix/archive-photo-local-voice-dispatch-20261105
+  pull_request:
+    branches:
+      - fix/health-debug-log-20261107
+      - fix/issue40-memory-recovery-20261107
+      - fix/audio-integrity-20261105
+      - fix/archive-pr45-startup-private-manifest-20261105
+      - fix/archive-photo-local-voice-dispatch-20261105
+    paths:
+      - 'firmware/host/app/archive-*.js'
+      - 'firmware/host/modules/ui/components/status-bar/**'
+      - 'firmware/scripts/lib/archive-status-layout.test.mjs'
+      - 'firmware/scripts/lib/archive-idle-sleep.test.mjs'
+      - 'firmware/host/app/manifest.json'
+      - 'firmware/host/app/default-behavior/on-context-created.ts'
+      - 'firmware/host/modules/audio/async-output/**'
+      - 'firmware/host/modules/audio/platforms/m5stackchan-cores3/esp32-opus-encoder.c'
+      - 'firmware/scripts/test_pcm_ring_channel.py'
+      - 'firmware/host/modules/conversation/chat-audioio/**'
+      - 'firmware/scripts/lib/archive-audio-*.test.mjs'
+      - 'firmware/scripts/lib/archive-playback-buffer.test.mjs'
+      - 'firmware/scripts/lib/archive-diagnostics.test.mjs'
+      - 'firmware/scripts/lib/archive-memory-*.test.mjs'
+      - 'firmware/scripts/lib/archive-auto-offline-persistence.test.mjs'
+      - 'firmware/scripts/test_async_audio_output.py'
+      - 'firmware/scripts/*archive_lan_diagnostics.py'
+      - 'firmware/scripts/archive-lan-diagnostics.py'
+      - 'firmware/host/app/lan-archive.js'
+      - 'firmware/scripts/lib/archive-issues-33-36.test.mjs'
+      - 'firmware/scripts/voice-e2e-cases.json'
+      - '.github/workflows/archive-camera-voice-local.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: archive-camera-local-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  camera-voice-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: JS source syntax checks
+        run: |
+          node --check firmware/host/app/archive-direct-chat.js
+          node --check firmware/host/app/lan-archive.js
+      - name: Photo and voice-mode integration regression
+        run: |
+          node --experimental-vm-modules --test \
+            firmware/scripts/lib/archive-issues-33-36.test.mjs \
+            firmware/scripts/lib/archive-voice-volume.test.mjs \
+            firmware/scripts/lib/archive-xiaozhi-recognition.test.mjs \
+            firmware/scripts/lib/archive-audio-integrity.test.mjs \
+            firmware/scripts/lib/archive-audio-transport-health.test.mjs \
+            firmware/scripts/lib/archive-playback-buffer.test.mjs \
+            firmware/scripts/lib/archive-auto-offline-persistence.test.mjs \
+            firmware/scripts/lib/archive-memory-recovery.test.mjs \
+            firmware/scripts/lib/archive-memory-policy.test.mjs \
+            firmware/scripts/lib/archive-idle-sleep.test.mjs \
+            firmware/scripts/lib/archive-status-layout.test.mjs \
+            firmware/scripts/lib/archive-debug.test.mjs \
+            firmware/scripts/lib/archive-diagnostics.test.mjs
+      - name: Native audio queue and private audio diagnostics
+        run: |
+          python3 firmware/scripts/test_async_audio_output.py
+          python3 firmware/scripts/test_pcm_ring_channel.py
+          python3 firmware/scripts/test_recognition_pcm.py
+          python3 -m unittest discover -s firmware/scripts -p 'test_archive_lan_diagnostics.py' -v
+      - name: Read-only photo LAN and legacy manifest regressions
+        run: |
+          python3 -m unittest discover -s firmware/scripts -p 'test_archive_photo_lan.py' -v
+          python3 -m unittest discover -s firmware/scripts -p 'test_archive_private_manifest_preflight.py' -v
+          bash -n firmware/scripts/kmac-pr39.sh
+          python3 -m unittest discover -s firmware/scripts -p 'test_voice_e2e.py' -v
+
+  cores3-clean-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Generate throwaway Archive manifest without real credentials
+        working-directory: ./firmware
+        run: npm run init:archive
+      - name: Build CoreS3 Archive firmware (no flash)
+        working-directory: ./firmware
+        shell: bash
+        run: |
+          source "$HOME/.local/share/xs-dev-export.sh"
+          node scripts/clean.mjs
+          npm run build:archive
+      - name: Verify firmware binary
+        run: test -s firmware/dist/bin/esp32/m5stack_cores3/release/stack-chan-host/xs_esp32.bin

@@ -1,0 +1,8 @@
+{
+  "source": "https://huggingface.co/ayousanz/KoeAct-JP",
+  "license": "Apache-2.0",
+  "files": {
+    "ralomi_e13_stream40.espdl": "sha256:dce593c8c9293c5565d1126e2f5b96a8e8151259044fc0d3c2f79a80d62eca92",
+    "a2_weights.bin": "sha256:61ee72e27af12907dd535908ee941b29fdee2bc3521e421705812adfa05ba4a6"
+  }
+}
