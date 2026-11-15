@@ -274,6 +274,7 @@ export function startArchive(robot) {
   let monitor,monitorVoice;
   try{bootResetCode=resetReason();trace('[boot-reset] reasonCode='+bootResetCode+'\n')}catch(_){bootResetCode=null}
   startDebugDrain();
+  try{markHeap('boot-after-debug-drain',heapStatus(),trace)}catch(_){}
   const sampleHealth=()=>{
     const ui={};
     robot.ui.application.distribute('onStatusBarDiagnostics',ui);
@@ -286,18 +287,22 @@ export function startArchive(robot) {
   Timer.repeat(logHealth,10000);
   try{markHeap('archive-start',heapStatus(),trace)}catch(_){}
   startLocalClock();
+  try{markHeap('boot-after-local-clock',heapStatus(),trace)}catch(_){}
   startCustomFace(robot);
+  try{markHeap('boot-after-custom-face',heapStatus(),trace)}catch(_){}
   const idleFace=startIdleFace(robot,()=>{
     const ui={};robot.ui.application.distribute('onStatusBarDiagnostics',ui);
     return idleFaceAllowed({faceMode:globalThis.stackchanFaceMode||'simple',
       customFace:globalThis.stackchanCustomFaceEnabled,busy,backgroundCapture:automaticCapture,photo:photoActive,
       monitor:monitor?.active,offline:offlineStatus().playing,chat:chatIdleStatus(),ui});
   });
+  try{markHeap('boot-before-offline',heapStatus(),trace)}catch(_){}
   startOffline(robot,{stopCloud:()=>{if(directChatStatus().recognitionMode)setRecognitionMode(false);if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings,startCloud:()=>setChatMode(true),openAI:()=>robot.ui.application.behavior.launchMiniApp('archive-ai-settings')});
   startHistoryUI(robot,{read:args=>{importLegacy();return deviceHistory(args);},people:()=>users({limit:50}).users.filter(p=>p.kind==='person'),current:currentSpeaker});
   startVolume(robot);
   startAISettings(robot,{status:directChatStatus,select:configureChatProvider,mode:setChatMode});
   startWiFiDisplay(robot);
+  try{markHeap('boot-after-wifi-display',heapStatus(),trace)}catch(_){}
   try{startSettings(robot);}catch(_){trace('[settings] initialization failed; USB remains available\n');}
   try{startDeviceTools(robot,()=>{if(monitor?.active){monitor.stopCurrent().catch(()=>{});return false;}if(directChatStatus().busy)pauseDirectChat();if(busy)return false;busy=true;return true;},()=>{busy=false;resumeDirectChat();});}catch(_){trace('[tools] initialization failed; USB remains available\n');}
   startTimerUI(robot,{create:args=>callDeviceTool('timer_create',args),status:reminderStatus});
@@ -347,6 +352,7 @@ export function startArchive(robot) {
     async notify(event){robot.showBalloon(event.test?'見守り通知テスト':'カメラに変化を検知しました',{holdMs:10000});}
   });
   startFeatureUI(robot,{schedule:aiSchedule,watch:cameraWatch,ir:irRemote,koeact});
+  try{markHeap('boot-after-feature-ui',heapStatus(),trace)}catch(_){}
   Timer.repeat(()=>{aiSchedule.tick().catch(()=>{});cameraWatch.tick().catch(()=>{});},1000);
   let libraryPlayback={state:'idle'},libraryStop=false;
   async function execute(request){
