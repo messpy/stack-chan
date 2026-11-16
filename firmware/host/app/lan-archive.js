@@ -369,9 +369,19 @@ export function startArchive(robot) {
     available:()=>!busy&&!photoActive&&!monitor.active&&!directChatStatus().busy&&!reminderStatus().ringing&&!offlineStatus().playing&&!irRemote.status().learning,
     pose:()=>({...getM5StackChanDriver()?.lastKnownRotation||robot.pose.body.rotation}),
     async capture(){
-      if(busy||photoActive)throw new Error('Camera busy');busy=true;automaticCapture=true;let frame;
-      try{const options={width:176,height:144,imageType:'rgb565le'};await robot.camera.start(options);frame=await robot.camera.capture(options);return grayscale565(frame.buffer,frame.width,frame.height);}
-      finally{try{frame?.close?.();}finally{try{await robot.camera.stop();}finally{busy=false;automaticCapture=false;}}}
+      if(busy||photoActive)throw new Error('Camera busy');
+      const releaseCamera=suspendDirectChatForCamera();
+      busy=true;automaticCapture=true;let frame;
+      try{
+        await new Promise(resolve=>Timer.set(resolve,0));
+        const options={width:176,height:144,imageType:'rgb565le'};
+        await robot.camera.start(options);frame=await robot.camera.capture(options);
+        return grayscale565(frame.buffer,frame.width,frame.height);
+      }finally{
+        try{frame?.close?.();}finally{
+          try{await robot.camera.stop();}finally{busy=false;automaticCapture=false;releaseCamera();}
+        }
+      }
     },
     async notify(event){robot.showBalloon(event.test?'見守り通知テスト':'カメラに変化を検知しました',{holdMs:10000});}
   });
