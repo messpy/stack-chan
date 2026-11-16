@@ -1243,7 +1243,7 @@ export function suspendDirectChatForCamera() {
 }
 export function pauseDirectChat() {
   if (chat || connecting) {
-    closeChat()
+    if(!closeChat())throw new Error('AI音声の解放に失敗したため操作を中止しました')
     state = 'waiting'
     retryAt = Date.now() + 30000
     return true
