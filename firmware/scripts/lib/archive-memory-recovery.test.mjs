@@ -137,13 +137,20 @@ test('camera release never overrides offline suspension or manual OFF',async()=>
   assert.equal(h.run('getSettings().chatMode'),false)
 })
 
-test('camera suspension rejects a failed native close and never leaves a lease behind',()=>{
+test('camera suspension rejects failed native close and blocks further automatic retries',async()=>{
   const h=harness()
   h.run("chat={close(){throw new Error('simulated device error')}}")
   assert.throws(()=>h.run('suspendDirectChatForCamera()'),/音声の解放に失敗/)
   assert.equal(h.run('cameraSuspensions'),0)
   assert.equal(h.run('chat'),undefined)
+  assert.equal(h.run('nativeReleaseBlocked'),true)
+  assert.equal(h.run('state'),'failed')
+  assert.equal(h.run('retryAt'),Infinity)
+  await h.run('connect()')
+  assert.equal(h.run('connectionAttempts'),0)
   assert.ok(h.events.some(e=>e.includes('native close failed')))
+  h.run('setChatMode(false);setChatMode(true)')
+  assert.equal(h.run('nativeReleaseBlocked'),false)
 })
 
 test('legacy USB camera pause fails closed if native teardown throws',()=>{
@@ -151,4 +158,5 @@ test('legacy USB camera pause fails closed if native teardown throws',()=>{
   h.run("chat={close(){throw new Error('device was disconnected')}}")
   assert.throws(()=>h.run('pauseDirectChat()'),/音声の解放に失敗/)
   assert.equal(h.run('chat'),undefined)
+  assert.equal(h.run('nativeReleaseBlocked'),true)
 })
