@@ -281,6 +281,8 @@ let chatSaveFailedOff=false,recognitionSaveFailedOff=false
 // Automatic offline fallback must suspend the native session, never change the
 // user-selected chat/transcription preferences saved on SD.
 let automaticOfflineSuspended=false
+// Camera capture and image analysis must outlive the old voice retry deadline.
+let cameraSuspensions=0
 function enabled() {
   try {
     return !chatSaveFailedOff && getSettings().chatMode === true
@@ -563,9 +565,13 @@ function closeChat() {
   connecting = false
   const old = chat
   chat = undefined
+  let nativeClosed=true
   try {
     old?.close()
-  } catch (_) {}
+  } catch (e) {
+    nativeClosed=false
+    trace('[mode-session] native close failed type='+String(e?.name||'Error').replace(/[^A-Za-z0-9_]/g,'').slice(0,32)+'\n')
+  }
   try {
     unlock?.()
   } catch (_) {}
@@ -575,6 +581,7 @@ function closeChat() {
     release()
   }
   scheduleMemoryCleanup()
+  return nativeClosed
 }
 function failed(reason) {
   if (state === 'retrying' || memoryRetryStopped) return
@@ -719,7 +726,7 @@ async function provision() {
   trace('[direct-chat] cloud configuration renewed\n')
 }
 async function connect() {
-  if (memoryRetryStopped || automaticOfflineSuspended || connecting || chat || !running()) return
+  if (memoryRetryStopped || automaticOfflineSuspended || cameraSuspensions>0 || connecting || chat || !running()) return
   if (enrollment.phase === 'confirming') return
   if (!getSettingsStatus().connected) {
     state = 'waiting'
@@ -1068,7 +1075,7 @@ async function connect() {
                   (standalone?'transcription':recognitionOnly?'recognition-transport':'conversation')+'\n');
                 // Recognition-only XiaoZhi aborts its stream at final STT. Free
                 // Opus/audio ownership before camera allocation, then reconnect.
-                let pausedRecognition=false;
+                let pausedRecognition=false,issuedWhileConnected=chat===instance;
                 const promise=Promise.resolve().then(()=>{
                   if(recognitionOnly&&chat===instance){
                     closeChat();
@@ -1081,7 +1088,7 @@ async function connect() {
                 });
                 photoTurn={expires:Date.now()+12000,promise};
                 function finishLocalPhoto(){
-                  if(!pausedRecognition||!running()||chat)return;
+                  if(!(pausedRecognition||issuedWhileConnected)||!running()||chat)return;
                   state='waiting';
                   retryAt=Date.now()+1000;
                   trace('[vision] recognition reconnect scheduled\n');
@@ -1093,7 +1100,7 @@ async function connect() {
                     // Link the saved photo to the normal conversation history, without
                     // storing a raw image or posting it to an external vision service.
                     if(saved)archive('output','写真を撮影してSDカードに保存しました。',undefined,result.image);
-                    if((chat===instance||pausedRecognition)&&running())
+                    if((chat===instance||pausedRecognition||issuedWhileConnected)&&running())
                       showConversationBalloon(saved?'写真を撮影してSDカードに保存しました。':
                         '写真を撮影できませんでした。');
                     finishLocalPhoto();
@@ -1101,7 +1108,7 @@ async function connect() {
                   error=>{
                     const reason=String(error?.name||'Error').replace(/[^A-Za-z0-9_]/g,'').slice(0,30);
                     trace('[vision] direct photo failed type='+reason+'\n');
-                    if((chat===instance||pausedRecognition)&&running())
+                    if((chat===instance||pausedRecognition||issuedWhileConnected)&&running())
                       showConversationBalloon('写真を撮影できませんでした。カメラとSDカードの状態を確認してください。');
                     finishLocalPhoto();
                   }
@@ -1206,6 +1213,32 @@ async function connect() {
     }
   } finally {
     if (ticket === generation) connecting = false
+  }
+}
+// Explicit, nestable camera lease: never rely on a 30-second retry timer.
+export function suspendDirectChatForCamera() {
+  let released=false
+  cameraSuspensions++
+  try {
+    if(chat||connecting) {
+      if(!closeChat())throw new Error('AI音声の解放に失敗したため撮影を中止しました')
+      state=running()?'waiting':'off'
+    }
+    retryAt=Infinity
+    trace('[camera-handoff] suspend count='+cameraSuspensions+'\n')
+  } catch(e) {
+    cameraSuspensions--
+    throw e
+  }
+  return () => {
+    if(released)return
+    released=true
+    if(cameraSuspensions>0)cameraSuspensions--
+    trace('[camera-handoff] resume count='+cameraSuspensions+'\n')
+    if(cameraSuspensions===0&&!memoryRetryStopped&&!automaticOfflineSuspended&&running()) {
+      state='waiting'
+      retryAt=0
+    }
   }
 }
 export function pauseDirectChat() {
@@ -1435,7 +1468,7 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
   // Restore saved conversation mode; credentials must not turn an explicit OFF on.
   Timer.set(()=>restoreConversationOnBoot(onBoot),1000)
   Timer.repeat(() => {
-    if (automaticOfflineSuspended || !running()) return
+    if (automaticOfflineSuspended || cameraSuspensions>0 || !running()) return
     if (chat) {
       if (signature() !== connectionSignature) {
         closeChat()
