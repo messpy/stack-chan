@@ -106,5 +106,5 @@ test('native cloud suspends and resumes without ever touching SD settings', () =
   routines.resumeDirectChatFromAutomaticOffline()
   assert.equal(context.automaticOfflineSuspended, false)
   assert.deepEqual(events.filter(event => event === 'resume'), ['resume'])
-  assert.match(chat, /if \(automaticOfflineSuspended \|\| nativeReleaseBlocked \|\| cameraSuspensions>0 \|\| !running\(\)\) return/)
+  assert.match(chat, /if \(automaticOfflineSuspended \|\| !running\(\)\) return/)
 })

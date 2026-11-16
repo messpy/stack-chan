@@ -24,12 +24,11 @@ test('explicit photo commands are recognized, negated and casual mentions are re
   assert.equal(cameraIntent.directPhotoRequest('この写真を見て'), false)
 })
 
-const photoSource = lan.slice(lan.indexOf('async function photo('), lan.indexOf('async function speakPhotoResult(', lan.indexOf('async function photo(')))
+const photoSource = lan.slice(lan.indexOf('async function photo('), lan.indexOf('async function describeImage(', lan.indexOf('async function photo(')))
 assert.ok(photoSource.startsWith('async function photo('), 'photo implementation exists')
 
 function photoHarness(options = {}) {
   const events = []
-  const handoffs = []
   const context = {
     busy: options.busy ?? false,
     photoActive: false,
@@ -38,22 +37,13 @@ function photoHarness(options = {}) {
     encodeJPEG: () => new Uint8Array([1, 2, 3]),
     save: () => events.push('save'),
     describeImage: async () => ({ analysis: { status: 'complete', text: '確認' } }),
-    Timer: {set: fn => {fn();return 1}},
-    directChatStatus: () => ({busy: options.chatBusy ?? true}),
-    suspendDirectChatForCamera: () => {
-      handoffs.push('hold')
-      if(options.releaseAtSuspend)context.busy=false
-      let released=false
-      return () => {if(!released){released=true;handoffs.push('release')}}
-    },
-    speakPhotoResult: async () => handoffs.push('speak'),
   }
   context.photoStage=(phase,details={})=>{
     context.photoDiagnostics={...context.photoDiagnostics,phase,...details}
   }
   let resume
   const held = new Promise(resolve => { resume = resolve })
-  const robot = { showBalloon() {}, camera: {
+  const robot = { camera: {
     async start() { events.push('start'); if (options.failStart) throw Error('start failed') },
     async capture() {
       events.push('capture')
@@ -64,7 +54,7 @@ function photoHarness(options = {}) {
     },
     async stop() { events.push('stop'); if (options.failStop) throw Error('stop failed') },
   }}
-  return { context, robot, events, handoffs, resume, photo: vm.runInNewContext(photoSource + '\nphoto', context) }
+  return { context, robot, events, resume, photo: vm.runInNewContext(photoSource + '\nphoto', context) }
 }
 
 test('photo starts, captures and stops before releasing busy', async () => {
@@ -77,7 +67,6 @@ test('photo starts, captures and stops before releasing busy', async () => {
   assert.equal(h.context.photoDiagnostics.phase,'complete')
   assert.equal(h.context.photoDiagnostics.saved,true)
   assert.equal(h.context.photoDiagnostics.jpegBytes,3)
-  assert.deepEqual(h.handoffs,['hold','release'])
 })
 
 test('photo concurrent requests are rejected and the first releases lock', async () => {
@@ -94,33 +83,6 @@ test('a conversation that ends during capture does not restore obsolete busy=tru
   await h.photo(h.robot, { analyze: false }, true)
   assert.equal(h.context.busy, false)
   assert.equal(h.context.photoActive, false)
-  assert.deepEqual(h.handoffs,['hold','release'])
-})
-
-test('photo refuses unrelated busy ownership even when called from conversation', async () => {
-  const h=photoHarness({busy:true,chatBusy:false})
-  await assert.rejects(h.photo(h.robot,{analyze:false},true),/Camera busy/)
-  assert.deepEqual(h.handoffs,[])
-})
-
-test('conversation photo retains audio hold and busy across image analysis and local speech', async () => {
-  const h=photoHarness({busy:true,releaseAtSuspend:true})
-  let finish, started
-  const begun=new Promise(resolve=>{started=resolve})
-  h.context.describeImage=async()=>{
-    started()
-    return await new Promise(resolve=>{finish=resolve})
-  }
-  const pending=h.photo(h.robot,{analyze:true},true)
-  await begun
-  assert.equal(h.context.busy,true)
-  assert.equal(h.context.photoActive,true)
-  assert.deepEqual(h.handoffs,['hold'])
-  finish({analysis:{status:'complete',text:'説明'}})
-  await pending
-  assert.deepEqual(h.handoffs,['hold','speak','release'])
-  assert.equal(h.context.busy,false)
-  assert.equal(h.context.photoActive,false)
 })
 
 test('photo lease remains exclusive during image analysis and releases on analysis failure', async () => {
@@ -141,7 +103,6 @@ test('photo lease remains exclusive during image analysis and releases on analys
   await assert.rejects(first, /vision service unavailable/)
   assert.equal(h.context.photoActive, false)
   assert.equal(h.context.busy, false)
-  assert.deepEqual(h.handoffs,['hold','release'])
 })
 
 test('camera failures still try stop and release the lock', async () => {
@@ -154,7 +115,6 @@ test('camera failures still try stop and release the lock', async () => {
     assert.equal(h.context.photoDiagnostics.phase,'error')
     assert.equal(h.context.photoDiagnostics.saved,option.failStop===true)
     assert.ok(h.context.photoDiagnostics.errorStage)
-    assert.deepEqual(h.handoffs,['hold','release'])
   }
 })
 
