@@ -37,7 +37,7 @@ import {analyzeJPEG,visionStatus} from 'archive-vision';
 import {startAlarmSettings,openAlarmSettings,showRingingAlarm,hideRingingAlarm} from 'archive-alarm-ui';
 import {stopAlarmSound,alarmSoundCommand,playAlarmSound} from 'archive-alarm-sound';
 import {startWeb,openControl,controlStatus} from 'archive-web';
-import {webTextTurn,microphoneIndicator,startDirectChat,directChatStatus,chatIdleStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat,suspendDirectChatForAutomaticOffline,resumeDirectChatFromAutomaticOffline} from 'archive-direct-chat';
+import {webTextTurn,microphoneIndicator,startDirectChat,directChatStatus,chatIdleStatus,speakerList,selectSpeaker,configureChatProvider,setChatMode,setRecognitionMode,configureDirectChat,provisionDirectChat,testDirectConnection,pauseDirectChat,resumeDirectChat,suspendDirectChatForCamera,suspendDirectChatForAutomaticOffline,resumeDirectChatFromAutomaticOffline} from 'archive-direct-chat';
 import {recordMemory,history,deviceHistory,currentSpeaker,users,saveUser,memoryStatus,importLegacy,memoryFileStatus,preserveInvalidMemory} from 'archive-memory';
 import {startVolume,getVolume,setVolume,openVolume} from 'archive-volume';
 import {acceptAudioChunk} from 'archive-audio-upload';
@@ -110,11 +110,11 @@ export function archiveTranscript(role,text,eventId,image,speakerId,metadata) {
 // Preview frames stay in RAM: no SD writes or cloud analysis.
 async function cameraPreview(robot) {
   if(busy||photoActive)throw new Error('本体で処理中です。会話や録画を停止してからお試しください');
-  const paused=pauseDirectChat();
-  if(busy||photoActive){if(paused)resumeDirectChat();throw new Error('本体で処理中です');}
+  const releaseCamera=suspendDirectChatForCamera();
   busy=true;
   let frame,primaryError;
   try {
+    await new Promise(resolve=>Timer.set(resolve,0));
     const options={width:176,height:144,imageType:'rgb565le'};
     await robot.camera.start(options);
     frame=await robot.camera.capture(options);
@@ -126,7 +126,7 @@ async function cameraPreview(robot) {
     try { await robot.camera.stop(); } catch(error) {
       trace('[archive-camera] preview stop failed\n');
       if(!primaryError)throw error;
-    } finally { busy=false; if(paused)resumeDirectChat(); }
+    } finally { busy=false; releaseCamera(); }
   }
 }
 async function photo(robot,args={},fromConversation=false) {
