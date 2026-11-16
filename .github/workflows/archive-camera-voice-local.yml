@@ -6,6 +6,7 @@ on:
       - fix/archive-photo-local-voice-dispatch-20261105
   pull_request:
     branches:
+      - feat/offline-device-apps-20261116
       - fix/health-debug-log-20261107
       - fix/issue40-memory-recovery-20261107
       - fix/audio-integrity-20261105
