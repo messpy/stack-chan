@@ -35,7 +35,7 @@ import {startSettings,openSettings,closeSettings,getSettingsStatus,vaultSelfTest
 import {startDeviceTools,setAlarmDisplay,setAlarmMotion,callDeviceTool,listDeviceTools,reminderStatus} from 'archive-tools';
 import Time from 'time';
 import {getM5StackChanDriver} from 'm5stackchan-servo-driver';
-import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG} from 'archive-usb';
+import {readUSB,writeUSB,usbConnected,rebootUSB,convertRGB24,encodeJPEG,heapStatus} from 'archive-usb';
 import Base64 from 'base64';
 import config from 'mc/config';
 import {HttpServerService, Response} from 'http-server-service';
@@ -176,24 +176,40 @@ async function recordAudio(robot) {
 }
 export function startArchive(robot) {
   let monitor,monitorVoice;
+  const bootHeap=stage=>{try{const h=heapStatus();trace('[boot-heap] stage='+stage+' internalFree='+h.internalFree+' internalLargest='+h.internalLargest+' psramFree='+h.psramFree+'\n');}catch(_){}};
+  bootHeap('before-debug-drain');
   startDebugDrain();
+  bootHeap('after-debug-drain');
   startLocalClock();
+  bootHeap('after-local-clock');
   startCustomFace(robot);
+  bootHeap('after-custom-face');
   startOffline(robot,{stopCloud:()=>{if(directChatStatus().recognitionMode)setRecognitionMode(false);if(directChatStatus().enabled)setChatMode(false);},claim:()=>{if(busy)return false;busy=true;return true;},release:()=>{busy=false;},tool:callDeviceTool,openAlarms:openAlarmSettings,startCloud:()=>setChatMode(true),openAI:()=>robot.ui.application.behavior.launchMiniApp('archive-ai-settings')});
+  bootHeap('after-offline');
   startHistoryUI(robot,{read:args=>{importLegacy();return deviceHistory(args);},people:()=>users({limit:50}).users.filter(p=>p.kind==='person'),current:currentSpeaker});
+  bootHeap('after-history-ui');
   startVolume(robot);
+  bootHeap('after-volume');
   startAISettings(robot,{status:directChatStatus,select:configureChatProvider,mode:setChatMode});
+  bootHeap('after-ai-settings');
   startWiFiDisplay(robot);
+  bootHeap('after-wifi-display');
   try{startSettings(robot);}catch(_){trace('[settings] initialization failed; USB remains available\n');}
+  bootHeap('after-settings');
   try{startDeviceTools(robot,()=>{if(monitor?.active){monitor.stopCurrent().catch(()=>{});return false;}if(directChatStatus().busy)pauseDirectChat();if(busy)return false;busy=true;return true;},()=>{busy=false;resumeDirectChat();});}catch(_){trace('[tools] initialization failed; USB remains available\n');}
+  bootHeap('after-device-tools');
   startTimerUI(robot,{create:args=>callDeviceTool('timer_create',args),status:reminderStatus});
+  bootHeap('after-timer-ui');
   startAlarmSettings(robot,{create:args=>callDeviceTool('alarm_create',args),list:()=>callDeviceTool('reminder_list'),cancel:id=>callDeviceTool('reminder_cancel',{id}),stop:()=>callDeviceTool('alarm_stop')});
+  bootHeap('after-alarm-settings');
   setAlarmDisplay({show:showRingingAlarm,close:hideRingingAlarm});
   setAlarmMotion(stopped=>createAlarmDance(robot,{rotation:getM5StackChanDriver()?.lastKnownRotation,stopped}));
+  bootHeap('after-alarm-hooks');
   const token=config.archiveToken;
   if(!token)return;
   globalThis.stackchanArchiveTranscript=archiveTranscript;
   globalThis.abort=(reason,exception)=>{try{writeUSB(JSON.stringify({event:'fatal',reason:String(reason),detail:String(exception).slice(0,300)}));}catch(_){};rebootUSB();return true;};
+  bootHeap('before-lan-monitor');
   monitor=createLANMonitor({robot,now:()=>Date.now(),repeat:(fn,ms)=>Timer.repeat(fn,ms),cancel:id=>Timer.clear(id),token:()=>randomHex(16),
     claim(){
       if(offlineStatus().playing||reminderStatus().ringing||(busy&&!directChatStatus().busy))throw new Error('本体で処理中です');
@@ -216,6 +232,7 @@ export function startArchive(robot) {
       }finally{unlock?.();}
     }
   });
+  bootHeap('after-lan-monitor');
   async function execute(request){
     if(monitor.active&&!request.op.startsWith('/monitor/')&&!['/status','/volume','/chat/status','/files','/files/page','/network/status','/speaker/list','/settings/status','/reminders','/debug/status','/motor-status','/media/trash'].includes(request.op))throw new Error('動作確認を終了してから操作してください');
     const capture=['/face/save','/face/restore','/alarm-sound/preview','/motor/test','/motor/recover','/image/finish','/photo','/record','/audio','/chat-record'].includes(request.op);

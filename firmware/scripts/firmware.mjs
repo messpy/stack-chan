@@ -13,6 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import path from 'node:path'
+import { prepareArchivePrivateManifest } from './lib/archive-private-manifest.mjs'
 import {
   assertNoCustomBuildOutput,
   buildOutputDirectory,
@@ -80,6 +81,23 @@ const uploadPort =
   readOption(rawArgs, 'port') ?? process.env.STACKCHAN_PORT ?? process.env.UPLOAD_PORT ?? process.env.ESPPORT
 const uploadBaud = readOption(rawArgs, 'baud') ?? process.env.STACKCHAN_BAUD ?? process.env.ESPBAUD
 let subprocessEnvironment = uploadPort ? { ...process.env, UPLOAD_PORT: uploadPort } : process.env
+let archiveManifest
+
+if (!dryRun && ['build', 'flash', 'deploy', 'debug'].includes(command)) {
+  try {
+    archiveManifest = prepareArchivePrivateManifest(manifest)
+    toolManifest = archiveManifest.manifest
+    process.once('exit', () => archiveManifest.cleanup())
+    if (archiveManifest.changed) {
+      console.log(
+        '[stack-chan] prepared temporary Archive manifest without branch-foreign optional includes; credentials unchanged',
+      )
+    }
+  } catch (error) {
+    console.error(`[stack-chan] Archive manifest preparation failed: ${error.message}`)
+    process.exit(1)
+  }
+}
 
 if (
   deviceName === 'm5stackchan_cores3' &&
@@ -148,7 +166,10 @@ if (!dryRun && device.sdkconfigTarget && ['build', 'flash', 'deploy', 'debug'].i
       path.dirname(path.resolve(manifest)),
       `stack-chan-host.${deviceName}.${process.pid}.manifest.json`,
     )
-    writeFileSync(toolManifest, JSON.stringify({ include: [path.resolve(manifest), overrideManifest] }))
+    writeFileSync(
+      toolManifest,
+      JSON.stringify({ include: [archiveManifest?.manifest ?? path.resolve(manifest), overrideManifest] }),
+    )
     process.on('exit', () => rmSync(toolManifest, { force: true }))
   } catch (error) {
     console.error(`[stack-chan] firmware version could not be prepared: ${error.message}`)
@@ -333,7 +354,7 @@ function prepareBuildVariant() {
     measured: process.env.STACKCHAN_REALTIME_PERFORMANCE_PROBE,
     systemTrace: process.env.STACKCHAN_REALTIME_SYSTEM_TRACE,
     solution: process.env.ESP_WEBRTC_SOLUTION,
-    manifest: readFileSync(selectedManifest, 'utf8'),
+    manifest: readFileSync(archiveManifest?.manifest ?? selectedManifest, 'utf8'),
   })
   if (readBuildVariant(markerPath) === selectedVariant) return false
 
@@ -341,7 +362,16 @@ function prepareBuildVariant() {
   ensureBuildOutputDirectory()
   const result = spawnSync(
     'mcconfig',
-    [...buildModeArgs, '-m', '-p', platform, '-t', 'clean', ...outputArgs, selectedManifest],
+    [
+      ...buildModeArgs,
+      '-m',
+      '-p',
+      platform,
+      '-t',
+      'clean',
+      ...outputArgs,
+      archiveManifest?.manifest ?? selectedManifest,
+    ],
     { env: subprocessEnvironment, stdio: 'inherit' },
   )
   if (result.error) {

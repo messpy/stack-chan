@@ -9,12 +9,14 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { prepareArchivePrivateManifest } from './archive-private-manifest.mjs'
 
 const firmwareDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const manifest = 'mods/examples/look_around/manifest.json'
@@ -367,3 +369,92 @@ function assertMainCommand(invocation, command, manifestPath) {
 function count(source, value) {
   return source.split(value).length - 1
 }
+
+function archiveFixture(run) {
+  const directory = mkdtempSync(path.join(tmpdir(), 'stackchan-private-manifest-'))
+  const filename = path.join(directory, 'manifest_archive_private.json')
+  const publicFilename = path.join(directory, 'manifest_archive.example.json')
+  const feature = '../../vendor/koeact/manifest.json'
+  const privateData = {
+    include: ['./manifest_local.json', feature, './custom-private-extension.json'],
+    config: { archiveToken: 'private-test-token', wifi: { password: 'private-test-password' } },
+    modules: { custom: './custom-module' },
+    platforms: { m5stackchan_cores3: { config: { privateOption: true } } },
+  }
+  const publicData = { include: ['./manifest_local.json'], modules: { archive: './lan-archive' } }
+  const save = () => {
+    writeFileSync(filename, JSON.stringify(privateData))
+    writeFileSync(publicFilename, JSON.stringify(publicData))
+  }
+  save()
+  try {
+    run({ directory, filename, feature, privateData, publicData, save })
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+}
+
+test('private Archive build drops only a branch-foreign managed include in a disposable copy', () => {
+  archiveFixture(({ directory, filename, privateData }) => {
+    const before = readFileSync(filename)
+    const prepared = prepareArchivePrivateManifest(filename)
+    assert.equal(prepared.changed, true)
+    assert.equal(path.dirname(prepared.manifest), directory)
+    const data = JSON.parse(readFileSync(prepared.manifest, 'utf8'))
+    assert.deepEqual(data, { ...privateData, include: ['./manifest_local.json', './custom-private-extension.json'] })
+    assert.deepEqual(readFileSync(filename), before)
+    assert.equal(statSync(prepared.manifest).mode & 0o777, 0o600)
+    prepared.cleanup()
+    assert.equal(existsSync(prepared.manifest), false)
+    assert.deepEqual(readFileSync(filename), before)
+  })
+})
+
+test('a missing feature declared by the public Archive manifest is never silently removed', () => {
+  archiveFixture(({ filename, feature, publicData, save }) => {
+    publicData.include.push(feature)
+    save()
+    const before = readFileSync(filename)
+    const prepared = prepareArchivePrivateManifest(filename)
+    assert.equal(prepared.changed, false)
+    assert.equal(prepared.manifest, filename)
+    prepared.cleanup()
+    assert.deepEqual(readFileSync(filename), before)
+  })
+})
+
+test('public feature module references retain their dependency even before include repair', () => {
+  archiveFixture(({ filename, publicData, save }) => {
+    publicData.modules['archive-koeact'] = './archive-koeact'
+    save()
+    assert.equal(prepareArchivePrivateManifest(filename).changed, false)
+  })
+})
+
+test('private feature module conflicts fail closed without changing credentials', () => {
+  archiveFixture(({ filename, privateData, save }) => {
+    privateData.modules['archive-koeact'] = './private-koeact'
+    save()
+    const before = readFileSync(filename)
+    assert.throws(() => prepareArchivePrivateManifest(filename), /conflict/)
+    assert.deepEqual(readFileSync(filename), before)
+  })
+})
+
+test('malformed private JSON errors do not expose its input and ordinary manifests are untouched', () => {
+  archiveFixture(({ directory, filename }) => {
+    writeFileSync(filename, '{"password":"private-test-password", broken')
+    const before = readFileSync(filename)
+    assert.throws(
+      () => prepareArchivePrivateManifest(filename),
+      (error) => {
+        assert.ok(!error.message.includes('private-test-password'))
+        return /original files preserved/.test(error.message)
+      },
+    )
+    assert.deepEqual(readFileSync(filename), before)
+    const ordinary = path.join(directory, 'manifest.json')
+    assert.equal(prepareArchivePrivateManifest(ordinary).manifest, ordinary)
+    assert.equal(existsSync(ordinary), false)
+  })
+})
