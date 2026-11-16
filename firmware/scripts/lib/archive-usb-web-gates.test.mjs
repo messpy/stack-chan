@@ -41,7 +41,7 @@ test('Web server route-registration failures do not falsely report server readin
   close(){closed++;}
  }
  const context=vm.createContext({
-  server:undefined,HttpServerService:HTTP,ArchiveHTTPServer:class {},
+  server:undefined,HttpServerService:HTTP,ArchiveHTTPServer:class {},ControlHTTPServer:class {},
   protect:fn=>fn,Response:class {},trace(){},access:'test-key',
   PAGE:'test-page',mediaName:()=>true,faceEditorAsset:()=>'',actions:{},
  });
