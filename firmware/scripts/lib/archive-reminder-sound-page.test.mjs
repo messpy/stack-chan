@@ -16,7 +16,10 @@ test('old private manifest boots the browser page without a newly registered mod
  for(const name of imports)assert.ok(manifest.modules[name],name+' missing from old manifest');
  const context=vm.createContext({});
  const compiled=new vm.SourceTextModule(page,{context});
- await compiled.link(name=>new vm.SyntheticModule(['default'],function(){this.setExport('default','');},{context}));
+ await compiled.link(name=>{
+  const exports=name==='archive-features-page'?['default','CHAT_TEXT_HTML','FEATURE_HTML']:['default'];
+  return new vm.SyntheticModule(exports,function(){for(const key of exports)this.setExport(key,'');},{context});
+ });
  await compiled.evaluate();
  assert.ok(compiled.namespace.default.includes('<script>'+script+'</script>'));
  assert.ok(compiled.namespace.default.includes('id="reminderSoundUpload"'));
