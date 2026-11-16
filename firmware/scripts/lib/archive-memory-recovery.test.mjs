@@ -145,3 +145,10 @@ test('camera suspension rejects a failed native close and never leaves a lease b
   assert.equal(h.run('chat'),undefined)
   assert.ok(h.events.some(e=>e.includes('native close failed')))
 })
+
+test('legacy USB camera pause fails closed if native teardown throws',()=>{
+  const h=harness()
+  h.run("chat={close(){throw new Error('device was disconnected')}}")
+  assert.throws(()=>h.run('pauseDirectChat()'),/音声の解放に失敗/)
+  assert.equal(h.run('chat'),undefined)
+})
