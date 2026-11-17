@@ -119,7 +119,7 @@ test('alarm WAV: prefetch all SD I/O outside native writable callback and drain 
  assert.deepEqual(sound.played.slice(0,h.expected.length),[...h.expected]);
  assert.ok(status.paddingBytes>0,'end-of-file DMA padding');
  assert.equal(h.metrics().sdReadInsideWritable,0);
- assert.equal(h.metrics().queueStarvations,0,'normal SD feed keeps the buffer filled');
+ assert.equal(status.queueStarvations,0,'normal SD feed keeps the buffer filled');
  assert.ok(h.metrics().readCount>=5);
  assert.equal(h.metrics().fileClosed,1);
  assert.equal(h.metrics().audioClosed,1);
