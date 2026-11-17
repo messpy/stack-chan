@@ -162,46 +162,109 @@ export function alarmSoundCommand(op,args={}){
 export function stopAlarmSound(){stopPlayback?.();}
 export async function playAlarmSound(robot,shouldStop=()=>false,seconds=0,kind='alarm',name){
  const sound=name?librarySound(name):selectedReminderSound(kind);if(!sound)return false;
- let file,audio,drainTimer;let done=false,offset=44;
- const pcm=new Uint8Array(8192);
- const stats=lastPlayback={state:'preparing',bytes:0,readMaxMs:0,queueStarvations:0,bufferBytes:pcm.byteLength,bufferCount:1};
+ // Four SDK-sized chunks (~341ms), bounded to protect the CoreS3 internal RAM.
+ // SD prefetch is separate from the real-time AudioOut writable callback.
+ const BUFFER_BYTES=4*4092,REFILL_BYTES=8192,BYTES_PER_SECOND=48000;
+ let file,audio,refillTimer,drainTimer;
+ let done=false,sourceOffset=44,head=0,tail=0,queued=0,writable=0,capacity=0;
+ let draining=false,padding=0,lastWritableAt=0,starving=false;
+ const ring=new Uint8Array(BUFFER_BYTES),silence=new Uint8Array(1024);
+ const stats=lastPlayback={state:'preparing',bytes:0,readMaxMs:0,callbackGapMaxMs:0,
+   queueStarvations:0,bufferBytes:ring.byteLength,bufferCount:1,paddingBytes:0,drain:'pending'};
  try{
   const info=withSDCard(root=>{file=root.openFile({path:folder+sound.file,mode:'r'});return wavInfo(file);});
-  const end=44+Math.min(info.bytes,seconds>0?Math.floor(seconds*48000/2)*2:info.bytes);
+  const end=44+Math.min(info.bytes,seconds>0?Math.floor(seconds*BYTES_PER_SECOND/2)*2:info.bytes);
   if(globalThis.amp)globalThis.amp.sampleRate=24000;
   return await new Promise((resolve,reject)=>{
    const finish=(error,stopped=false)=>{
-    if(done)return;done=true;stats.state=error?'error':stopped?'stopped':'completed';stopPlayback=undefined;
+    if(done)return;done=true;
+    stats.state=error?'error':stopped?'stopped':'completed';
+    stats.drain=error?'failed':stopped?'cancelled':'completed';
+    stopPlayback=undefined;
+    if(refillTimer!==undefined){Timer.clear(refillTimer);refillTimer=undefined;}
     if(drainTimer!==undefined){Timer.clear(drainTimer);drainTimer=undefined;}
-    // Leave the native writable callback before releasing I2S or resuming chat.
+    // Native audio handles must only close after onWritable returns.
     Timer.set(()=>{
-     try{audio?.stop();}catch(_){}try{audio?.close();}catch(_){}audio=undefined;
-     trace('[alarm-audio] result='+stats.state+' bytes='+stats.bytes+' read_max_ms='+stats.readMaxMs+(error?' error='+String(error):'')+'\n');
+     try{audio?.stop();}catch(_){}
+     try{audio?.close();}catch(_){}
+     audio=undefined;
+     trace('[alarm-audio] result='+stats.state+' bytes='+stats.bytes+' read_max_ms='+stats.readMaxMs+
+       ' callback_gap_max_ms='+stats.callbackGapMaxMs+' feed_empty='+stats.queueStarvations+
+       ' padding_bytes='+stats.paddingBytes+'\n');
      error?reject(error):resolve(true);
     },0);
    };
+   const refill=()=>{
+    if(done||sourceOffset>=end||queued===ring.byteLength)return false;
+    const length=Math.min(REFILL_BYTES,ring.byteLength-queued,ring.byteLength-tail,end-sourceOffset)&~1;
+    if(!length)return false;
+    const now=Date.now(),view=ring.subarray(tail,tail+length);
+    // SD I/O, including CoreS3 GPIO35 bus handoff, never runs inside onWritable.
+    const count=withSDCard(()=>file.read(view,sourceOffset));
+    stats.readMaxMs=Math.max(stats.readMaxMs,Date.now()-now);
+    if(count!==length)throw new Error('Alarm SD read incomplete');
+    tail=(tail+length)%ring.byteLength;queued+=length;sourceOffset+=length;
+    return true;
+   };
+   const pump=()=>{
+    if(done||!audio||!capacity)return;
+    while(writable>=2&&queued>=2){
+     const length=Math.min(writable,queued,ring.byteLength-head,REFILL_BYTES)&~1;
+     if(!length)break;
+     audio.write(ring.subarray(head,head+length));
+     head=(head+length)%ring.byteLength;queued-=length;writable-=length;stats.bytes+=length;
+    }
+    if(!draining&&sourceOffset>=end&&queued===0){
+     draining=true;stats.drain='padding';
+     // Match upstream WebRadioAudioOut.drain(): flush staging and keep
+     // one entire FIFO of silence until the original samples have played.
+     padding=capacity+((capacity-(stats.bytes%capacity))%capacity);
+     drainTimer=Timer.set(()=>finish(new Error('Alarm audio drain timed out')),5000);
+    }
+    while(draining&&padding>=2&&writable>=2){
+     const length=Math.min(padding,writable,silence.length)&~1;
+     if(!length)break;
+     audio.write(silence.subarray(0,length));
+     writable-=length;padding-=length;stats.paddingBytes+=length;
+    }
+    // Writable capacity reports DMA completion, not just FIFO writes.
+    if(draining&&padding===0&&writable>=capacity)finish();
+   };
    stopPlayback=()=>finish(undefined,true);
    try{
+    // Prime the bounded ring before I2S, without storing an entire audio file.
+    while(sourceOffset<end&&queued<ring.byteLength){if(!refill())break;}
     audio=new AudioOut({sampleRate:24000,channels:1,bitsPerSample:16,onWritable(size){
-     if(done||drainTimer!==undefined)return;
+     if(done)return;
      try{
-      if(shouldStop()){finish(undefined,true);return;}
-      const writable=size&~1;let remaining=writable;
-      while(remaining&&offset<end){
-       const length=Math.min(pcm.byteLength,remaining,end-offset),start=Date.now();
-       const view=pcm.subarray(0,length),count=withSDCard(()=>file.read(view,offset));
-       stats.readMaxMs=Math.max(stats.readMaxMs,Date.now()-start);
-       if(count!==length)throw new Error('Alarm SD read incomplete');
-       audio.write(view);offset+=length;stats.bytes+=length;remaining-=length;
-      }
-      if(offset>=end){
-       // Writable space bounds the queued DMA audio; allow it to drain once.
-       drainTimer=Timer.set(()=>{drainTimer=undefined;finish();},Math.ceil(writable*1000/48000)+80);
-      }
+      const now=Date.now();
+      if(lastWritableAt)stats.callbackGapMaxMs=Math.max(stats.callbackGapMaxMs,now-lastWritableAt);
+      lastWritableAt=now;
+      writable=size&~1;capacity=Math.max(capacity,writable);
+      if(!draining&&sourceOffset<end&&queued===0&&writable>=capacity){
+       if(!starving){stats.queueStarvations++;starving=true;}
+      }else if(queued>0)starving=false;
+      pump();
      }catch(error){finish(error);}
     }});
-    audio.volume=Math.min(robot.audio.volume,0.45);stats.state='playing';audio.start();
+    audio.volume=Math.min(robot.audio.volume,0.45);
+    // One SD read per 20ms tick at most. The writable callback only copies RAM.
+    refillTimer=Timer.repeat(()=>{
+     if(done)return;
+     try{
+      if(shouldStop()){finish(undefined,true);return;}
+      if(queued<=ring.byteLength-REFILL_BYTES&&sourceOffset<end)refill();
+      pump();
+     }catch(error){finish(error);}
+    },20);
+    stats.state='playing';
+    audio.start();
    }catch(error){finish(error);}
   });
- }finally{stopPlayback=undefined;try{audio?.close();}catch(_){}try{if(file)withSDCard(()=>file.close());}catch(_){} }
+ }finally{
+  stopPlayback=undefined;
+  try{audio?.stop();}catch(_){}
+  try{audio?.close();}catch(_){}
+  try{if(file)withSDCard(()=>file.close());}catch(_){}
+ }
 }
