@@ -37,6 +37,7 @@ function setup(){
  const deps={
   'embedded:io/audio/out':{default:class {}},
   timer:{default:{set(){},clear(){}}},
+  time:{default:{ticks:0}},
   base64:{default:{decode:value=>Uint8Array.from(Buffer.from(value,'base64')).buffer}},
   'stackchan-sdcard':{withSDCard:fn=>fn(root)},
   'archive-vault':{

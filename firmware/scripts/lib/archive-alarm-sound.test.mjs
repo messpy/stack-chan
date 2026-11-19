@@ -4,9 +4,11 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
 const source=fs.readFileSync(new URL('../../host/app/archive-alarm-sound.js',import.meta.url),'utf8');
-const BLOCK=4092,CAPACITY=5*BLOCK;
 
-async function setup(bytes,{failReadAt=0}={}){
+
+async function setup(bytes,{failReadAt=0,block=2048,sdDelayAt=0,sdDelayMs=0}={}){
+ const capacity=5*block;
+ const blockMs=block*1000/48000;
  let now=0,inWritable=false,sdReadInsideWritable=0,readCount=0,fileClosed=0,audioClosed=0;
  const timers=new Set(),sounds=[];
  const wav=new Uint8Array(44+bytes),header=new DataView(wav.buffer);
@@ -21,6 +23,10 @@ async function setup(bytes,{failReadAt=0}={}){
    if(typeof target==='number')return wav.slice(offset,offset+target).buffer;
    if(inWritable)sdReadInsideWritable++;
    readCount++;
+   if(sdDelayAt===readCount){
+    now+=sdDelayMs;
+    sounds.at(-1)?.consumeUntil(now);
+   }
    if(failReadAt===readCount)throw Error('SD failure');
    target.set(wav.subarray(offset,offset+target.length));
    return target.length;
@@ -35,7 +41,7 @@ async function setup(bytes,{failReadAt=0}={}){
  };
  class Audio {
   constructor(options){
-   this.options=options;this.available=CAPACITY;this.staging=[];
+   this.options=options;this.available=capacity;this.staging=[];
    this.queue=[];this.played=[];this.started=false;this.closed=false;
    sounds.push(this);
   }
@@ -44,13 +50,13 @@ async function setup(bytes,{failReadAt=0}={}){
    try{this.options.onWritable(this.available);}
    finally{inWritable=false;}
   }
-  start(){this.started=true;this.callWritable();}
+  start(){this.started=true;this.nextDma=now+blockMs;this.callWritable();}
   stop(){
    if(!this.started)return;
    this.started=false;
    // The normal finish must drain both the DMA queue and partial staging.
    if(!this.stoppedExplicitly&&this.moduleStatus?.()==='completed'){
-    assert.equal(this.queue.length,0,'DMA still has unheard samples');
+    assert.ok(this.queue.flat().every(value=>value===0),'DMA still has unheard PCM');
     assert.equal(this.staging.length,0,'partial staging lost');
    }
   }
@@ -60,19 +66,26 @@ async function setup(bytes,{failReadAt=0}={}){
    this.available-=buffer.byteLength;
    for(const sample of buffer){
     this.staging.push(sample);
-    if(this.staging.length===BLOCK){
+    if(this.staging.length===block){
      this.queue.push(this.staging);
      this.staging=[];
     }
    }
   }
-  advance(){
-   if(!this.started)return;
-   if(this.queue.length){this.played.push(...this.queue.shift());this.available+=BLOCK;}
-   this.callWritable();
+  consumeUntil(tick){
+   let fired=false;
+   while(this.started&&this.nextDma<=tick){
+    this.nextDma+=blockMs;
+    if(this.queue.length){
+     this.played.push(...this.queue.shift());
+     this.available=Math.min(capacity,this.available+block);
+    }
+    fired=true;
+   }
+   return fired;
   }
  }
- const deps={'embedded:io/audio/out':{default:Audio},timer:{default:timer},
+ const deps={'embedded:io/audio/out':{default:Audio},timer:{default:timer},time:{default:{get ticks(){return Math.floor(now)>>>0;}}},
   base64:{default:{}},'stackchan-sdcard':{withSDCard:fn=>fn({openFile:()=>file})},
   'archive-vault':{getSettings:()=>({alarmSound:{file:'test.wav'}}),changeSettings(){},randomHex(){return 'abc';}}};
  const ctx=vm.createContext({Uint8Array,DataView,Map,Date,trace(){}});
@@ -85,10 +98,13 @@ async function setup(bytes,{failReadAt=0}={}){
   },{context:ctx});
  });
  await module.evaluate();
- async function advance(duration,{pauseRefill=false}={}){
+ async function advance(duration,{pauseRefill=false,pauseLoop=false,pauseWritable=false}={}){
   for(let step=0;step<duration;step+=10){
    now+=10;
-   if(now%90===0)sounds.at(-1)?.advance();
+   const sound=sounds.at(-1);
+   if(sound?.consumeUntil(now))sound.writablePending=true;
+   if(pauseLoop)continue;
+   if(sound?.writablePending&&!pauseWritable){sound.writablePending=false;sound.callWritable();}
    for(const job of [...timers]){
     if(!timers.has(job)||job.at>now)continue;
     if(job.repeat){job.at=now+job.delay;if(pauseRefill)continue;}
@@ -129,12 +145,12 @@ test('alarm WAV: prefetch all SD I/O outside native writable callback and drain 
 test('alarm WAV: sub-DMA-block short file is flushed and not marked complete early',async()=>{
  const h=await setup(1000);
  const done=h.play();
- await h.advance(200);
+ await h.advance(40);
  assert.notEqual(h.status().state,'completed','short sample must still be draining');
  await h.advance(3000);
  assert.equal(await done,true);
  assert.deepEqual(h.sounds[0].played.slice(0,1000),[...h.expected]);
- assert.equal(h.sounds[0].played.length % BLOCK,0);
+ assert.equal(h.sounds[0].played.length % 2048,0);
  assert.equal(h.metrics().sdReadInsideWritable,0);
 });
 
@@ -158,7 +174,7 @@ test('alarm WAV: explicit stop closes asynchronously and cancels refill/drain',a
 });
 
 test('alarm WAV: SD error rejects and releases audio and file handles',async()=>{
- const h=await setup(100000,{failReadAt:3});
+ const h=await setup(100000,{failReadAt:6});
  const promise=h.play(),rejected=assert.rejects(promise,/SD failure/);
  await h.advance(300);
  await rejected;
@@ -176,4 +192,72 @@ test('alarm WAV: exhausted prefetch reports feed-empty events without silent suc
  await h.advance(8000);
  assert.equal(await done,true);
  assert.deepEqual(h.sounds[0].played.slice(0,100000),[...h.expected]);
+});
+
+for(const block of [2048,4092]){
+ for(const bytes of [2,block,block+2,block*5,block*5+2]){
+  test(`staging and drain preserve ${bytes} bytes with ${block}-byte blocks`,async()=>{
+   const h=await setup(bytes,{block});
+   const done=h.play();
+   await h.advance(3000);
+   assert.equal(await done,true);
+   assert.equal(h.status().dmaWritableCapacity,block*5);
+   assert.deepEqual(h.sounds[0].played.slice(0,bytes),[...h.expected]);
+   assert.ok(h.sounds[0].played.slice(bytes).every(value=>value===0));
+   assert.equal(h.metrics().timers,0);
+  });
+ }
+}
+
+test('late XS loop is visible even while the software ring still holds PCM',async()=>{
+ const h=await setup(70000);
+ const done=h.play();
+ await h.advance(380,{pauseLoop:true});
+ await h.advance(50);
+ assert.ok(h.status().callbackGapMaxMs>=380);
+ assert.ok(h.status().refillGapMaxMs>=380);
+ assert.ok(h.status().dmaLowWatermarks>0);
+ assert.ok(h.status().queueStarvations>0,'writes exhausted the remaining PCM before satisfying demand');
+ await h.advance(4000);
+ assert.equal(await done,true);
+ assert.deepEqual(h.sounds[0].played.slice(0,70000),[...h.expected]);
+});
+
+test('slow SD is timed, and playback recovers after the blocked event loop',async()=>{
+ const h=await setup(70000,{sdDelayAt:6,sdDelayMs:310});
+ const done=h.play();
+ await h.advance(4000);
+ assert.equal(await done,true);
+ assert.equal(h.status().readMaxMs,310);
+ assert.ok(h.status().callbackGapMaxMs>=310);
+ assert.deepEqual(h.sounds[0].played.slice(0,70000),[...h.expected]);
+});
+
+test('overlap is rejected until shutdown has finished; repeated playback releases handles',async()=>{
+ const h=await setup(4098);
+ for(let i=0;i<12;i++){
+  const done=h.play();
+  h.stop();
+  await assert.rejects(h.play(),/already playing/);
+  await h.advance(60);
+  assert.equal(await done,true);
+  assert.equal(h.metrics().timers,0);
+ }
+ const done=h.play();
+ await h.advance(1000);
+ assert.equal(await done,true);
+ assert.equal(h.metrics().audioClosed,13);
+ assert.equal(h.metrics().fileClosed,13);
+ assert.deepEqual(h.sounds.at(-1).played.slice(0,4098),[...h.expected]);
+});
+
+test('drain requires a new DMA notification and times out with cleanup',async()=>{
+ const h=await setup(1000);
+ const rejected=assert.rejects(h.play(),/drain timed out/);
+ await h.advance(5200,{pauseWritable:true});
+ await rejected;
+ assert.equal(h.status().errorStage,'drain');
+ assert.equal(h.metrics().timers,0);
+ assert.equal(h.metrics().audioClosed,1);
+ assert.equal(h.metrics().fileClosed,1);
 });
