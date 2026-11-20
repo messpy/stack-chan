@@ -3,6 +3,7 @@ name: Archive Alarm and Timer Audio
 on:
   pull_request:
     branches:
+      - integration/pr117-pr120-super-20261117
       - fix/archive-issue40-memory-admission-20261105
       - fix/archive-diagnostics-20261105
       - stackchan-super
