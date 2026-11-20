@@ -4,6 +4,8 @@ import { runContextCreatedBehaviors, type StackchanAppBehavior } from 'app-behav
 import { resolveAppBehaviors } from 'app-behavior-resolver'
 import defaultBehavior from 'app-default-behavior'
 import { installLaunchShortcut, type LaunchShortcutButton, prepareAppLaunch } from 'app-launch'
+import { makeStartupFailureRecord, makeStartupProgressRecord } from 'startup-diagnostics'
+import { importOptionalArchive } from 'optional-archive-import'
 import { type BootWiFiStatus, startHostBootServices } from 'boot-services'
 import type { StackchanContext } from 'capabilities'
 import { createStackchanContext, getHostDeviceEnvironment } from 'compose'
@@ -100,30 +102,84 @@ function waitForBootWiFiRecoveryChoice(status: BootWiFiStatus & { reason: string
   })
 }
 
+// Only fixed identifiers and scalar measurements may cross the unauthenticated
+// startup USB channel. The original exception is retained only by the normal
+// private diagnostic path; never serialize its message or stack.
+function emitStartupDiagnostic(phase: StartupPhase, checkpoint: string, error: unknown): void {
+  const errorClass = startupErrorClass(error)
+  trace(`[startup-diag] checkpoint=${checkpoint} phase=${phase} error=${errorClass}\n`)
+  try {
+    if (!Modules.has('archive-usb')) return
+    const usb = Modules.importNow('archive-usb') as {
+      writeDebugUSB(packet: string): boolean
+      resetReason(): number
+      heapStatus(): { internalFree?: number; internalLargest?: number; psramFree?: number }
+    }
+    let resetReason = 0
+    let heap: { internalFree?: number; internalLargest?: number; psramFree?: number } = {}
+    try { resetReason = usb.resetReason() } catch { /* Unknown; report zero. */ }
+    try { heap = usb.heapStatus() } catch { /* Unknown; report zeros. */ }
+    const record = makeStartupFailureRecord({ phase, checkpoint, errorClass, resetReason, heap })
+    if (!usb.writeDebugUSB(JSON.stringify(record))) {
+      trace('[startup-diag] usb=unavailable\n')
+    }
+  } catch {
+    // The observer must never replace the original startup error or modify settings.
+    trace('[startup-diag] usb=unavailable\n')
+  }
+}
+
+// A small, fixed-schema status packet bypasses archive-debug's private trace
+// ring. That ring is not drained until an authenticated Archive USB request;
+// an early crash would otherwise appear to stop at main-entry.
+function emitStartupProgress(phase: StartupPhase, checkpoint: string, state: 'begin' | 'done'): void {
+  try {
+    const record = makeStartupProgressRecord({ phase, checkpoint, state })
+    if (!record || !Modules.has('archive-usb')) return
+    const usb = Modules.importNow('archive-usb') as { writeDebugUSB(packet: string): boolean }
+    usb.writeDebugUSB(JSON.stringify(record))
+  } catch {
+    // Best effort only: never prevent the official face or offline boot.
+  }
+}
+
 async function main() {
+  emitStartupProgress('initialization', 'debug-init', 'begin')
   try {
     if (Modules.has('archive-debug')) (Modules.importNow('archive-debug') as { installDebugLog: () => void }).installDebugLog()
   } catch { trace('[debug] log initialization unavailable\n') }
+  emitStartupProgress('initialization', 'debug-init', 'done')
+  emitStartupProgress('initialization', 'screen-init', 'begin')
   try {
     if (Modules.has('archive-screen')) (Modules.importNow('archive-screen') as { installScreenCapture: () => void }).installScreenCapture()
   } catch { trace('[screen] capture initialization unavailable\n') }
+  emitStartupProgress('initialization', 'screen-init', 'done')
   trace('[main] start\n')
   let dockRuntime: StackchanDockRuntime | undefined
   let context: StackchanContext | undefined
   let phase: StartupPhase = 'initialization'
+  let checkpoint = 'dock-start'
   try {
     dockRuntime = startStackchanDock(Modules, loadModConfig())
     if (dockRuntime) trace('[main] Stackchan Dock started\n')
+    checkpoint = 'platform-input'
     installPlatformInputBridge()
+    checkpoint = 'localization'
     initializeLocalization(loadPreferences(DOMAIN.ui).language)
+    checkpoint = 'timezone'
     applyTimezone(loadPreferences(DOMAIN.time).timezone)
 
+    checkpoint = 'behavior-resolve'
     trace('[main] loading app behaviors\n')
     const appBehaviors = loadAppBehaviors()
     // Launch behaviors run before startHostBootServices so the splash screen is
     // visible while network setup blocks.
     phase = 'launch'
-    const launch = await prepareAppLaunch(appBehaviors, prepareExperimentalMiniApps)
+    checkpoint = 'on-launch'
+    const launch = await prepareAppLaunch(appBehaviors, () => {
+      checkpoint = 'miniapp-prepare'
+      return prepareExperimentalMiniApps()
+    })
     trace(`[main] onLaunch shouldCreateContext=${launch.shouldCreateContext}\n`)
     if (!launch.shouldCreateContext) {
       installModManagerShortcut()
@@ -135,34 +191,74 @@ async function main() {
     const experimentalMiniApps = launch.prepared
 
     phase = 'network'
+    checkpoint = 'network-start'
     const bootServices = startHostBootServices({
       wifi: {
         onStatusChanged: showWiFiConnectionStatus,
         promptRecoveryChoice: waitForBootWiFiRecoveryChoice,
       },
     })
+    checkpoint = 'network-ready'
     const networkReady = await bootServices.connectivity.network.ready
     trace(`[main] network ready: ${networkReady.status}\n`)
     phase = 'context'
+    checkpoint = 'preferences'
     const preferences = loadPreferenceConfig()
     const ownedDock = dockRuntime
+    checkpoint = 'context-create'
     context = createStackchanContext(preferences, {
       connectivity: bootServices.connectivity,
       remoteConversationSession: ownedDock?.remoteConversationSession,
       closeHandlers: ownedDock ? [() => ownedDock.close()] : undefined,
     })
     phase = 'behavior'
+    checkpoint = 'dock-context'
     ownedDock?.onContextCreated(context)
+    checkpoint = 'miniapp-register'
     registerExperimentalMiniApps(experimentalMiniApps, context.ui.miniApps)
     trace('[main] app context created\n')
+    checkpoint = 'context-behaviors'
     await runContextCreatedBehaviors(appBehaviors, context, {
       device: getHostDeviceEnvironment(),
       config: preferences,
     })
-    if (Modules.has('lan-archive')) (Modules.importNow('lan-archive') as { startArchive: (context: StackchanContext) => void }).startArchive(context)
-    trace('[main] app behaviors ready\n')
+    checkpoint = 'archive-import'
+    // A completed core boot is not proof that Archive features were loaded.
+    // Record import and start separately so settings/mini-app regressions
+    // remain visible on the safe, fixed-schema USB channel.
+    emitStartupProgress(phase, checkpoint, 'begin')
+    // Archive is optional: a broken module import must not replace the official
+    // face with a fatal startup screen. Keep its error in fixed-schema USB logs.
+    let archive: { startArchive: (context: StackchanContext) => void } | undefined
+    try {
+      archive = importOptionalArchive(Modules, (error: unknown) => {
+        emitStartupDiagnostic(phase, 'archive-import', error)
+        trace('[main] archive import failed; continuing core startup\n')
+      }) as { startArchive: (context: StackchanContext) => void } | undefined
+    } catch (error) {
+      // The optional loader itself can fail before its internal import guard.
+      // Never let an Archive dependency prevent the official face from booting.
+      emitStartupDiagnostic(phase, 'archive-import', error)
+      trace('[main] archive loader failed; continuing core startup\n')
+    }
+    if (archive) {
+      emitStartupProgress(phase, 'archive-import', 'done')
+      checkpoint = 'archive-start'
+      emitStartupProgress(phase, checkpoint, 'begin')
+      // Errors after import may leave partially initialized resources behind,
+      // so they are deliberately handled by the existing fatal startup path.
+      archive.startArchive(context)
+      emitStartupProgress(phase, checkpoint, 'done')
+    }
+    checkpoint = 'finalize'
+    emitStartupProgress(phase, 'finalize', 'begin')
     installModManagerShortcut()
+    trace('[main] app behaviors ready\n')
+    // A fixed-schema USB completion survives Archive's private trace ring.
+    // boot-check may use it even when optional Archive was skipped.
+    emitStartupProgress(phase, 'finalize', 'done')
   } catch (error) {
+    emitStartupDiagnostic(phase, checkpoint, error)
     // A newer/disposed view during async cleanup owns its screen. Do not
     // replace it with an older startup attempt's failure.
     const failedApplication = globalEnv.application

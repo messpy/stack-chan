@@ -1,0 +1,80 @@
+name: Archive Read-only Diagnostics
+
+on:
+  pull_request:
+    branches:
+      - stackchan-super
+      - fix/archive-issues-33-38-20261104
+      - fix/archive-diagnostics-20261105
+    paths:
+      - 'firmware/host/app/archive-debug.js'
+      - 'firmware/host/app/archive-memory-policy.js'
+      - 'firmware/host/app/archive-usb.c'
+      - 'firmware/host/app/archive-usb.js'
+      - 'firmware/host/app/archive-direct-chat.js'
+      - 'firmware/host/app/lan-archive.js'
+      - 'firmware/host/app/archive-web.js'
+      - 'firmware/scripts/archive-lan-diagnostics.py'
+      - 'firmware/scripts/test_archive_lan_diagnostics.py'
+      - 'firmware/scripts/lib/archive-diagnostics.test.mjs'
+      - 'firmware/scripts/lib/archive-memory-policy.test.mjs'
+      - '.github/workflows/archive-diagnostics.yml'
+  workflow_dispatch:
+
+jobs:
+  diagnostics-regression:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test bounded JS diagnostics and memory admission policy
+        run: node --experimental-vm-modules --test firmware/scripts/lib/archive-diagnostics.test.mjs firmware/scripts/lib/archive-memory-policy.test.mjs
+      - name: Test private LAN sampler and syntax
+        run: |
+          python3 -m py_compile firmware/scripts/archive-lan-diagnostics.py
+          python3 -m unittest discover -s firmware/scripts -p 'test_archive_lan_diagnostics.py' -v
+      - name: Run original camera and voice guard regressions
+        run: node --experimental-vm-modules --test firmware/scripts/lib/archive-issues-33-36.test.mjs
+
+  cores3-clean-archive-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Create throwaway private manifest (never commit secrets)
+        working-directory: ./firmware
+        run: npm run init:archive
+      - name: Full clean CoreS3 firmware build, without flashing
+        working-directory: ./firmware
+        shell: bash
+        run: |
+          source "$HOME/.local/share/xs-dev-export.sh"
+          node scripts/clean.mjs
+          npm run build:archive
+      - name: Confirm the built firmware and source manifest
+        working-directory: ./firmware
+        run: |
+          test -s dist/bin/esp32/m5stack_cores3/release/stack-chan-host/xs_esp32.bin
+          grep -q '"archive-debug"' host/app/manifest_archive_private.json
+          echo '[CHECK] CoreS3 Archive clean build with existing manifest succeeded'
+      - name: Build actual StackChan CoreS3 target (m5stackchan_cores3; no flash)
+        working-directory: ./firmware
+        shell: bash
+        run: |
+          source "$HOME/.local/share/xs-dev-export.sh"
+          npm run prebuild:archive:m5stackchan_cores3
+          npm run build:archive:m5stackchan_cores3
+      - name: Validate StackChan CoreS3 target binary
+        working-directory: ./firmware
+        shell: bash
+        run: |
+          test -s dist/bin/esp32/m5stackchan_cores3/release/stack-chan-host/xs_esp32.bin
+          grep -q '"archive-debug"' host/app/manifest_archive_private.json
+          echo '[CHECK] StackChan CoreS3-specific target built successfully; not flashed'

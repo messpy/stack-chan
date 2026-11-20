@@ -1,3 +1,4 @@
+import {readStoredWiFiPreference} from 'stored-wifi';
 import {setLocalTime} from 'archive-local-clock';
 // AP provisioning follows Moddable's webConfigWifi and 78/esp-wifi-connect.
 import WiFi from 'wifi';
@@ -15,8 +16,13 @@ import {HttpServerService,Response} from 'http-server-service';
 import {getSettings,changeSettings,vaultStatus,vaultSelfTest,randomHex} from 'archive-vault';
 
 let robot,monitor,server,expiry,connectionTimeout,ntp,reconnectTimer;
+function configuredWiFi(){
+ const saved=getSettings().wifi;if(saved?.ssid)return saved;
+ const ssid=readStoredWiFiPreference('ssid');
+ return ssid?{ssid,password:readStoredWiFiPreference('password')}:undefined;
+}
 let reconnectDelay=3000;
-function scheduleReconnect(){if(reconnectTimer||!getSettings().wifi?.ssid)return;const delay=reconnectDelay;reconnectDelay=Math.min(60000,reconnectDelay*2);reconnectTimer=Timer.set(()=>{reconnectTimer=undefined;if(!connected&&connection!=='connecting')connectSaved();},delay);}
+function scheduleReconnect(){if(reconnectTimer||!configuredWiFi()?.ssid)return;const delay=reconnectDelay;reconnectDelay=Math.min(60000,reconnectDelay*2);reconnectTimer=Timer.set(()=>{reconnectTimer=undefined;if(!connected&&connection!=='connecting')connectSaved();},delay);}
 export function reconnectSavedWiFi(){connectSaved();return getSettingsStatus();}
 let active=false,ssid='',password='',key='',connected=false,connection='offline',error='';
 let httpRequests=0,lastHttpStatus=0,lastDisconnectReason;
@@ -50,19 +56,19 @@ function ensureMonitor(){
   });
 }
 function connectSaved(){
-  const wifi=getSettings().wifi;if(!wifi?.ssid)return;
+  const wifi=configuredWiFi();if(!wifi?.ssid)return;
   if(reconnectTimer){Timer.clear(reconnectTimer);reconnectTimer=undefined;}
   ensureMonitor();connected=false;connection='connecting';error='';
   if(connectionTimeout)Timer.clear(connectionTimeout);
   connectionTimeout=Timer.set(()=>{connectionTimeout=undefined;if(!connected){connection='failed';error='Wi-Fiに接続できません。SSID・パスワード・2.4 GHzを確認してください。';trace('[settings] Wi-Fi connection failed\n');scheduleReconnect();}},25000);
   try{if(active)WiFi.mode=WiFi.Mode.station|WiFi.Mode.accessPoint;WiFi.connect({ssid:wifi.ssid,password:wifi.password});}catch(_){connection='failed';error='Wi-Fiに接続できません。設定を確認してください。';scheduleReconnect();}
 }
-export function getSettingsStatus(){return {...vaultStatus(),setupActive:active,setupIP:active?(Net.get('IP','ap')??''):'',setupMode:active?WiFi.mode:0,connected,connection,error,provider:getSettings().conversationProvider||'xiaozhi',geminiConfigured:!!getSettings().api?.gemini,ip:connected?(Net.get('IP')??''):'',clockReady:Date.now()>1700000000000,httpRequests,lastHttpStatus,lastDisconnectReason,httpConnections,httpHeaders,httpErrors,apClients,apJoinCount,apLastJoined,setupSecondsRemaining:active?Math.max(0,Math.ceil((setupDeadline-Date.now())/1000)):0};}
+export function getSettingsStatus(){return {...vaultStatus(),setupActive:active,setupIP:active?(Net.get('IP','ap')??''):'',setupMode:active?WiFi.mode:0,connected,connection,error,provider:getSettings().conversationProvider||'xiaozhi',geminiConfigured:!!getSettings().api?.gemini,ip:connected?(Net.get('IP','station')??''):'',clockReady:Date.now()>1700000000000,httpRequests,lastHttpStatus,lastDisconnectReason,httpConnections,httpHeaders,httpErrors,apClients,apJoinCount,apLastJoined,setupSecondsRemaining:active?Math.max(0,Math.ceil((setupDeadline-Date.now())/1000)):0};}
 export function closeSettings(){
   if(!active)return;
   active=false;apClients=0;setupDeadline=0;server?.close();server=undefined;
   if(expiry)Timer.clear(expiry);expiry=undefined;key='';password='';
-  try{if(getSettings().wifi?.ssid){WiFi.mode=WiFi.Mode.station;connectSaved();}else{monitor?.close();monitor=undefined;WiFi.mode=WiFi.Mode.none;}}catch(_){trace('[settings] AP cleanup failed\n');}
+  try{const stationIP=Net.get('IP','station');if(configuredWiFi()?.ssid||stationIP){WiFi.mode=WiFi.Mode.station;if(stationIP){connected=true;connection='connected';}else connectSaved();}else{monitor?.close();monitor=undefined;WiFi.mode=WiFi.Mode.none;}}catch(_){trace('[settings] AP cleanup failed\n');}
   trace('[settings] setup access point closed\n');
 }
 let scanning=false;
@@ -89,12 +95,13 @@ function protect(handler){return async c=>{
   try{const result=await handler(c);lastHttpStatus=result.status??200;return result;}catch(_){lastHttpStatus=400;error='保存できませんでした。Wi-Fi名・パスワードの文字数とSDカードを確認してください。';trace('[settings] settings request failed\n');return c.json({error},400);}
 };}
 export function openSettings(keepStation=false){
-  if(active){if(keepStation&&!connected&&getSettings().wifi?.ssid)Timer.set(connectSaved,300);return {...getSettingsStatus(),wifiQR:`WIFI:T:WPA;S:${ssid};P:${password};;`,pageQR:address+'?k='+key};}
+  if(active){if(keepStation&&!connected&&configuredWiFi()?.ssid)Timer.set(connectSaved,300);return {...getSettingsStatus(),wifiQR:`WIFI:T:WPA;S:${ssid};P:${password};;`,pageQR:address+'?k='+key};}
   ensureMonitor();ssid='StackChan-'+String(Net.get('MAC')??'5AD0').replace(/:/g,'').slice(-4).toUpperCase();
   password=randomHex().slice(0,12);key=randomHex();ssid+='-'+key.slice(0,4).toUpperCase();
   apClients=0;setupDeadline=Date.now()+1800000;
-  WiFi.mode=WiFi.Mode.accessPoint;
-  WiFi.accessPoint({ssid,password,station:false});active=true;
+  const stationIP=Net.get('IP','station');
+  WiFi.mode=keepStation?(WiFi.Mode.station|WiFi.Mode.accessPoint):WiFi.Mode.accessPoint;
+  WiFi.accessPoint({ssid,password,station:keepStation});active=true;
   server=new HttpServerService({server:ArchiveHTTPServer,port:80,maxRequestBodyBytes:8192,onDiagnostic:event=>{
     if(event==='tcp-open')httpConnections++;
     if(event==='http-headers')httpHeaders++;
@@ -123,18 +130,18 @@ export function openSettings(keepStation=false){
   }));
   server.post('/finish',protect(c=>{Timer.set(()=>{closeSettings();robot.ui.showFace();},500);return c.json({ok:true});}));
   expiry=Timer.set(()=>{closeSettings();robot.ui.showFace();},1800000);
-  if(keepStation&&getSettings().wifi?.ssid)Timer.set(connectSaved,300);
+  if(keepStation&&!stationIP&&configuredWiFi()?.ssid)Timer.set(connectSaved,300);
   trace('[settings] setup AP and local settings server started\n');
   return {...getSettingsStatus(),wifiQR:`WIFI:T:WPA;S:${ssid};P:${password};;`,pageQR:address+'?k='+key};
 }
-export function settingsHttpSelfTest(){
+export function settingsHttpSelfTest(options={}){
   if(!active)return Promise.resolve({error:'Setup AP is closed'});
   return new Promise(resolve=>{
     let request,status=0,finished=false;
     const finish=result=>{if(finished)return;finished=true;Timer.clear(timeout);try{request?.close();}catch(_){}resolve(result);};
     const timeout=Timer.set(()=>finish({status,error:'Local settings HTTP timed out',httpRequests}),12000);
     try{
-      request=new HttpRequest({host:'192.168.4.1',port:80,path:'/?k='+key,response:String});
+      request=new HttpRequest({host:'192.168.4.1',port:options.control?8082:80,path:'/?k='+(options.control?options.token:key),response:String});
       request.callback=(message,value)=>{
         if(message===HttpRequest.status)status=value;
         else if(message===HttpRequest.responseComplete)finish({status,html:typeof value==='string'&&value.includes('StackChan'),bytes:typeof value==='string'?value.length:0,httpRequests});
@@ -155,7 +162,7 @@ function createScreen(context){
 }
 export function startSettings(context){
   robot=context;
-  try{getSettings();if(getSettings().wifi?.ssid)connectSaved();}catch(_){trace('[settings] SD configuration unavailable\n');}
+  try{getSettings();ensureMonitor();if(Net.get('IP','station')){connected=true;connection='connected';}else if(configuredWiFi()?.ssid)connectSaved();}catch(_){trace('[settings] SD configuration unavailable\n');}
   robot.ui.miniApps.register({id:'wifi-settings',hidden:true,title:'Wi-Fiを設定',create:createScreen});
 }
 export {vaultSelfTest};

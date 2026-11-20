@@ -1,6 +1,9 @@
+import {workerPostVision,workerXiaoZhiText} from 'archive-text-transport'
+import {xiaozhiTextChat} from 'archive-xiaozhi-vision'
 import {headDirectionFromText} from 'archive-head-motion'
 import {heapStatus,collectMemory} from 'archive-usb'
-import {checkVoiceMemory,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
+import {checkVoiceMemory,voiceMemoryAdmission,isMemoryPressure,shouldRenewCloudIdentity} from 'archive-memory-policy'
+import {markHeap} from 'archive-debug'
 import { ollamaChat, ollamaModel, validOllamaModel, geminiTextChat, DEFAULT_GEMINI_TEXT_MODEL, OLLAMA_SPEECH_INSTRUCTIONS, ollamaSpeechTool } from 'archive-ollama'
 import { VoiceRegistration, enrollmentInstructions, explicitSpeakerName, registrationName } from 'archive-speaker-registration'
 import { speakerButtons } from 'archive-button-schema'
@@ -11,7 +14,7 @@ import Timer from 'timer'
 import { URL } from 'url'
 import { ChatService, createXiaozhiV1Connection, ChatState } from 'chat'
 import { DEFAULT_GEMINI_MODEL } from 'archive-gemini-protocol'
-import ArchiveChatAudioIO, {XiaoZhiRecognitionIO} from 'archive-chat-audioio'
+import ArchiveChatAudioIO, {XiaoZhiRecognitionIO,audioStallReason} from 'archive-chat-audioio'
 import {TTS as RecognitionTTS} from 'archive-offline-tts'
 import { Container, Label, Text, Skin, Style } from 'piu/MC'
 import { ActionButton } from 'ui-controls'
@@ -19,6 +22,7 @@ import { uiFont } from 'ui-theme'
 import { getSettings, changeSettings } from 'archive-vault'
 import { getSettingsStatus } from 'archive-settings'
 import { listDeviceTools, callDeviceTool } from 'archive-tools'
+import { getVolume, setVolume } from 'archive-volume'
 import {
   memoryTools,
   callMemory,
@@ -29,6 +33,8 @@ import {
   saveUser,
   history,
 } from 'archive-memory'
+const MEMORY_FAILURE_LIMIT=3
+
 let robot,
   archive,
   claim,
@@ -41,7 +47,10 @@ let robot,
   connectDeadline = 0,
   forceProvision = false,
   failures = 0,
+  memoryFailures = 0,
+  memoryRetryStopped = false,
   lastProvisionAttempt = 0,
+  lastMemoryAdmission = null,
   state = 'off',
   error = '',
   detail = '',
@@ -55,8 +64,54 @@ let robot,
   connectionSignature = '',
   generation = 0,
   owned = false
+// Explicit consent is turn-scoped. Mere mentions and negated camera requests are never consent.
+function explicitVisualRequest(text) {
+  const normalized=String(text||'').replace(/[\s、。！？!?]/g,'');
+  if(/(?:撮らない|撮るな|撮影しない|撮影するな|見ないで|写さない|映さない|やめて|禁止)/.test(normalized))return false;
+  return /(?:写真|撮影|カメラ|画像|映像|目の前|これ|ここ)/.test(normalized)
+    && /(?:撮って|とって|撮影して|見て|確認して|映して|写して|見せて)/.test(normalized);
+}
+function directPhotoRequest(text) {
+  const normalized=String(text||'').replace(/[\s、。！？!?]/g,'');
+  return /^(?:(?:写真|カメラ)(?:を|で)?(?:撮って|とって|撮影して)|撮影して)(?:ください|お願い|ね|よ)?$/.test(normalized);
+}
+// Only imperative user requests can authorize a cloud-driven volume change.
+function volumeRequest(text) {
+  const value=String(text||'').replace(/[\s、。！？!?]/g,'');
+  if(/(?:上げない|下げない|変えない|設定しない|しないで|やめて)/.test(value))return false;
+  return /音量/.test(value)&&/(?:上げ|下げ|大きく|小さく|設定|変えて|にして|\d+(?:%|％|パーセント)?)/.test(value);
+}
+function volumeCommandFromText(text) {
+  const value=String(text||'').replace(/[\s、。！？!?]/g,'');
+  if(!volumeRequest(value))return null;
+  const amount=/^音量を?([0-9]{1,3})(?:%|％|パーセント)?(?:に)?(?:して|設定して|変えて)?(?:ください|お願い)?$/.exec(value);
+  if(amount){
+    const percent=Number(amount[1]);
+    return percent<=100?{kind:'set',percent}:null;
+  }
+  if(/^音量を?(?:上げて|上げてください|大きくして|大きくしてね)$/.test(value))return {kind:'delta',delta:10};
+  if(/^音量を?(?:下げて|下げてください|小さくして|小さくしてね)$/.test(value))return {kind:'delta',delta:-10};
+  return null;
+}
+// Mode commands are exact, device-local requests; OFF cannot listen to a new voice command.
+function modeCommandFromText(text) {
+  const normalized=String(text||'').replace(/[\s、。！？!?]/g,'');
+  if(/^(?:AI|会話)(?:モード)?を?(?:オフ|OFF|停止)(?:にして|して|ください)?$/i.test(normalized))
+    return {kind:'chat',on:false};
+  if(/^(?:AI|会話)(?:モード)?を?(?:オン|ON)(?:にして|して|ください)?$/i.test(normalized))
+    return {kind:'chat',on:true};
+  if(/^文字起こし(?:モード)?を?(?:オン|ON|開始)(?:にして|して|ください)?$/i.test(normalized))
+    return {kind:'recognition',on:true};
+  if(/^文字起こし(?:モード)?を?(?:オフ|OFF|停止)(?:にして|して|ください)?$/i.test(normalized))
+    return {kind:'recognition',on:false};
+  return null;
+}
 let refreshAITalk
 let photoHandler, modeChanged
+// Conversation captions belong below the status bar, including errors and setup prompts.
+function showConversationBalloon(message, options={}, target=robot) {
+  return target.showBalloon(message, {bottom:40,height:24,paddingY:4,...options});
+}
 let greetingPending = true,
   conversationProviderSeen,
   introText = ''
@@ -194,6 +249,7 @@ function conversationInstructions() {
   )
 }
 
+let reconnectCount=0,connectionAttempts=0
 let micLit=false,microphoneAt=0,conversationLight='off'
 export function conversationIndicator(stage){
   if(conversationLight===stage)return
@@ -218,9 +274,17 @@ const labels = {
   listening: '会話中・マイク音声を送信しています',
   speaking: 'StackChanが話しています',
   retrying: '再接続を待っています',
+  failed: '音声処理を停止しています',
   unconfigured: '会話の初期登録が必要です',
 }
 let chatSaveFailedOff=false,recognitionSaveFailedOff=false
+// Automatic offline fallback must suspend the native session, never change the
+// user-selected chat/transcription preferences saved on SD.
+let automaticOfflineSuspended=false
+// Camera capture and image analysis must outlive the old voice retry deadline.
+let cameraSuspensions=0
+// A native close failure must not be followed by another automatic connection.
+let nativeReleaseBlocked=false
 function enabled() {
   try {
     return !chatSaveFailedOff && getSettings().chatMode === true
@@ -300,6 +364,8 @@ function providerNotice() {
   if (chatProvider() === 'ollama') return 'Ollama Cloudで返答生成。音声はGemini / Googleへ送信します。'
   return (chatProvider() === 'gemini' ? 'Gemini / Google' : 'XiaoZhi') + 'へON中はマイク音声を送信します。OFFで停止。'
 }
+// Lightweight idle-face gate: no settings/profile/heap reads on the 1Hz UI timer.
+export function chatIdleStatus(){return {state,audioPhase:conversationLight,busy:!!chat||connecting}}
 export function directChatStatus() {
   const provider = chatProvider()
   return {
@@ -335,7 +401,13 @@ export function directChatStatus() {
     conversationStage,
     audio: { ...audioStats },
     memory: typeof heapStatus==='function'?heapStatus():null,
+    // Last admission attempt, not live free RAM; survives a retry for diagnostics.
+    memoryAdmission:lastMemoryAdmission,
+    memoryRecovery:{failures:memoryFailures,stopped:memoryRetryStopped,limit:MEMORY_FAILURE_LIMIT},
     playback:globalThis.stackchanPlaybackHealth||null,
+    pipeline:globalThis.stackchanAudioHealth||null,
+    reconnectCount,
+    audioPhase:conversationLight,
     busy: !!chat || connecting,
     phase: state,
   }
@@ -381,6 +453,7 @@ export function configureDirectChat(value) {
   return { configured: true }
 }
 export function setChatMode(on) {
+  globalThis.stackchanIdleActivity?.('mode-change')
   trace('[action] chat_mode requested='+(on?'on':'off')+'\n')
   if(on&&chatProvider()==='gemini'&&!getSettings().api?.gemini)throw new Error('Gemini APIキーを保存してください')
   if (on && chatProvider() === 'ollama' && (!getSettings().api?.ollama || (!usesXiaoZhiRecognition()&&!getSettings().api?.gemini)))
@@ -390,6 +463,8 @@ export function setChatMode(on) {
     throw new Error(
       chatProvider() === 'gemini' ? '設定ページでGemini APIキーを保存してください' : '会話の初期登録が必要です',
     )
+  const previousMode={chatMode:getSettings().chatMode,transcriptionMode:getSettings().transcriptionMode}
+  const wasRecognitionMode=recognitionMode()
   const starting = on && !enabled()
   if(!on){chatSaveFailedOff=true;closeChat();collectMemory()}
   let saveError
@@ -405,22 +480,24 @@ export function setChatMode(on) {
     saveError='会話は停止しましたが、OFF設定を保存できませんでした。再起動後の設定を確認してください'
   }
   // Do not change audio ownership until the ON preference is safely persisted.
-  // If the audio owner rejects ON, restore the persisted OFF preference.
   try {
     if(on||!saveError)modeChanged?.(on)
-  } catch (error) {
-    if(on){
-      try { changeSettings(data=>{data.chatMode=false}) }
-      catch (rollbackError) { trace('[chat] failed to roll back rejected ON mode: '+String(rollbackError)+'\n') }
+  } catch(e) {
+    if(on && starting) try {
+      changeSettings(data=>{data.chatMode=previousMode.chatMode;data.transcriptionMode=previousMode.transcriptionMode})
+    } catch(rollbackError) {
+      trace('[direct-chat] mode rollback failed\n')
     }
-    throw error
+    throw e
   }
   if(starting){
-    if(recognitionMode())closeChat()
+    if(wasRecognitionMode)closeChat()
     beginConversation()
     greetingPending=true
     resetTranscripts()
   }
+  memoryFailures=0;memoryRetryStopped=false
+  if(starting)nativeReleaseBlocked=false
   retryAt = 0
   retryDelay = 3000
   error = ''
@@ -441,8 +518,10 @@ export function setChatMode(on) {
   return directChatStatus()
 }
 export function setRecognitionMode(on){
+  globalThis.stackchanIdleActivity?.('mode-change')
   trace('[action] recognition_mode requested='+(on?'on':'off')+'\n')
   if(typeof on!=='boolean')throw new Error('文字起こしのON/OFFを指定してください')
+  const previousMode={chatMode:getSettings().chatMode,transcriptionMode:getSettings().transcriptionMode}
   if(on&&!cloudConfig()?.cloudConsent)throw new Error('XiaoZhiの初期登録が必要です')
   if(!on){recognitionSaveFailedOff=true;closeChat();collectMemory()}
   let saveError
@@ -455,8 +534,17 @@ export function setRecognitionMode(on){
   }
   catch(e){if(on)throw e;saveError='文字起こしは停止しましたが、OFF設定を保存できませんでした'}
   // A failed ON save must not interrupt audio or the current chat session.
-  if(on)modeChanged?.(true)
+  if(on)try{modeChanged?.(true)}catch(e){
+    try {
+      changeSettings(data=>{data.chatMode=previousMode.chatMode;data.transcriptionMode=previousMode.transcriptionMode})
+    } catch(rollbackError) {
+      trace('[recognition] mode rollback failed\n')
+    }
+    throw e
+  }
   enrollment.reset();closeChat();resetTranscripts();greetingPending=false;
+  memoryFailures=0;memoryRetryStopped=false
+  if(on)nativeReleaseBlocked=false
   retryAt=0;retryDelay=3000;error='';detail='';state=running()?'waiting':'off';
   refreshRecognition?.();refreshAITalk?.();
   if(saveError){error=saveError;detail='Settings save failed'}
@@ -464,8 +552,13 @@ export function setRecognitionMode(on){
   return directChatStatus();
 }
 let memoryCleanupTimer
-function scheduleMemoryCleanup(){if(memoryCleanupTimer!==undefined)return;memoryCleanupTimer=Timer.set(()=>{memoryCleanupTimer=undefined;collectMemory()},0)}
+function scheduleMemoryCleanup(){if(memoryCleanupTimer!==undefined)return;memoryCleanupTimer=Timer.set(()=>{
+  memoryCleanupTimer=undefined;
+  collectMemory();
+  try{markHeap('chat-cleanup',heapStatus(),trace)}catch(_){}
+},0)}
 function closeChat() {
+  if(chat || connecting)trace('[mode-session] closing native session\n')
   const speech=recognitionSpeech;recognitionSpeech=undefined;try{speech?.cancel()}catch(_){}
   identityNotice=''
   microphoneIndicator(false)
@@ -476,9 +569,13 @@ function closeChat() {
   connecting = false
   const old = chat
   chat = undefined
+  let nativeClosed=true
   try {
     old?.close()
-  } catch (_) {}
+  } catch (e) {
+    nativeClosed=false
+    trace('[mode-session] native close failed type='+String(e?.name||'Error').replace(/[^A-Za-z0-9_]/g,'').slice(0,32)+'\n')
+  }
   try {
     unlock?.()
   } catch (_) {}
@@ -488,25 +585,36 @@ function closeChat() {
     release()
   }
   scheduleMemoryCleanup()
+  return nativeClosed
 }
 function failed(reason) {
-  if (state === 'retrying') return
+  if (state === 'retrying' || memoryRetryStopped) return
+  if(globalThis.stackchanAudioHealth&&/^Microphone (upload|PCM) stalled$/.test(String(reason)))
+    globalThis.stackchanAudioHealth.lastError=String(reason).includes('upload')?'upload-stalled':'input-stalled'
   failures++
   if (failures >= 2 && shouldRenewCloudIdentity(reason)) forceProvision = true
   const failedChat = chat,
     failedGeneration = generation
-  error =
-    chatProvider() === 'gemini' && String(reason).startsWith('Gemini')
+  const memoryBlocked = isMemoryPressure(reason)
+  // Two deferred retries allow native task teardown/GC; persistent pressure must stop.
+  // Count consecutive memory failures; connection success or manual mode operations reset it.
+  memoryFailures=memoryBlocked?memoryFailures+1:0
+  memoryRetryStopped=memoryBlocked&&memoryFailures>=MEMORY_FAILURE_LIMIT
+  error = memoryBlocked
+    ? '内蔵RAMが不足しているため、音声会話を一時停止しています。'
+    : chatProvider() === 'gemini' && String(reason).startsWith('Gemini')
       ? String(reason).slice(0, 180)
       : '会話の接続が切れました。自動で再接続します。'
+  if(memoryRetryStopped)error='内蔵RAM不足が続くため、音声処理を停止しました。他の処理を終了し、会話または文字起こしをOFF→ONにしてください。'
   detail = String(reason || 'connection closed')
   for (const secret of [getSettings().api?.gemini, getSettings().api?.ollama, cloudConfig()?.accessToken])
     if (secret) detail = detail.split(secret).join('[redacted]')
   detail = detail.slice(0, 160)
+  try{markHeap('chat-failure',heapStatus(),trace)}catch(_){}
   microphoneIndicator(false)
   conversationIndicator('off')
-  state = 'retrying'
-  retryAt = Date.now() + Math.max(retryDelay,isMemoryPressure(reason)?10000:0)
+  state = memoryRetryStopped?'failed':'retrying'
+  retryAt = memoryRetryStopped?Infinity:Date.now() + Math.max(retryDelay,memoryBlocked?10000:0)
   retryDelay = Math.min(60000, retryDelay * 2)
   Timer.set(() => {
     if (generation === failedGeneration && chat === failedChat) {
@@ -514,7 +622,7 @@ function failed(reason) {
       if (enrollment.phase === 'listening') openSpeakerChooser()
     }
   }, 0)
-  trace('[direct-chat] reconnect scheduled\n')
+  trace(memoryRetryStopped?'[voice-memory] retries stopped failures='+memoryFailures+'\n':'[direct-chat] reconnect scheduled\n')
 }
 async function provision() {
   const cfg = cloudConfig()
@@ -622,7 +730,7 @@ async function provision() {
   trace('[direct-chat] cloud configuration renewed\n')
 }
 async function connect() {
-  if (connecting || chat || !running()) return
+  if (memoryRetryStopped || nativeReleaseBlocked || automaticOfflineSuspended || cameraSuspensions>0 || connecting || chat || !running()) return
   if (enrollment.phase === 'confirming') return
   if (!getSettingsStatus().connected) {
     state = 'waiting'
@@ -630,6 +738,7 @@ async function connect() {
     return
   }
   if (!claim()) return
+  if(connectionAttempts++>0)reconnectCount++
   owned = true
   const ticket = ++generation
   connecting = true
@@ -638,7 +747,18 @@ async function connect() {
   try {
     const provider = chatProvider(),standalone=recognitionMode(),recognitionOnly=standalone||usesXiaoZhiRecognition(provider),xiaozhiTransport=provider==='xiaozhi'||recognitionOnly
     collectMemory()
-    checkVoiceMemory(heapStatus(),xiaozhiTransport)
+    const preflightHeap=heapStatus()
+    markHeap('chat-preflight',preflightHeap,trace)
+    const admission=voiceMemoryAdmission(preflightHeap,xiaozhiTransport)
+    lastMemoryAdmission={
+      ...admission,at:Date.now(),
+      mode:standalone?'transcription':recognitionOnly?'recognition-transport':'conversation',
+    }
+    trace('[voice-memory] admission='+admission.status+
+      ' mode='+lastMemoryAdmission.mode+
+      ' shortfallFree='+admission.shortfallFree+
+      ' shortfallLargest='+admission.shortfallLargest+'\n')
+    checkVoiceMemory(preflightHeap,xiaozhiTransport)
     if (conversationProviderSeen !== provider) {
       greetingPending = true
       conversationProviderSeen = provider
@@ -705,14 +825,51 @@ async function connect() {
             }),
           }
     let ollamaBusy = false,recognitionTurnCurrent=()=>false
+    let visualAllowedUntil=0,photoTurn,volumeAllowedUntil=0,volumeTurn,headHandled
     async function executeTool(name, args) {
       if (chat !== instance&&!recognitionTurnCurrent()) throw new Error('会話が切り替わりました')
       if (name === 'camera_describe') {
-        if (!photoHandler) throw new Error('Camera unavailable')
-        const result = await photoHandler(args)
+        if (!photoHandler) {
+          trace('[vision] camera tool rejected reason=unavailable\n')
+          throw new Error('Camera unavailable')
+        }
+        const now=Date.now();
+        if(now>visualAllowedUntil) {
+          trace('[vision] camera tool rejected reason=no-explicit-request\n')
+          throw new Error('ユーザーによる撮影依頼がありません')
+        }
+        const result=photoTurn && now<=photoTurn.expires
+          ? await photoTurn.promise
+          : await photoHandler(args);
+        visualAllowedUntil=0;
+        trace('[vision] camera result='+String(result.analysis?.status||'unknown')+'\n');
         return result.analysis?.status === 'complete'
           ? { photo: result.image, description: result.analysis.text }
-          : { photo: result.image, error: result.analysis?.error || '画像認識できませんでした' }
+          : { photo: result.image, saved: !!result.image, analysisStatus: result.analysis?.status || 'skipped',
+              error: result.analysis?.error || ((!result.analysis || result.analysis.status === 'skipped')
+                ? '写真は保存しましたが、画像解析は実行していません。' : '画像認識できませんでした') }
+      }
+      if (name === 'volume_get') return getVolume();
+      if (name === 'volume_set') {
+        if(Date.now()>volumeAllowedUntil)throw new Error('音量変更の依頼がありません');
+        if(volumeTurn && Date.now()-volumeTurn.at<12000) {
+          if(args?.percent!==volumeTurn.result.percent)throw new Error('同じ発話で音量変更は一度だけです');
+          return {...volumeTurn.result,duplicate:true};
+        }
+        volumeAllowedUntil=0;
+        return setVolume(args?.percent);
+      }
+      if(name==='head_move'){
+        if(headHandled){
+          if(headHandled.direction!==args?.direction)throw new Error('同一発話中の異なる首振り指示は実行できません')
+          const result=await headHandled.promise
+          if(result?.commanded!==true)throw new Error('首振り動作が完了していません')
+          trace('[head-motion] duplicate reused result verified=false\n')
+          return {...result,duplicate:true}
+        }
+        const promise=Promise.resolve().then(()=>callDeviceTool(name,args))
+        headHandled={direction:args?.direction,promise}
+        return await promise
       }
       if (memoryTools.some((t) => t.name === name)) {
         if (name === 'conversation_identify') {
@@ -758,11 +915,11 @@ async function connect() {
           await (provider==='ollama'?ollamaChat:geminiTextChat)([{role:'system',content:conversationInstructions()},{role:'user',content:text}],Object.values(tools),executeTool,isCurrent);
         if(!isCurrent())return
         archive('output',answer);if(conversationStage==='greeting')advanceConversation('conversation');
-        lastSubtitle=answer;robot.showBalloon(answer,{bottom:40,height:24,paddingY:4,holdMs:60000});state='speaking';conversationIndicator('off');
+        lastSubtitle=answer;showConversationBalloon(answer,{bottom:40,height:24,paddingY:4,holdMs:60000});state='speaking';conversationIndicator('off');
         const speech=new RecognitionTTS({volume:robot.audio.volume});recognitionSpeech=speech;
         await new Promise((resolve,reject)=>speech.stream(answer,robot.audio.volume,e=>e?reject(e):resolve()));
         if(recognitionSpeech===speech)recognitionSpeech=undefined;
-      }catch(e){if(isCurrent()){error='返答処理に失敗しました';detail=String(e.message||e).slice(0,160);for(const key of [getSettings().api?.gemini,getSettings().api?.ollama])if(key)detail=detail.split(key).join('[redacted]');robot.showBalloon(error);trace('[recognition] response failed\n')}}
+      }catch(e){if(isCurrent()){error='返答処理に失敗しました';detail=String(e.message||e).slice(0,160);for(const key of [getSettings().api?.gemini,getSettings().api?.ollama])if(key)detail=detail.split(key).join('[redacted]');showConversationBalloon(error);trace('[recognition] response failed\n')}}
       finally{recognitionTurnCurrent=()=>false;if(generation===turn){closeChat();state=enabled()?'waiting':'off';retryAt=Date.now()+1000}}
     }
     const instance = new ChatService({
@@ -772,12 +929,14 @@ async function connect() {
       callbacks: {
         onStateChanged(value, reason) {
           if (chat !== instance) return
+          if(value===ChatState.CONNECTED)try{markHeap('chat-connected',heapStatus(),trace)}catch(_){}
           if (value === ChatState.FAILED || value === ChatState.DISCONNECTED) {
             failed(reason)
             return
           }
           if(recognitionOnly&&value===ChatState.CONNECTED){
-            state='listening';microphoneAt=Date.now();error='';retryDelay=3000;failures=0
+            state='listening';microphoneAt=Date.now();error='';detail='';retryDelay=3000;failures=0;memoryFailures=0
+            trace('[mode-session] connected mode='+(standalone?'transcription':'recognition-transport')+'\n')
             if(!standalone&&greetingPending&&!enrollment.active){greetingPending=false;Timer.set(()=>recognitionTurn(null),0)}
             return
           }
@@ -800,7 +959,8 @@ async function connect() {
             }, 0)
           }
           if (value === ChatState.CONNECTED || value === ChatState.SPEAKING) {
-            if(lastSubtitle){robot.showBalloon(lastSubtitle,{bottom:40,height:24,paddingY:4,holdMs:15000});lastSubtitle=''}
+            if(value===ChatState.CONNECTED)trace('[mode-session] connected mode=conversation\n')
+            if(lastSubtitle){showConversationBalloon(lastSubtitle,{bottom:40,height:24,paddingY:4,holdMs:15000});lastSubtitle=''}
             const becameReady = state !== 'listening'
             state = 'listening'
             microphoneAt=Date.now()
@@ -810,10 +970,12 @@ async function connect() {
               openSpeakerChooser()
             }
             error = ''
+            detail = ''
             retryDelay = 3000
             failures = 0
+            memoryFailures = 0
           }
-          if (value === ChatState.LISTENING || value === ChatState.WAITING) {state = 'speaking';microphoneIndicator(false)}
+          if (value === ChatState.LISTENING || value === ChatState.WAITING) {globalThis.stackchanIdleActivity?.('chat-output');state = 'speaking';microphoneIndicator(false)}
           trace('[direct-chat] state=' + value + '\n')
         },
         onMcpNotification(payload) {
@@ -836,6 +998,7 @@ async function connect() {
         },
         onInputTranscript(text, more) {
           if (chat !== instance) return
+          if (text) globalThis.stackchanIdleActivity?.('input-transcript')
           if (text) conversationIndicator(more ? 'transcribing' : 'thinking')
           else if (!more && input) conversationIndicator('thinking')
           input = (input + (text || '')).slice(-4096)
@@ -855,7 +1018,7 @@ async function connect() {
             const event = archive('input', input)
             lastInputId = event?.id || ''
             if(standalone){
-              robot.showBalloon(input,{bottom:40,height:24,paddingY:4,holdMs:15000});
+              showConversationBalloon(input,{bottom:40,height:24,paddingY:4,holdMs:15000});
             }else if(!currentSpeaker()){
               const candidate=explicitSpeakerName(input)
               if(candidate&&lastInputId)try{
@@ -868,13 +1031,107 @@ async function connect() {
               }catch(_){trace('[speaker] introduction needs clarification\n')}
             }
             const recognized=input;input = ''
+            headHandled=undefined
+            if(!standalone){try{if(globalThis.stackchanIRVoice?.(recognized)){showConversationBalloon('赤外線を送信しました。家電の動作を確認してください');return;}}catch(_){showConversationBalloon('赤外線を送信できませんでした');return;}}
+            const modeCommand=modeCommandFromText(recognized)
+            if(modeCommand) {
+              try {
+                const result=modeCommand.kind==='chat'?setChatMode(modeCommand.on):setRecognitionMode(modeCommand.on)
+                trace('[mode-voice] applied kind='+modeCommand.kind+' on='+modeCommand.on+
+                  ' conversation='+result.enabled+' transcription='+result.recognitionMode+'\n')
+                showConversationBalloon(modeCommand.kind==='chat'?'会話モードを'+(modeCommand.on?'ON':'OFF')+'にしました':'文字起こしを'+(modeCommand.on?'ON':'OFF')+'にしました')
+              } catch(_) {
+                trace('[mode-voice] rejected; persisted preference unchanged\n')
+                showConversationBalloon('モードの変更に失敗しました。設定を確認してください。')
+              }
+              return
+            }
+            // Recognition-only transport still allows explicitly authorized local actions.
+            // The transcription-only mode accepts ONLY an exact local photo command.
+            const visualRequested=explicitVisualRequest(recognized)
+            const directCapture=visualRequested&&directPhotoRequest(recognized)
+            visualAllowedUntil=(!standalone&&visualRequested)
+              ? Date.now()+12000 : 0;
+            photoTurn=undefined;
+            volumeTurn=undefined;
+            volumeAllowedUntil=(!standalone&&!recognitionOnly&&volumeRequest(recognized))
+              ? Date.now()+12000 : 0;
+            if(volumeAllowedUntil) {
+              const command=volumeCommandFromText(recognized);
+              if(command)try {
+                const previous=getVolume().percent;
+                const percent=command.kind==='set'?command.percent:Math.max(0,Math.min(100,previous+command.delta));
+                const result=setVolume(percent);
+                volumeTurn={at:Date.now(),result};
+                trace('[volume] direct requested='+percent+' applied='+result.percent+'\n');
+              }catch(error) {
+                trace('[volume] direct command failed\n');
+              }
+            }
+            // A literal photo command is local and does not require LLM tool selection.
+            // Keep image analysis opt-in: merely saving a photo must not upload it.
+            if(directCapture) {
+              if(!photoHandler) {
+                trace('[vision] direct photo rejected reason=unavailable\n');
+                showConversationBalloon('カメラを利用できません。');
+              } else {
+                trace('[vision] direct photo dispatch mode='+
+                  (standalone?'transcription':recognitionOnly?'recognition-transport':'conversation')+'\n');
+                // Recognition-only XiaoZhi aborts its stream at final STT. Free
+                // Opus/audio ownership before camera allocation, then reconnect.
+                let pausedRecognition=false,issuedWhileConnected=chat===instance;
+                const promise=Promise.resolve().then(()=>{
+                  if(recognitionOnly&&chat===instance){
+                    closeChat();
+                    state='waiting';
+                    retryAt=Date.now()+120000;
+                    pausedRecognition=true;
+                    trace('[vision] recognition transport released for capture\n');
+                  }
+                  return photoHandler({question:recognized,analyze:false});
+                });
+                photoTurn={expires:Date.now()+12000,promise};
+                function finishLocalPhoto(){
+                  if(!(pausedRecognition||issuedWhileConnected)||!running()||chat)return;
+                  state='waiting';
+                  retryAt=Date.now()+1000;
+                  trace('[vision] recognition reconnect scheduled\n');
+                }
+                promise.then(
+                  result=>{
+                    const saved=!!result?.image;
+                    trace('[vision] direct photo saved='+saved+' analysis=skipped\n');
+                    // Link the saved photo to the normal conversation history, without
+                    // storing a raw image or posting it to an external vision service.
+                    if(saved)archive('output','写真を撮影してSDカードに保存しました。',undefined,result.image);
+                    if((chat===instance||pausedRecognition||issuedWhileConnected)&&running())
+                      showConversationBalloon(saved?'写真を撮影してSDカードに保存しました。':
+                        '写真を撮影できませんでした。');
+                    finishLocalPhoto();
+                  },
+                  error=>{
+                    const reason=String(error?.name||'Error').replace(/[^A-Za-z0-9_]/g,'').slice(0,30);
+                    trace('[vision] direct photo failed type='+reason+'\n');
+                    if((chat===instance||pausedRecognition||issuedWhileConnected)&&running())
+                      showConversationBalloon('写真を撮影できませんでした。カメラとSDカードの状態を確認してください。');
+                    finishLocalPhoto();
+                  }
+                );
+              }
+            }
             // A short, explicit physical command should not depend on whether
             // the cloud chooses a function call or only speaks an acknowledgement.
             if (!standalone && !recognitionOnly) {
               const direction=headDirectionFromText(recognized)
-              if(direction) Promise.resolve(callDeviceTool('head_move',{direction})).catch(()=>trace('[head-motion] voice command failed\n'))
+              if(direction){
+                const promise=Promise.resolve().then(()=>callDeviceTool('head_move',{direction}))
+                headHandled={direction,promise}
+                promise.catch(error=>trace('[head-motion] voice command failed: '+String(error?.message||error).slice(0,120)+'\n'))
+              }
             }
-            if(recognitionOnly)Timer.set(()=>recognitionTurn(recognized),0)
+            // Local direct capture already handles the command: avoid a second
+            // cloud reply or tool call while the camera is capturing.
+            if(recognitionOnly&&!directCapture)Timer.set(()=>recognitionTurn(recognized),0)
           }
         },
         onOutputTranscript(text, more) {
@@ -884,7 +1141,7 @@ async function connect() {
           else output = (output + (text || '')).slice(-4096)
           if (text && !enrollment.active && (Date.now()-subtitleAt>=250 || !more)) {
             lastSubtitle=output
-            robot.showBalloon(output,{bottom:40,height:24,paddingY:4,holdMs:60000})
+            showConversationBalloon(output,{bottom:40,height:24,paddingY:4,holdMs:60000})
             subtitleAt=Date.now()
           }
           if (!more && output) {
@@ -893,13 +1150,13 @@ async function connect() {
               archive('output', output)
               if(conversationStage==='greeting')advanceConversation('conversation')
               lastSubtitle=output
-              robot.showBalloon(output,{bottom:40,height:24,paddingY:4,holdMs:60000})
+              showConversationBalloon(output,{bottom:40,height:24,paddingY:4,holdMs:60000})
             }
             output = ''
           }
         },
         onFunctionCall(call, name, args) {
-          if (chat !== instance || enrollment.active) return
+          if (chat !== instance || enrollment.active || standalone) return
           conversationIndicator('thinking')
           trace('[chat-tool] begin '+name+'\n')
           Promise.resolve()
@@ -928,7 +1185,7 @@ async function connect() {
               return executeTool(name, args)
             })
             .then((result) => {
-              if(name==='conversation_identify'&&result?.message)try{robot.showBalloon(result.message,{bottom:40,height:24,paddingY:4,holdMs:10000})}catch(_){trace('[speaker] result display unavailable\n')}
+              if(name==='conversation_identify'&&result?.message)try{showConversationBalloon(result.message,{bottom:40,height:24,paddingY:4,holdMs:10000})}catch(_){trace('[speaker] result display unavailable\n')}
               return chat === instance ? instance.sendFunctionResult(call, name, result) : undefined
             })
             .catch((e) => {
@@ -940,7 +1197,7 @@ async function connect() {
                 for (const key of [getSettings().api?.ollama, getSettings().api?.gemini])
                   if (key) message = message.split(key).join('[redacted]')
                 error = message.slice(0, 200)
-                robot.showBalloon(error)
+                showConversationBalloon(error)
               }
               return instance.sendFunctionResult(call, name, { error: message.slice(0, 200) })
             })
@@ -962,9 +1219,42 @@ async function connect() {
     if (ticket === generation) connecting = false
   }
 }
+// Explicit, nestable camera lease: never rely on a 30-second retry timer.
+function blockNativeReleaseRetry(){
+  nativeReleaseBlocked=true
+  retryAt=Infinity
+  state='failed'
+  error='AI音声を解放できませんでした。会話モードをOFF→ONにして復旧してください'
+  trace('[mode-session] native release blocked until manual mode reset\n')
+}
+export function suspendDirectChatForCamera() {
+  let released=false
+  cameraSuspensions++
+  try {
+    if(chat||connecting) {
+      if(!closeChat()){blockNativeReleaseRetry();throw new Error('AI音声の解放に失敗したため撮影を中止しました')}
+      state=running()?'waiting':'off'
+    }
+    retryAt=Infinity
+    trace('[camera-handoff] suspend count='+cameraSuspensions+'\n')
+  } catch(e) {
+    cameraSuspensions--
+    throw e
+  }
+  return () => {
+    if(released)return
+    released=true
+    if(cameraSuspensions>0)cameraSuspensions--
+    trace('[camera-handoff] resume count='+cameraSuspensions+'\n')
+    if(cameraSuspensions===0&&!memoryRetryStopped&&!automaticOfflineSuspended&&running()) {
+      state='waiting'
+      retryAt=0
+    }
+  }
+}
 export function pauseDirectChat() {
   if (chat || connecting) {
-    closeChat()
+    if(!closeChat()){blockNativeReleaseRetry();throw new Error('AI音声の解放に失敗したため操作を中止しました')}
     state = 'waiting'
     retryAt = Date.now() + 30000
     return true
@@ -972,13 +1262,28 @@ export function pauseDirectChat() {
   return false
 }
 export function resumeDirectChat() {
+  if (memoryRetryStopped||nativeReleaseBlocked) {state='failed';return}
   if (running()) retryAt = 0
+}
+export function suspendDirectChatForAutomaticOffline(){
+  if(automaticOfflineSuspended)return
+  automaticOfflineSuspended=true
+  pauseDirectChat()
+  state=memoryRetryStopped?'failed':running()?'waiting':'off'
+  trace('[offline-mode] temporary suspension; saved preference untouched\n')
+}
+export function resumeDirectChatFromAutomaticOffline(){
+  if(!automaticOfflineSuspended)return
+  automaticOfflineSuspended=false
+  resumeDirectChat()
+  trace('[offline-mode] temporary suspension ended; saved preference untouched\n')
 }
 export async function provisionDirectChat() {
   await provision()
   return { configured: true }
 }
 export function requestListening(){
+  globalThis.stackchanIdleActivity?.('listen-request')
   robot.hideBalloon()
   lastSubtitle=''
   if(!enabled())setChatMode(true)
@@ -986,8 +1291,7 @@ export function requestListening(){
     chat.setMicrophoneEnabled(true)
     chat.startListening('auto')
     microphoneIndicator(false)
-    microphoneIndicator(true)
-    // Green LED is the cue; keep the mouth clear while listening.
+    // Wait for the input monitor and actual upload progress before lighting green.
   }else{
     // Restart a stalled/busy session without registering the person again or
     // generating a greeting over their first words.
@@ -995,7 +1299,7 @@ export function requestListening(){
     greetingPending=false
     state='waiting'
     retryAt=0
-    robot.showBalloon('聞き取りを準備しています。緑になったら話してください',{bottom:40,height:24,paddingY:4})
+    showConversationBalloon('聞き取りを準備しています。緑になったら話してください',{bottom:40,height:24,paddingY:4})
     void connect()
   }
   trace('[direct-chat] manual listening requested\n')
@@ -1006,7 +1310,7 @@ function showSpeakerStrip(){
   let people=[];try{people=speakerList().people}catch(_){trace('[speaker] stored list unavailable\n')}
   const selected=currentSpeaker(), recent=people[0]
   const strip=new Container(null,{left:4,right:4,bottom:4,height:speakerExpanded?76:36})
-  const add=(label,fn,left,width,top=0)=>strip.add(new ActionButton({label,onTap:()=>{try{fn()}catch(e){robot.showBalloon(String(e.message||'選択できませんでした'))}}},{left,width,top,height:34}))
+  const add=(label,fn,left,width,top=0)=>strip.add(new ActionButton({label,onTap:()=>{try{fn()}catch(e){showConversationBalloon(String(e.message||'選択できませんでした'))}}},{left,width,top,height:34}))
   const person=selected?.id?people.find(p=>p.id===selected.id):recent
   add(selected?.guest?(selected.name?selected.name+'（仮）':'ゲスト'):person?((selected?'会話中: ':'前回: ')+person.name):'名前を教えてね',()=>{if(selected)requestListening();else if(person)selectSpeaker(person);else openSpeakerChooser()},0,268)
   add('^',()=>{speakerExpanded=!speakerExpanded;showSpeakerStrip()},272,40)
@@ -1025,7 +1329,7 @@ export function registerAITalk(robot, actions) {
         // Run after the launcher finishes closing, so speaker selection stays visible.
         Timer.set(() => {
           try { actions.toggle(); refresh() }
-          catch (error) { robot.showBalloon(String(error.message || '会話設定を確認してください')) }
+          catch (error) { showConversationBalloon(String(error.message || '会話設定を確認してください'),{},robot) }
         }, 0)
         return {content}
       },
@@ -1036,10 +1340,53 @@ export function registerAITalk(robot, actions) {
 }
 async function restoreConversationOnBoot(onBoot) {
   try { await onBoot?.() } catch (_) { trace('[boot] speech failed\n') }
-  // Credentials alone never override an explicit OFF, including during boot speech.
-  if(recognitionMode()){setRecognitionMode(true);return}
-  if (!enabled()) return
-  try { setChatMode(true) } catch (_) { trace('[speaker] boot conversation unavailable\n') }
+  // Read persisted preferences after boot speech, without writing on an ordinary restart.
+  // In particular, unreadable encrypted snapshots must not look like a user-selected OFF.
+  try {
+    const saved=getSettings()
+    const storage=getSettingsStatus()
+    trace('[boot-mode] read generation='+storage.generation+' loadError='+!!storage.loadError+
+      ' chat='+!!saved.chatMode+' transcription='+!!saved.transcriptionMode+'\n')
+    if(storage.loadError) {
+      error='保存済みのAI設定を読み取れません。SDカードの設定は保持しました。'
+      detail='Encrypted settings unreadable; do not reset mode'
+      state='unconfigured'
+      showConversationBalloon(error)
+      trace('[boot-mode] restore blocked unreadable settings\n')
+      return
+    }
+    if(saved.chatMode===true&&saved.transcriptionMode===true) {
+      // Never silently select one of two contradictory saved modes.
+      chatSaveFailedOff=true
+      recognitionSaveFailedOff=true
+      error='会話と文字起こしの設定が同時にONです。本体でモードを選び直してください。'
+      detail='Conflicting persisted modes'
+      state='off'
+      showConversationBalloon(error)
+      trace('[boot-mode] restore blocked conflicting settings\n')
+      return
+    }
+    if(saved.transcriptionMode===true) {
+      setRecognitionMode(true)
+      trace('[boot-mode] restored transcription ON\n')
+    } else if(saved.chatMode===true) {
+      setChatMode(true)
+      trace('[boot-mode] restored conversation ON\n')
+    } else {
+      trace('[boot-mode] restored explicit OFF\n')
+    }
+    if(storage.unreadableSlots>0) {
+      error='SDカードの設定の一部を読み取れず、以前の有効な設定を使いました。モードを確認してください。'
+      detail='One settings snapshot could not be read'
+      showConversationBalloon(error)
+      trace('[boot-mode] partial snapshot recovery unreadableSlots='+storage.unreadableSlots+'\n')
+    }
+  } catch(_) {
+    error='AIモードの起動時復元に失敗しました。設定とUSBログを確認してください。'
+    detail='Boot mode restoration failed'
+    showConversationBalloon(error)
+    trace('[boot-mode] restore failed\n')
+  }
 }
 export function startDirectChat(context, saveTranscript, acquire, done, capturePhoto, onModeChanged, onBoot) {
   modeChanged = onModeChanged
@@ -1049,7 +1396,7 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
   archive = saveTranscript
   claim = acquire
   release = done
-  globalThis.stackchanMicrophoneActivity=()=>{if(chat&&running()){microphoneAt=Date.now();microphoneIndicator(true)}}
+  globalThis.stackchanMicrophoneActivity=active=>{if(chat&&running()){if(active!==false)microphoneAt=Date.now();microphoneIndicator(active!==false)}}
   const controller=robot.ui.application.behavior, faceTouch=controller.onFaceTouch, launch=controller.launchMiniApp
   controller.launchMiniApp=function(...args){if(speakerStrip){robot.ui.removeEffect(speakerStrip);speakerStrip=undefined}return launch.apply(this,args)}
   controller.onFaceTouch=function(){faceTouch?.call(this);if(enabled())showSpeakerStrip()}
@@ -1102,7 +1449,7 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
                   try {
                     setChatMode(!enabled())
                   } catch (e) {
-                    robot.showBalloon(String(e.message || '会話設定を確認してください'))
+                    showConversationBalloon(String(e.message || '会話設定を確認してください'))
                   }
                 },
               },
@@ -1132,7 +1479,7 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
   // Restore saved conversation mode; credentials must not turn an explicit OFF on.
   Timer.set(()=>restoreConversationOnBoot(onBoot),1000)
   Timer.repeat(() => {
-    if (!running()) return
+    if (automaticOfflineSuspended || nativeReleaseBlocked || cameraSuspensions>0 || !running()) return
     if (chat) {
       if (signature() !== connectionSignature) {
         closeChat()
@@ -1144,7 +1491,7 @@ export function startDirectChat(context, saveTranscript, acquire, done, captureP
         failed('Native connection timed out')
         return
       }
-      if(state==='listening'&&microphoneAt&&Date.now()-microphoneAt>20000){failed('Microphone PCM stalled');return}
+      if(state==='listening'&&microphoneAt&&Date.now()-microphoneAt>20000){failed(audioStallReason(globalThis.stackchanAudioHealth,Date.now()));return}
       if (lastVolume !== robot.audio.volume) {
         lastVolume = robot.audio.volume
         chat.setVolume(lastVolume)
@@ -1247,4 +1594,31 @@ export async function testDirectConnection(provider = chatProvider(), options = 
       release()
     }
   }
+}
+
+export async function webTextTurn(args,isCurrent){
+ if(!robot||!getSettingsStatus().connected)throw new Error('Wi-Fiへ接続してください')
+ const provider=chatProvider(),cfg=getSettings();
+ if(provider==='gemini'&&!cfg.api?.gemini||provider==='ollama'&&!cfg.api?.ollama||provider==='xiaozhi'&&!cfg.directChat?.cloudConsent)throw new Error('AIの接続設定が必要です')
+ const paused=pauseDirectChat();
+ if(!claim()){if(paused)resumeDirectChat();throw new Error('本体で処理中です')}
+ const selected=provider,turnGeneration=generation,speaker=currentSpeaker()?.id,valid=()=>isCurrent()&&chatProvider()===selected&&generation===turnGeneration&&currentSpeaker()?.id===speaker;
+ let speech,unlockText,cancelTimer;
+ try{
+  collectMemory();
+  globalThis.stackchanIdleActivity?.('web-text');
+  const context=conversationInstructions();
+  // No action tools. XiaoZhi may only read this browser message through MCP.
+  const answer=provider==='xiaozhi'?await workerXiaoZhiText(args.text,getSettings().directChat):await (provider==='ollama'?ollamaChat:geminiTextChat)([{role:'system',content:context},{role:'user',content:args.text}],[],undefined,valid,workerPostVision);
+  if(!valid())throw new Error('送信を中止しました')
+  const question=archive('input',args.text,'web-'+args.id+'-user',undefined,undefined,{source:'web',requestId:args.id});
+  const response=archive('output',answer,'web-'+args.id+'-assistant',undefined,undefined,{source:'web',requestId:args.id});
+  showConversationBalloon(answer,{holdMs:60000});
+  let spoken=false,speechError='';
+  if(args.speak){
+   try{unlockText=robot.audio.acquireExclusive();speech=new RecognitionTTS({volume:robot.audio.volume});cancelTimer=Timer.repeat(()=>{if(!valid())speech.cancel();},100);await new Promise((resolve,reject)=>speech.stream(answer,robot.audio.volume,e=>e?reject(e):resolve()));spoken=true;}
+   catch(_){speechError='回答は取得しましたが読み上げできませんでした';}
+  }
+  return {provider,answer,spoken,speechError,historySaved:!!question&&!!response};
+ }finally{if(cancelTimer!==undefined)Timer.clear(cancelTimer);try{speech?.cancel?.();}catch(_){}unlockText?.();release();if(paused)resumeDirectChat();Timer.set(()=>collectMemory(),0);}
 }

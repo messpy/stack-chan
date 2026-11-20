@@ -61,14 +61,17 @@ export class QueuedPlayback {
       for(const part of plan.segments){slot.set(new Uint8Array(this.ring,part.offset,part.size),offset);offset+=part.size;}
       const bytes=slot.subarray(0,plan.count),level=this.peak(bytes);
       this.pending++;this.queuedBytes+=bytes.byteLength;
+      let completed=false;
       try{
         this.write(bytes,error=>{
-          if(!this.active)return;
+          if(!this.active||completed)return;
+          completed=true;
           this.pending--;this.queuedBytes-=bytes.byteLength;this.free.push(slot);
           this.hardwareUntil=this.now()+this.drainMs;
           this.lastLevel=level;if(error)this.error=error;
         });
-      }catch(error){this.pending--;this.queuedBytes-=bytes.byteLength;this.free.push(slot);throw error;}
+      }catch(error){if(!completed){this.pending--;this.queuedBytes-=bytes.byteLength;this.free.push(slot);}throw error;}
+      if(this.error)throw this.error;
       this.tail=plan.next;this.ack(this.tail);
     }
     return {next:this.tail,available:available(),queuedBytes:this.queuedBytes,prebuffering:!this.planner.primed,underruns:this.planner.underruns,complete:finished&&!available()&&!this.pending};

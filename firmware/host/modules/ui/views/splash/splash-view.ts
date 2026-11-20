@@ -96,7 +96,6 @@ export function showStartupError(options: {
     ],
   })
   application.empty()
-  application.behavior = new Behavior()
   application.add(root)
   return application
 }

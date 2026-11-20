@@ -46,6 +46,25 @@ test('device camera initial frame wait retries after an empty first read', async
   assert.equal(await pending, frame)
 })
 
+test('late first camera frame is accepted within the bounded CoreS3 warm-up window', async () => {
+  installBareSpecifierPackages()
+  const [{ waitForInitialCameraFrame }, timer] = await Promise.all([
+    import('./device/initial-frame.js'),
+    import('../testing/fakes/timer.js'),
+  ])
+  timer.default.reset()
+  const frame = new ArrayBuffer(176 * 144 * 2)
+  let polls = 0
+  const pending = waitForInitialCameraFrame({
+    isCurrent: () => true,
+    pollMs: 30,
+    takeFrame: () => ++polls >= 30 ? frame : undefined,
+    timeoutMs: 1800,
+  })
+  timer.default.advance(900)
+  assert.equal(await pending, frame)
+})
+
 test('device camera restart check compares requested capture options', () => {
   const defaults: CameraCaptureRequest = { width: 176, height: 144, imageType: 'rgb565le' }
   const current = normalizeCameraCaptureRequest({ width: 200, height: 120, imageType: 'rgb565le' }, defaults)

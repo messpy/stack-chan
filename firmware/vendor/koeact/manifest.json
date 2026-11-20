@@ -1,0 +1,50 @@
+{
+  "modules": {
+    "archive-koeact-native": [
+      "./koeact-native",
+      "./koeact-native.cpp"
+    ],
+    "*": [
+      "./a2.c",
+      "./features.cpp",
+      "./koeact-assets.c"
+    ]
+  },
+  "data": {
+    "*": [
+      "./pieces.json"
+    ]
+  },
+  "dependencies": [
+    {
+      "name": "esp-dl",
+      "version": "==3.3.13",
+      "includes": [
+        "dl",
+        "dl/tool/include",
+        "dl/tensor/include",
+        "dl/base",
+        "dl/base/isa",
+        "dl/base/isa/c",
+        "dl/math/include",
+        "dl/model/include",
+        "dl/module/include",
+        "fbs_loader/include",
+        "dl/base/isa/tie728",
+        "dl/base/isa/xtensa"
+      ]
+    },
+    {
+      "name": "esp-dsp",
+      "version": "==1.8.2",
+      "includes": [
+        "modules/fft/include",
+        "modules/common/include"
+      ]
+    },
+    {
+      "name": "esp_mm",
+      "idf": "esp_mm"
+    }
+  ]
+}

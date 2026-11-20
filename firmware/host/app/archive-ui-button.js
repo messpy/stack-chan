@@ -1,4 +1,4 @@
-import {Container,Label,Skin,Style} from 'piu/MC';
+import {Behavior,Container,Label,Skin,Style} from 'piu/MC';
 import {uiFont} from 'ui-theme';
 import {validateButton,invokeButton} from 'archive-button-schema';
 export function createUIButton(definition,methods,layout={},onError=()=>{}){

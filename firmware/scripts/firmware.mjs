@@ -32,6 +32,7 @@ import { validateFirmwareBundleTarget } from './lib/firmware-bundle.mjs'
 import { prepareCoreS3IdfDependencies } from './lib/idf-dependencies.mjs'
 import { installModArchive, resolveModArchivePath } from './lib/mod-flash.mjs'
 import { prepareCoreS3VersionSdkconfig, prepareVersionSdkconfig, readModdableVersion } from './lib/moddable-version.mjs'
+import { prepareModdableXslArgsFile } from './lib/moddable-xsl-args.mjs'
 
 const command = process.argv[2]
 const rawArgs = process.argv.slice(3)
@@ -89,9 +90,7 @@ if (!dryRun && ['build', 'flash', 'deploy', 'debug'].includes(command)) {
     toolManifest = archiveManifest.manifest
     process.once('exit', () => archiveManifest.cleanup())
     if (archiveManifest.changed) {
-      console.log(
-        '[stack-chan] prepared temporary Archive manifest without branch-foreign optional includes; credentials unchanged',
-      )
+      console.log('[stack-chan] prepared temporary Archive manifest without branch-foreign optional includes; credentials unchanged')
     }
   } catch (error) {
     console.error(`[stack-chan] Archive manifest preparation failed: ${error.message}`)
@@ -166,10 +165,7 @@ if (!dryRun && device.sdkconfigTarget && ['build', 'flash', 'deploy', 'debug'].i
       path.dirname(path.resolve(manifest)),
       `stack-chan-host.${deviceName}.${process.pid}.manifest.json`,
     )
-    writeFileSync(
-      toolManifest,
-      JSON.stringify({ include: [archiveManifest?.manifest ?? path.resolve(manifest), overrideManifest] }),
-    )
+    writeFileSync(toolManifest, JSON.stringify({ include: [archiveManifest?.manifest ?? path.resolve(manifest), overrideManifest] }))
     process.on('exit', () => rmSync(toolManifest, { force: true }))
   } catch (error) {
     console.error(`[stack-chan] firmware version could not be prepared: ${error.message}`)
@@ -192,6 +188,21 @@ if (buildVariantChanged && ['m5stackchan_cores3', 'stackchan_rt'].includes(devic
     })
   } catch (error) {
     console.error(`[stack-chan] IDF dependencies could not be prepared after target clean: ${error.message}`)
+    process.exit(1)
+  }
+}
+
+if (
+  !dryRun &&
+  process.platform !== 'win32' &&
+  ['build', 'flash', 'deploy', 'debug'].includes(command) &&
+  ['m5stackchan_cores3', 'stackchan_rt'].includes(deviceName)
+) {
+  try {
+    const { status, templatePath } = prepareModdableXslArgsFile()
+    console.log('[stack-chan] Moddable xsl args.txt: ' + status + ' (' + templatePath + ')')
+  } catch (error) {
+    console.error('[stack-chan] Moddable xsl argument workaround failed: ' + error.message)
     process.exit(1)
   }
 }
@@ -362,16 +373,7 @@ function prepareBuildVariant() {
   ensureBuildOutputDirectory()
   const result = spawnSync(
     'mcconfig',
-    [
-      ...buildModeArgs,
-      '-m',
-      '-p',
-      platform,
-      '-t',
-      'clean',
-      ...outputArgs,
-      archiveManifest?.manifest ?? selectedManifest,
-    ],
+    [...buildModeArgs, '-m', '-p', platform, '-t', 'clean', ...outputArgs, archiveManifest?.manifest ?? selectedManifest],
     { env: subprocessEnvironment, stdio: 'inherit' },
   )
   if (result.error) {
